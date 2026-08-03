@@ -1,0 +1,30 @@
+go-pyresolver
+Copyright 2026 Posit Software, PBC
+
+This product is licensed under the Apache License, Version 2.0, or the MIT
+license, at your option. See LICENSE-APACHE and LICENSE-MIT.
+
+This product's design is informed by the Astral `uv` project
+(https://github.com/astral-sh/uv), specifically the uv-resolver crate's
+approach to adapting a generic version solver to Python packaging semantics
+(candidate selection, extras as virtual packages, and the separation between
+the solver core and metadata retrieval). uv is dual-licensed under the Apache
+License, Version 2.0, or the MIT license.
+
+The PubGrub algorithm this module drives is described by Natalie Weizenbaum
+(https://medium.com/@nex3/pubgrub-2fb6470504f) and in the Dart `pub` package
+manager's solver documentation (https://github.com/dart-lang/pub), by Natalie
+Weizenbaum and the Dart team.
+
+konstin's Rust implementations of PEP 440 and PEP 508 informed the PEP
+primitives this module consumes from github.com/posit-dev/go-python-packaging.
+
+No source from those projects is incorporated at this time; attribution for
+any incorporated material is added when that material lands.
+
+Note on scope: the clean-room attestation policy of RFD 0001 Section 7.1
+applies to the go-pubgrub *implementation* source, NOT to this module. Reading
+uv-resolver, uv-pep440, and uv-pep508 while working on this Python adapter is
+explicitly permitted by that policy, and adapting from them with attribution
+is the intended pattern. Do not read pubgrub-rs, astral-sh/pubgrub, or any
+other Go-language PubGrub port while working on go-pubgrub itself.
