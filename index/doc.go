@@ -10,11 +10,10 @@
 // That separation is what makes the same resolver usable for connected PPM,
 // air-gapped PPM, local Python sources, and tests.
 //
-// The interface, its types, and MockIndex are added by
-// rstudio/package-manager#18646. RSFIndex and CachedJSONIndex follow in
-// rstudio/package-manager#18647.
+// The interface, its types, and MockIndex are implemented. RSFIndex and
+// CachedJSONIndex follow in rstudio/package-manager#18647.
 //
-// # Planned implementations
+// # Implementation status
 //
 // Per RFD 0001 Section 6:
 //
@@ -29,10 +28,11 @@
 //     RSF, so Metadata needs no network; file lists come from local files
 //     pre-warmed by the offline downloader.
 //   - DBIndex: local Python sources, backed by the pypi_projects table.
-//   - MockIndex: in-memory, for tests.
+//   - MockIndex: in-memory, for tests. IMPLEMENTED.
 //   - FilteredIndex: composable wrapper applying snapshot-date, prerelease,
 //     and yanked policy.
 //   - MultiIndex: combines ordered sources.
 //
-// Only the first two and MockIndex are in scope for the initial release.
+// Only RSFIndex, CachedJSONIndex, and MockIndex are in scope for the initial
+// release.
 package index
