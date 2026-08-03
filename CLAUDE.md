@@ -55,6 +55,28 @@ keeps the generic solver free of Python knowledge, and it is required from day
 one: without it, any user of `[extras]` syntax silently gets an incomplete
 closure.
 
+**PPM-backed index implementations do NOT live here.** `RSFIndex`,
+`OfflineIndex`, and `DBIndex` need PPM's deps-blob decoder, store types, or
+database — all in a private repo that imports this module, so putting them here
+would invert the dependency. They implement `index.MetadataIndex` from the PPM
+side. `DBIndex` is the clearest case: a public module cannot reach PPM's
+`pypi_projects` table. What belongs here is anything generic: the interface,
+`MockIndex`, `CachedJSONIndex`, and eventually `FilteredIndex`/`MultiIndex`.
+
+**A cached value handed to more than one caller must be copied on every path.**
+`boundedCache.get` coalesces concurrent misses through singleflight, which hands
+the *same* value to every waiter — so copying only on a cache hit is not enough,
+and the leftover sharing shows up as a data race under load rather than as a
+test failure. `CachedJSONIndex.Files` copies on the way out for this reason, and
+there is a `-race` test that fails if the copy is removed. PPM hit this exact
+bug in its own snapshot cache (#19291).
+
+**Cache keys must name immutable content.** A key that can describe two
+payloads over time serves a stale one until eviction, and no TTL fixes that — it
+only shortens the window. `(package, snapshot)` qualifies, with one documented
+exception: `yanked` is mutable within a published snapshot (RFD §5.1), tracked
+as #18650.
+
 ## Build & test
 
 ```bash

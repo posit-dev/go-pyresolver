@@ -10,29 +10,31 @@
 // That separation is what makes the same resolver usable for connected PPM,
 // air-gapped PPM, local Python sources, and tests.
 //
-// The interface, its types, and MockIndex are implemented. RSFIndex and
-// CachedJSONIndex follow in rstudio/package-manager#18647.
-//
 // # Implementation status
 //
 // Per RFD 0001 Section 6:
 //
-//   - RSFIndex + CachedJSONIndex: connected PPM. RSFIndex reads both the
-//     version list and the per-version dependencies from the resident PyPI
-//     RSF with no CDN call; only file lists go to the CDN, via
-//     CachedJSONIndex with Ristretto caching. Note the direction here — RFD
-//     Rev 15 reversed the carrier for the dependency fieldset, so
-//     requires_dist, requires_python, and provides_extra live IN the RSF.
-//     Only Files() is CDN-backed.
-//   - OfflineIndex: air-gapped PPM. Dependencies come from the same resident
-//     RSF, so Metadata needs no network; file lists come from local files
-//     pre-warmed by the offline downloader.
-//   - DBIndex: local Python sources, backed by the pypi_projects table.
-//   - MockIndex: in-memory, for tests. IMPLEMENTED.
-//   - FilteredIndex: composable wrapper applying snapshot-date, prerelease,
-//     and yanked policy.
-//   - MultiIndex: combines ordered sources.
+//   - MetadataIndex, its types, MockIndex — IMPLEMENTED here.
+//   - CachedJSONIndex — IMPLEMENTED here. Serves Files (and Versions) from the
+//     per-snapshot index JSON, with a bounded cache keyed by
+//     (package, snapshot).
+//   - RSFIndex — implemented in PPM, not here. It needs PPM's deps-blob
+//     decoder and store types, which live in a private repo that imports this
+//     module; putting it here would invert the dependency. Tracked as
+//     rstudio/package-manager#19437.
+//   - OfflineIndex (air-gapped, same resident RSF) and DBIndex (PPM's
+//     pypi_projects table) belong in PPM for the same reason. DBIndex is the
+//     clearest case: a public module cannot reach PPM's database.
+//   - FilteredIndex (snapshot-date, prerelease, and yanked policy) and
+//     MultiIndex (ordered sources) are generic and belong here, but are out of
+//     scope for the initial release.
 //
-// Only RSFIndex, CachedJSONIndex, and MockIndex are in scope for the initial
-// release.
+// # Where dependency metadata comes from
+//
+// Not from the CDN. RFD Rev 15 reversed the carrier for the dependency
+// fieldset, so requires_dist, requires_python, and provides_extra are resident
+// IN the PyPI RSF and read in-process. Only Files() is CDN-backed. That
+// reversal is what makes air-gapped resolution possible, which is why
+// CachedJSONIndex refuses Metadata outright rather than serving it from the
+// document it already has in hand.
 package index
