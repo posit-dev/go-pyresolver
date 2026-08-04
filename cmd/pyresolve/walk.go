@@ -43,13 +43,28 @@ Flags:
 ` + noNetworkNotice + "\n"
 
 // walkResult is the walk command's output shape.
+//
+// Absent and NoDependencyData are kept apart on purpose. "This RSF has never
+// heard of the package" and "this RSF has the package but captured no usable
+// dependency data for it" are different facts, and reporting the second as the
+// first sends someone hunting for a typo in a name that is present and correct.
+// The second case is common and expected: a package with no built distribution
+// has no captured dependency metadata.
 type walkResult struct {
-	Root       string   `json:"root"`
-	Depth      int      `json:"depth"`
-	Note       string   `json:"note"`
-	Packages   []string `json:"packages"`
-	Count      int      `json:"count"`
-	Unresolved []string `json:"unresolved,omitempty"`
+	Root     string   `json:"root"`
+	Depth    int      `json:"depth"`
+	Note     string   `json:"note"`
+	Packages []string `json:"packages"`
+	Count    int      `json:"count"`
+
+	// Absent lists names referenced by some dependency but having no record in
+	// this RSF at all.
+	Absent []string `json:"absent,omitempty"`
+
+	// NoDependencyData lists names present in this RSF for which no usable
+	// dependency metadata was captured, so the walk could not continue through
+	// them.
+	NoDependencyData []string `json:"no_dependency_data,omitempty"`
 }
 
 func runWalk(w io.Writer, args []string) error {
@@ -106,7 +121,7 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 	}
 
 	visited := map[index.PackageName]bool{root: true}
-	var unresolved []index.PackageName
+	var absent, noDeps []index.PackageName
 	queue := []queueItem{{root, 0}}
 
 	for len(queue) > 0 {
@@ -116,13 +131,14 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 		vers, err := idx.Versions(ctx, item.name)
 		if err != nil {
 			if errors.Is(err, index.ErrPackageNotFound) {
-				unresolved = append(unresolved, item.name)
+				absent = append(absent, item.name)
 				continue
 			}
 			return usageErrorf("walk: %v", err)
 		}
 		if len(vers) == 0 {
-			unresolved = append(unresolved, item.name)
+			// Present in the file, but nothing captured. Distinct from absent.
+			noDeps = append(noDeps, item.name)
 			continue
 		}
 		if item.depth >= maxDepth {
@@ -136,7 +152,10 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 		meta, err := idx.Metadata(ctx, item.name, highest)
 		if err != nil {
 			if errors.Is(err, index.ErrMetadataUnavailable) {
-				unresolved = append(unresolved, item.name)
+				// The package and version exist, but this version's metadata
+				// was not captured — same practical outcome as no versions at
+				// all, and equally not an absent package.
+				noDeps = append(noDeps, item.name)
 				continue
 			}
 			return usageErrorf("walk: %v", err)
@@ -158,19 +177,26 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 	}
 	sort.Strings(names)
 
-	unresolvedStrs := make([]string, 0, len(unresolved))
-	for _, n := range unresolved {
-		unresolvedStrs = append(unresolvedStrs, n.String())
+	absentStrs := make([]string, 0, len(absent))
+	for _, n := range absent {
+		absentStrs = append(absentStrs, n.String())
 	}
-	sort.Strings(unresolvedStrs)
+	sort.Strings(absentStrs)
+
+	noDepsStrs := make([]string, 0, len(noDeps))
+	for _, n := range noDeps {
+		noDepsStrs = append(noDepsStrs, n.String())
+	}
+	sort.Strings(noDepsStrs)
 
 	result := walkResult{
-		Root:       root.String(),
-		Depth:      maxDepth,
-		Note:       walkNotResolverNotice,
-		Packages:   names,
-		Count:      len(names),
-		Unresolved: unresolvedStrs,
+		Root:             root.String(),
+		Depth:            maxDepth,
+		Note:             walkNotResolverNotice,
+		Packages:         names,
+		Count:            len(names),
+		Absent:           absentStrs,
+		NoDependencyData: noDepsStrs,
 	}
 
 	if jsonOut {
@@ -183,10 +209,13 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 	for _, n := range result.Packages {
 		ew.println(n)
 	}
-	ew.printf("\n%d package(s) reachable", result.Count)
-	if len(result.Unresolved) > 0 {
-		ew.printf(" (%d referenced but not found in this RSF: %v)", len(result.Unresolved), result.Unresolved)
+	ew.printf("\n%d package(s) reachable\n", result.Count)
+	if len(result.Absent) > 0 {
+		ew.printf("\n%d referenced but absent from this RSF: %v\n", len(result.Absent), result.Absent)
 	}
-	ew.println()
+	if len(result.NoDependencyData) > 0 {
+		ew.printf("\n%d present in this RSF but with no captured dependency data, so the walk "+
+			"stopped there: %v\n", len(result.NoDependencyData), result.NoDependencyData)
+	}
 	return ew.err
 }
