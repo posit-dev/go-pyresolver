@@ -1,0 +1,163 @@
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"sort"
+	"strings"
+
+	"github.com/posit-dev/go-python-packaging/version"
+
+	"github.com/posit-dev/go-pyresolver/index"
+)
+
+const depsHelp = `Usage: pyresolve deps --rsf <path> <package> [version] [--json]
+
+Print the dependency metadata for one version of <package>: its
+Requires-Python constraint, its Requires-Dist requirement strings, and its
+declared extras.
+
+When [version] is omitted, the highest captured PEP 440 version is used.
+
+Flags:
+  --rsf <path>   path to the RSF file (or set PYRESOLVE_RSF)
+  --json         emit JSON instead of text
+
+` + noNetworkNotice + "\n"
+
+// depsResult is the deps command's output shape.
+type depsResult struct {
+	Package        string   `json:"package"`
+	Version        string   `json:"version"`
+	RequiresPython string   `json:"requires_python,omitempty"`
+	RequiresDist   []string `json:"requires_dist"`
+	ProvidesExtra  []string `json:"provides_extra,omitempty"`
+}
+
+func runDeps(w io.Writer, args []string) error {
+	fs, g := newFlagSet("deps")
+	fs.Usage = func() {}
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			_, printErr := fmt.Fprint(w, depsHelp)
+			return printErr
+		}
+		return usageErrorf("deps: %v", err)
+	}
+
+	var pkgArg, verArg string
+	switch fs.NArg() {
+	case 1:
+		pkgArg = fs.Arg(0)
+	case 2:
+		pkgArg, verArg = fs.Arg(0), fs.Arg(1)
+	default:
+		return usageErrorf("deps: expected a package name and an optional version, got %v", fs.Args())
+	}
+
+	path, err := resolveRSFPath(g.rsfPath)
+	if err != nil {
+		return err
+	}
+
+	return depsCmd(w, path, g.json, pkgArg, verArg)
+}
+
+// depsCmd is the testable core. verArg is the empty string when the caller
+// omitted the version, meaning "use the highest captured version".
+func depsCmd(w io.Writer, path string, jsonOut bool, pkgArg, verArg string) error {
+	file, idx, err := openRSF(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+
+	ctx := context.Background()
+	pkg := index.NewPackageName(pkgArg)
+
+	ver, err := resolveVersion(ctx, idx, pkg, pkgArg, verArg)
+	if err != nil {
+		return err
+	}
+
+	meta, err := idx.Metadata(ctx, pkg, ver)
+	if err != nil {
+		if errors.Is(err, index.ErrPackageNotFound) {
+			return notFoundErrorf("package %q not found in this RSF", pkgArg)
+		}
+		if errors.Is(err, index.ErrMetadataUnavailable) {
+			return notFoundErrorf("package %q has no captured dependency metadata for version %s in this RSF", pkgArg, ver)
+		}
+		return usageErrorf("deps: %v", err)
+	}
+
+	reqs := make([]string, len(meta.RequiresDist))
+	for i, r := range meta.RequiresDist {
+		reqs[i] = r.String()
+	}
+
+	result := depsResult{
+		Package:        pkg.String(),
+		Version:        ver.String(),
+		RequiresPython: meta.RequiresPython.String(),
+		RequiresDist:   reqs,
+		ProvidesExtra:  meta.ProvidesExtra,
+	}
+
+	if jsonOut {
+		return writeJSON(w, result)
+	}
+
+	ew := &errWriter{w: w}
+	ew.printf("%s %s\n", result.Package, result.Version)
+	if result.RequiresPython != "" {
+		ew.printf("Requires-Python: %s\n", result.RequiresPython)
+	} else {
+		ew.println("Requires-Python: (unconstrained)")
+	}
+	if len(result.RequiresDist) == 0 {
+		ew.println("Requires-Dist: (none)")
+	} else {
+		ew.println("Requires-Dist:")
+		for _, r := range result.RequiresDist {
+			ew.printf("  %s\n", r)
+		}
+	}
+	if len(result.ProvidesExtra) == 0 {
+		ew.println("Provides-Extra: (none)")
+	} else {
+		ew.printf("Provides-Extra: %s\n", strings.Join(result.ProvidesExtra, ", "))
+	}
+	return ew.err
+}
+
+// resolveVersion returns ver parsed from verArg, or -- when verArg is empty
+// -- the highest PEP 440 version with captured dependency metadata for pkg.
+func resolveVersion(ctx context.Context, idx *index.RSFIndex, pkg index.PackageName, pkgArg, verArg string) (version.Version, error) {
+	if verArg != "" {
+		v, err := version.Parse(verArg)
+		if err != nil {
+			return version.Version{}, usageErrorf("invalid version %q: %v", verArg, err)
+		}
+		return v, nil
+	}
+
+	vers, err := idx.Versions(ctx, pkg)
+	if err != nil {
+		if errors.Is(err, index.ErrPackageNotFound) {
+			return version.Version{}, notFoundErrorf("package %q not found in this RSF", pkgArg)
+		}
+		return version.Version{}, usageErrorf("deps: %v", err)
+	}
+	if len(vers) == 0 {
+		return version.Version{}, notFoundErrorf("package %q has no captured dependency versions in this RSF", pkgArg)
+	}
+
+	sort.Sort(version.SortedVersions(vers))
+	return vers[len(vers)-1], nil
+}
