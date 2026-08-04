@@ -23,10 +23,20 @@ Three Posit-owned Go modules divide the work:
 
 | Package | Scope |
 |---|---|
+| `pypirsf/` | PyPI record layout and dependency-blob decoder for Repository Snapshot Format files |
 | `index/` | `MetadataIndex` — the seam between resolver and storage — and its implementations |
 | `candidate/` | Which version to try next, and which distribution file represents it |
 | `provider/` | Adapts Python semantics (notably extras) to the generic solver |
-| `resolver/` | The public entry point; the only package a consumer imports |
+| `resolver/` | The public entry point |
+
+## Where dependency metadata comes from
+
+Resolution needs two things: which versions of a package exist, and what each
+version requires. Both live in a Repository Snapshot Format (RSF) file, so a
+resolution reads one local file and makes no per-package network request. That is
+what makes offline and reproducible resolution possible.
+
+`pypirsf/` decodes that file. You supply the file; this module does not fetch it.
 
 The resolver core never makes an HTTP request and never touches a database. It
 calls `MetadataIndex`, and the implementation decides where the bytes come from.

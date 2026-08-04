@@ -12,10 +12,41 @@ Phase 3.
 
 | Package | Scope |
 |---|---|
+| `pypirsf/` | PyPI RSF record layout + dependency-blob decoder |
 | `index/` | `MetadataIndex` interface + implementations |
 | `candidate/` | Version and distribution-file selection policy |
 | `provider/` | Python-to-generic-solver adaptation, incl. extras |
-| `resolver/` | Public entry point; the only package PPM imports |
+| `resolver/` | Public entry point |
+
+## `pypirsf/` — the PyPI RSF record layout and deps decoder
+
+This is the one implementation of the PyPI dependency-blob decode, shared by the
+standalone resolver and by Package Manager. It deliberately lives here rather
+than in `rstudio/repository-snapshot-format`: that library is generic on
+purpose, and a PyPI record schema is Python-packaging knowledge, not format
+knowledge.
+
+Three rules for this package:
+
+**Field order in `record.go` is wire format, not struct layout.** `ReleaseDate`
+must stay between `Version` and `Summary`, and `Summary` must stay last.
+Released readers navigate subfields by name with the RSF reader's forward-only
+skip, so they advance from `summary` to the next element's `deleted` without
+skipping — they silently depend on `summary` being last. Putting a field after
+it leaks bytes into the next element and desynchronizes every shipped reader.
+This already happened in production.
+
+**Keep the hardening.** Every length-prefixed read is bounded against bytes
+actually remaining, and `MaxDecompressedBytes` caps zstd expansion. The input is
+a file fetched over a network; a standalone tool has even less reason to trust
+it than a server does. Never size an allocation from a count the input claims
+without checking the bytes exist.
+
+**Decoded types stay raw.** `VersionDeps` holds unparsed PEP 508 and PEP 440
+strings so this package depends only on zstd. Parsing belongs to the caller.
+
+Do not add an encoder here. RSF files come from the producer pipeline, and a
+second writer would be free to diverge from it.
 
 Sibling modules: [`go-python-packaging`](https://github.com/posit-dev/go-python-packaging)
 (PEP primitives) and `go-pubgrub` (the algorithm, language-agnostic).

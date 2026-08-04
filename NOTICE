@@ -28,3 +28,14 @@ uv-resolver, uv-pep440, and uv-pep508 while working on this Python adapter is
 explicitly permitted by that policy, and adapting from them with attribution
 is the intended pattern. Do not read pubgrub-rs, astral-sh/pubgrub, or any
 other Go-language PubGrub port while working on go-pubgrub itself.
+
+The pypirsf/ package's PyPI record layout and dependency-blob decoder are ported
+from Posit Package Manager (rstudio/package-manager), specifically src/rsf/types
+and src/rsf/depsblob, Copyright (c) Posit Software, PBC, contributed under the
+Apache License, Version 2.0, or the MIT license. The decode side only is
+ported; the encoder remains in the producer pipeline. The golden test vectors
+in pypirsf/testdata originate from that producer's own test fixtures, so they
+pin this decoder to the encoder rather than only to itself.
+
+github.com/klauspost/compress is licensed under a three-clause BSD license,
+with portions under the Apache License, Version 2.0, and the MIT license.
