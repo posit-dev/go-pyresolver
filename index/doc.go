@@ -10,29 +10,41 @@
 // That separation is what makes the same resolver usable for connected PPM,
 // air-gapped PPM, local Python sources, and tests.
 //
-// The interface, its types, and MockIndex are implemented. RSFIndex and
-// CachedJSONIndex follow in rstudio/package-manager#18647.
-//
 // # Implementation status
 //
-// Per RFD 0001 Section 6:
+//   - MetadataIndex, its types, and MockIndex — implemented.
+//   - RSFIndex — implemented. Serves Versions and Metadata from a local RSF
+//     file via the pypirsf package. This is the standalone path: one file on
+//     disk, no network, no database, and therefore reproducible — the file is a
+//     dated artifact, so the same file resolves the same way forever.
+//   - FilteredIndex (prerelease and yanked policy) and MultiIndex (ordered
+//     sources) are generic and belong here. Not yet built; tracked as
+//     rstudio/package-manager#18648.
+//   - Package Manager implements its own index against this interface, over its
+//     resident RSF and its own caching. That is a different access path to the
+//     same data rather than a duplicate of RSFIndex, and it stays in PPM.
+//     Tracked as rstudio/package-manager#19437. DBIndex, backed by PPM's
+//     pypi_projects table, belongs there for the same reason: a public module
+//     cannot reach PPM's database.
 //
-//   - RSFIndex + CachedJSONIndex: connected PPM. RSFIndex reads both the
-//     version list and the per-version dependencies from the resident PyPI
-//     RSF with no CDN call; only file lists go to the CDN, via
-//     CachedJSONIndex with Ristretto caching. Note the direction here — RFD
-//     Rev 15 reversed the carrier for the dependency fieldset, so
-//     requires_dist, requires_python, and provides_extra live IN the RSF.
-//     Only Files() is CDN-backed.
-//   - OfflineIndex: air-gapped PPM. Dependencies come from the same resident
-//     RSF, so Metadata needs no network; file lists come from local files
-//     pre-warmed by the offline downloader.
-//   - DBIndex: local Python sources, backed by the pypi_projects table.
-//   - MockIndex: in-memory, for tests. IMPLEMENTED.
-//   - FilteredIndex: composable wrapper applying snapshot-date, prerelease,
-//     and yanked policy.
-//   - MultiIndex: combines ordered sources.
+// # Where dependency metadata comes from
 //
-// Only RSFIndex, CachedJSONIndex, and MockIndex are in scope for the initial
-// release.
+// The RSF, read in-process, with no per-package network request. RFD 0001
+// Rev 15 reversed the carrier for the dependency fieldset so that
+// requires_dist, requires_python, and provides_extra are resident in the file.
+// That reversal is what makes offline and reproducible resolution possible, so
+// an implementation that reaches the network for dependency metadata is not
+// merely slower — it breaks the case the design exists to serve.
+//
+// # Files is not available from every index
+//
+// An RSF carries dependency metadata only: no filename, hash, upload time, or
+// yanked flag appears anywhere in the record. RSFIndex therefore reports
+// ErrFilesUnavailable from Files.
+//
+// That is a distinct sentinel from ErrMetadataUnavailable because the two call
+// for different handling. ErrFilesUnavailable means "this source cannot answer,
+// ask another"; ErrMetadataUnavailable means "this version is unusable, choose
+// another". Returning an empty slice instead would assert something false —
+// that the version ships no files.
 package index
