@@ -2,6 +2,18 @@
 
 package pypirsf
 
+// The rsf struct tags below drive the format library's reflection-based
+// WRITER, not its reader. There is no tag-driven Unmarshal: reading is manual
+// field navigation against the schema each file carries (see file.go). These
+// structs therefore serve two purposes — they document the layout, and they
+// let a test generate a real RSF with the real writer.
+//
+// A consequence worth knowing: this declares ONE snapshot element layout, and
+// three have existed historically. Package Manager's reader detects which a
+// given file uses from that file's own schema. This package sidesteps the whole
+// question by never traversing the snapshots array; if you ever need to, do the
+// detection rather than trusting this declaration.
+
 // SnapshotRecord is one snapshot entry within a PyPI package record.
 //
 // # Field order is load-bearing — do not reorder

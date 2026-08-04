@@ -8,6 +8,8 @@ github.com/posit-dev/go-python-packaging v0.2.0 h1:O0AaA+do3njPA0V3BUXNherO9h+a3
 github.com/posit-dev/go-python-packaging v0.2.0/go.mod h1:NkELXOh/eRDT7c+LKFxJd+HkyGpKFsUIxpTYaq5xdkU=
 github.com/rstudio/go-version v0.0.2 h1:ihU0xaF+Yuya0p2J6C8dfyB4gu/YehM1d6cTpabf/7A=
 github.com/rstudio/go-version v0.0.2/go.mod h1:Xfuma+m4R9L0P+Hof8iDDiL4/TJ8VjpdDXWq8qGXHL4=
+github.com/rstudio/repository-snapshot-format v0.12.0 h1:a6gRfXPLOR+5YxN7irO097lpWGOPMe8ZoATGkC9hcWE=
+github.com/rstudio/repository-snapshot-format v0.12.0/go.mod h1:bU0wmNsDTYcUv8Nr/DHsciP+3BQTB7UkoJmidg0khvE=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
