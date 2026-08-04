@@ -1,0 +1,199 @@
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
+package main
+
+import (
+	"bytes"
+	"encoding/binary"
+	"os"
+	"path/filepath"
+	"testing"
+
+	rsf "github.com/rstudio/repository-snapshot-format"
+
+	"github.com/posit-dev/go-pyresolver/pypirsf"
+)
+
+// --- fixture construction ---
+//
+// Mirrors index/rsfindex_test.go: it builds a real RSF with the real writer
+// so these tests exercise the actual on-disk format, not a mock. Duplicated
+// here rather than shared, since a test helper is not something either
+// package should export.
+
+func putUvarint(buf *bytes.Buffer, v uint64) {
+	var tmp [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(tmp[:], v)
+	buf.Write(tmp[:n])
+}
+
+func putStr(buf *bytes.Buffer, s string) {
+	putUvarint(buf, uint64(len(s)))
+	buf.WriteString(s)
+}
+
+type fixtureVersion struct {
+	version        string
+	requiresDist   []string
+	requiresPython string
+	providesExtra  []string
+}
+
+// buildStoredDepsField encodes a stored (uncompressed) deps blob, so a
+// fixture needs no trained zstd dictionary.
+func buildStoredDepsField(versions []fixtureVersion) string {
+	var body bytes.Buffer
+
+	putUvarint(&body, uint64(len(versions)))
+	for _, fv := range versions {
+		putStr(&body, fv.requiresPython)
+
+		putUvarint(&body, uint64(len(fv.requiresDist)))
+		for _, req := range fv.requiresDist {
+			putUvarint(&body, 0) // inline name, no dictionary reference
+			putStr(&body, req)
+			putStr(&body, "")
+		}
+
+		putUvarint(&body, uint64(len(fv.providesExtra)))
+		for _, e := range fv.providesExtra {
+			putStr(&body, e)
+		}
+	}
+
+	putUvarint(&body, uint64(len(versions)))
+	for i, fv := range versions {
+		putStr(&body, fv.version)
+		putUvarint(&body, uint64(i))
+	}
+
+	return string(append([]byte{0x02}, body.Bytes()...)) // 0x02 = stored
+}
+
+func buildDepsdictField() string {
+	var buf bytes.Buffer
+	buf.WriteByte(0x01)
+	putUvarint(&buf, 0) // no names
+	putUvarint(&buf, 0) // no zstd dictionary
+	return buf.String()
+}
+
+// writeFixtureRSF writes recs to a new RSF file in t.TempDir() and returns
+// its path.
+func writeFixtureRSF(t *testing.T, recs []pypirsf.PackageRecord) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "fixture.rsf")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("creating fixture: %v", err)
+	}
+	w := rsf.NewWriter(f)
+	for _, rec := range recs {
+		if _, err := w.WriteObject(rec); err != nil {
+			t.Fatalf("writing %s: %v", rec.CanonicalName, err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing fixture: %v", err)
+	}
+	return path
+}
+
+// standardFixture builds a small multi-package RSF exercising: multiple
+// captured versions with dependencies that chain to each other (for walk),
+// a package with no captured deps, and an unparseable version key.
+func standardFixture(t *testing.T) string {
+	t.Helper()
+
+	flask := pypirsf.PackageRecord{
+		CanonicalName: "flask",
+		ProjectName:   "Flask",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "3.0.0", ReleaseDate: "\x00\x01", Summary: "web"},
+			{Snapshot: "2026080200", Version: "3.0.1", ReleaseDate: "\x00\x02", Summary: "web"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{
+				version:        "3.0.0",
+				requiresDist:   []string{"werkzeug>=3.0"},
+				requiresPython: ">=3.8",
+				providesExtra:  []string{"Async"},
+			},
+			{
+				version:        "3.0.1",
+				requiresDist:   []string{"werkzeug>=3.0.1", `asgiref>=3.2 ; extra == "async"`},
+				requiresPython: ">=3.8",
+			},
+			// A version key PEP 440 rejects; must not break the rest.
+			{version: "not-a-version", requiresDist: []string{"werkzeug"}},
+		}),
+		Depsdict: buildDepsdictField(),
+	}
+
+	werkzeug := pypirsf.PackageRecord{
+		CanonicalName: "werkzeug",
+		ProjectName:   "Werkzeug",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "3.0.1", ReleaseDate: "\x00\x01", Summary: "wsgi"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "3.0.1", requiresDist: []string{"markupsafe>=2.1"}},
+		}),
+	}
+
+	markupsafe := pypirsf.PackageRecord{
+		CanonicalName: "markupsafe",
+		ProjectName:   "MarkupSafe",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "2.1.5", ReleaseDate: "\x00\x01", Summary: "escaping"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{{version: "2.1.5"}}),
+	}
+
+	// A dependency that flask's chain never actually reaches directly, used
+	// to prove unreferenced packages are absent from a walk.
+	requests := pypirsf.PackageRecord{
+		CanonicalName: "requests",
+		ProjectName:   "requests",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "2.32.0", ReleaseDate: "\x00\x01", Summary: "http"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{{version: "2.32.0"}}),
+	}
+
+	nodeps := pypirsf.PackageRecord{
+		CanonicalName: "nodeps",
+		ProjectName:   "NoDeps",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+	}
+
+	return writeFixtureRSF(t, []pypirsf.PackageRecord{flask, werkzeug, markupsafe, requests, nodeps})
+}
+
+// noDepsDataFixture builds an RSF with a schema that has no dependency
+// fields at all, exercising pypirsf.ErrNoDependencyData.
+func noDepsDataFixture(t *testing.T) string {
+	t.Helper()
+
+	type legacyRecord struct {
+		CanonicalName string `rsf:"cname"`
+		ProjectName   string `rsf:"pname"`
+	}
+
+	path := filepath.Join(t.TempDir(), "legacy.rsf")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("creating fixture: %v", err)
+	}
+	w := rsf.NewWriter(f)
+	if _, err := w.WriteObject(legacyRecord{CanonicalName: "flask", ProjectName: "Flask"}); err != nil {
+		t.Fatalf("writing record: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing fixture: %v", err)
+	}
+	return path
+}
