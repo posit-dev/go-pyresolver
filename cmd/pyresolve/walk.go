@@ -11,17 +11,16 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/posit-dev/go-python-packaging/version"
-
 	"github.com/posit-dev/go-pyresolver/index"
 )
 
 // walkNotResolverNotice must appear in both --help and in every invocation's
 // output: walk does not solve version constraints. It is a graph traversal
-// over "highest captured version of each package", nothing more, and must
-// never be mistaken for the output of an actual resolver.
+// over one selected version per package, nothing more, and must never be
+// mistaken for the output of an actual resolver.
 const walkNotResolverNotice = "walk is NOT dependency resolution: it does not solve version constraints. " +
-	"It takes the highest captured version of each package and follows its Requires-Dist entries as graph edges, " +
+	"It takes one version of each package -- the highest that is not a pre-release, per PEP 440's default -- " +
+	"and follows its Requires-Dist entries as graph edges, " +
 	"ignoring environment markers, extras conditions, and version specifiers."
 
 const defaultWalkDepth = 3
@@ -146,8 +145,13 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 			continue
 		}
 
-		sort.Sort(version.SortedVersions(vers))
-		highest := vers[len(vers)-1]
+		// Not simply the highest: PEP 440 excludes pre-releases from selection
+		// unless nothing else is available. See selectHighest.
+		highest, ok := selectHighest(vers)
+		if !ok {
+			noDeps = append(noDeps, item.name)
+			continue
+		}
 
 		meta, err := idx.Metadata(ctx, item.name, highest)
 		if err != nil {
