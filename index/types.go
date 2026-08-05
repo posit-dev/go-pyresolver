@@ -32,11 +32,18 @@ type PackageMetadata struct {
 	RequiresDist []requirement.Requirement
 
 	// RequiresPython constrains the interpreter this version supports
-	// (METADATA's Requires-Python). Zero value means unconstrained.
+	// (METADATA's Requires-Python).
 	//
 	// A version whose RequiresPython excludes the target interpreter is not a
 	// usable candidate, which makes this a filter input rather than
 	// information.
+	//
+	// ⚠️ DO NOT CALL Check ON THIS DIRECTLY. Use SupportsPython. The zero value
+	// means "unconstrained" here, but version.Specifiers.Check returns FALSE for
+	// every version when it holds no specifier groups — so calling Check
+	// directly inverts the intended meaning and rejects every interpreter. That
+	// zero value is what an absent Requires-Python leaves behind, which in a
+	// production PyPI snapshot is over two million versions.
 	RequiresPython version.Specifiers
 
 	// ProvidesExtra lists the extras this version defines, PEP 685-normalized.
@@ -52,6 +59,36 @@ type PackageMetadata struct {
 	// costs ~16 bytes per record and it is what makes a MultiIndex debuggable,
 	// since otherwise there is no way to tell which source answered.
 	Origin string
+}
+
+// SupportsPython reports whether this version's Requires-Python admits the given
+// interpreter version.
+//
+// # Why this exists rather than calling RequiresPython.Check
+//
+// An empty specifier set must admit EVERY interpreter: a conjunction over no
+// constraints is vacuously true, and that is what the reference implementation
+// does (`Version("3.11") in SpecifierSet("")` is True). But
+// version.Specifiers.Check iterates its groups and returns false when there are
+// none, so on an empty set it answers the exact opposite — no interpreter is
+// admitted. Its own andCheck helper returns true for an empty GROUP, so the
+// library is inconsistent with itself; filed upstream.
+//
+// Two paths here produce an empty set, and both mean unconstrained:
+//
+//   - The version declares no Requires-Python at all. Over two million versions
+//     in a production PyPI snapshot.
+//   - Its Requires-Python is unparseable, which is deliberately non-fatal (see
+//     RSFIndex). pip does the same thing: it catches InvalidSpecifier and
+//     treats the candidate as compatible.
+//
+// So the leniency the parser intends is only actually lenient if callers come
+// through here.
+func (m PackageMetadata) SupportsPython(target version.Version) bool {
+	if m.RequiresPython.String() == "" {
+		return true
+	}
+	return m.RequiresPython.Check(target)
 }
 
 // DistKind distinguishes a built wheel from a source distribution.

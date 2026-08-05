@@ -297,6 +297,70 @@ func TestRSFIndexUnparseableRequiresPythonIsLenient(t *testing.T) {
 	if meta.RequiresPython.String() != "" {
 		t.Errorf("RequiresPython = %q, want unset", meta.RequiresPython)
 	}
+
+	// ⚠️ The assertion above is NOT sufficient, and on its own it defended the
+	// defect. It asks what the value RENDERS AS, never what it ADMITS — and an
+	// empty version.Specifiers admits NOTHING, because Check iterates its groups
+	// and returns false when there are none. So "lenient" was implemented as its
+	// exact opposite, with a passing test beside it. Assert the policy.
+	for _, interpreter := range []string{"2.7", "3.8", "3.11", "3.13", "4.0"} {
+		if !meta.SupportsPython(mustVersion(t, interpreter)) {
+			t.Errorf("SupportsPython(%s) = false; an unreadable Requires-Python must admit "+
+				"EVERY interpreter, which is the whole point of it being non-fatal", interpreter)
+		}
+	}
+}
+
+// TestAbsentRequiresPythonAdmitsEveryInterpreter covers the case that is far more
+// common than the unparseable one and reaches the same trap by a different route.
+//
+// A version that declares no Requires-Python at all never enters the parsing
+// branch, so the field keeps its zero value — the same empty specifier set that
+// admits nothing when Check is called on it directly. In a production PyPI
+// snapshot this is over two million versions, so getting it wrong rejects a
+// quarter of the corpus.
+func TestAbsentRequiresPythonAdmitsEveryInterpreter(t *testing.T) {
+	idx := openFixtureIndex(t)
+
+	var zero PackageMetadata
+	for _, interpreter := range []string{"2.7", "3.11", "4.0"} {
+		if !zero.SupportsPython(mustVersion(t, interpreter)) {
+			t.Errorf("zero-value PackageMetadata.SupportsPython(%s) = false, want true: "+
+				"no declared constraint means no constraint", interpreter)
+		}
+	}
+
+	// And the same through a real lookup, so the guarantee is not only a property
+	// of the zero value in isolation.
+	meta, err := idx.Metadata(context.Background(), NewPackageName("flask"), mustVersion(t, "3.0.2"))
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	if !meta.SupportsPython(mustVersion(t, "3.11")) {
+		t.Error("SupportsPython(3.11) = false for a version with no usable Requires-Python")
+	}
+}
+
+// TestSupportsPythonStillEnforcesARealConstraint is the other half: leniency must
+// not have been bought by making SupportsPython always true. A declared,
+// parseable constraint has to actually exclude an interpreter outside it.
+func TestSupportsPythonStillEnforcesARealConstraint(t *testing.T) {
+	idx := openFixtureIndex(t)
+
+	meta, err := idx.Metadata(context.Background(), NewPackageName("padded"), mustVersion(t, "1.0.0"))
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	if got := meta.RequiresPython.String(); got != ">=3.9" {
+		t.Fatalf("precondition: RequiresPython = %q, want >=3.9", got)
+	}
+
+	if !meta.SupportsPython(mustVersion(t, "3.11")) {
+		t.Error("SupportsPython(3.11) = false for >=3.9")
+	}
+	if meta.SupportsPython(mustVersion(t, "3.8")) {
+		t.Error("SupportsPython(3.8) = true for >=3.9 — the constraint is not being enforced")
+	}
 }
 
 // TestRSFIndexMatchesEquivalentVersionSpelling covers a document key that is PEP

@@ -212,7 +212,15 @@ func (idx *RSFIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 			// unreadable interpreter constraint over-admits a candidate, which
 			// surfaces later as an install-time failure; an unreadable
 			// requirement would silently under-constrain the graph and change
-			// the resolution itself.
+			// the resolution itself. pip draws the line the same way: it catches
+			// InvalidSpecifier on Requires-Python and treats the candidate as
+			// compatible.
+			//
+			// ⚠️ The empty set only MEANS unconstrained if callers ask through
+			// PackageMetadata.SupportsPython. Specifiers.Check answers false for
+			// every version when it holds no groups, so a caller reaching for
+			// Check directly gets the exact inverse of this policy. See
+			// SupportsPython.
 			meta.RequiresPython = version.Specifiers{}
 		} else {
 			meta.RequiresPython = specs
