@@ -19,16 +19,6 @@ Weizenbaum and the Dart team.
 konstin's Rust implementations of PEP 440 and PEP 508 informed the PEP
 primitives this module consumes from github.com/posit-dev/go-python-packaging.
 
-No source from those projects is incorporated as of this writing. ⚠️ DELETE THIS
-PARAGRAPH on the first commit that adapts material from any of them — in
-particular when candidate/, provider/, or resolver/ is implemented, since
-uv-resolver is the expected reference for that work and reading it is permitted
-here. A sentence of exactly this form went stale unnoticed in
-go-python-packaging, where it was contradicted by material added the following
-day and survived thirteen later edits to the same file, because every one of
-them appended at the end instead of revisiting the top. Attribution belongs in
-the same commit as the material.
-
 The pypirsf/ package's PyPI record layout and dependency-blob decoder are ported
 from Posit Package Manager (rstudio/package-manager), specifically src/rsf/types
 and src/rsf/depsblob, Copyright (c) Posit Software, PBC, contributed under the
