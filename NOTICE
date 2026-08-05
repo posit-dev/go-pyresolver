@@ -19,15 +19,15 @@ Weizenbaum and the Dart team.
 konstin's Rust implementations of PEP 440 and PEP 508 informed the PEP
 primitives this module consumes from github.com/posit-dev/go-python-packaging.
 
-No source from those projects is incorporated at this time; attribution for
-any incorporated material is added when that material lands.
-
-Note on scope: the clean-room attestation policy of RFD 0001 Section 7.1
-applies to the go-pubgrub *implementation* source, NOT to this module. Reading
-uv-resolver, uv-pep440, and uv-pep508 while working on this Python adapter is
-explicitly permitted by that policy, and adapting from them with attribution
-is the intended pattern. Do not read pubgrub-rs, astral-sh/pubgrub, or any
-other Go-language PubGrub port while working on go-pubgrub itself.
+No source from those projects is incorporated as of this writing. ⚠️ DELETE THIS
+PARAGRAPH on the first commit that adapts material from any of them — in
+particular when candidate/, provider/, or resolver/ is implemented, since
+uv-resolver is the expected reference for that work and reading it is permitted
+here. A sentence of exactly this form went stale unnoticed in
+go-python-packaging, where it was contradicted by material added the following
+day and survived thirteen later edits to the same file, because every one of
+them appended at the end instead of revisiting the top. Attribution belongs in
+the same commit as the material.
 
 The pypirsf/ package's PyPI record layout and dependency-blob decoder are ported
 from Posit Package Manager (rstudio/package-manager), specifically src/rsf/types
@@ -39,3 +39,12 @@ pin this decoder to the encoder rather than only to itself.
 
 github.com/klauspost/compress is licensed under a three-clause BSD license,
 with portions under the Apache License, Version 2.0, and the MIT license.
+
+github.com/rstudio/repository-snapshot-format, used to read the Repository
+Snapshot Format container, is Copyright (c) Posit Software, PBC, licensed under
+the Apache License, Version 2.0.
+
+github.com/posit-dev/go-python-packaging, used for PEP 440 versions and PEP 508
+requirements, is Copyright (c) Posit Software, PBC, licensed under the Apache
+License, Version 2.0, or the MIT license. See that project's own NOTICE for the
+upstreams it in turn credits.
