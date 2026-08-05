@@ -229,9 +229,23 @@ func (idx *RSFIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 				// skip. Dropping it silently would hand the resolver an
 				// incomplete dependency set and produce a confident wrong
 				// answer -- the one failure mode worth failing loudly for.
+				//
+				// Wrapped in ErrMetadataUnusable so a caller can CLASSIFY the
+				// refusal rather than only observe that something failed. The
+				// policy is unchanged: this version is still refused. What changes
+				// is that a caller can now tell "this one version is unusable"
+				// apart from "the index is broken", and respond in proportion --
+				// a resolver by trying another version, a diagnostic traversal by
+				// reporting the package and continuing. Returning an opaque error
+				// forced every caller to choose between aborting and swallowing
+				// everything, and the CLI chose to abort, discarding an entire
+				// walk over one bad entry.
+				//
+				// The original parse error stays in the chain, so the specific
+				// malformed string is still recoverable for diagnostics.
 				return PackageMetadata{}, fmt.Errorf(
-					"index %q: %q %s: parsing requirement %q: %w",
-					idx.origin, pkg, ver, rawReq, reqErr)
+					"index %q: %q %s: parsing requirement %q: %w: %w",
+					idx.origin, pkg, ver, rawReq, ErrMetadataUnusable, reqErr)
 			}
 			meta.RequiresDist = append(meta.RequiresDist, req)
 		}

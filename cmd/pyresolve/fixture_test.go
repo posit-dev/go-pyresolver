@@ -173,6 +173,61 @@ func standardFixture(t *testing.T) string {
 	return writeFixtureRSF(t, []pypirsf.PackageRecord{flask, werkzeug, markupsafe, requests, nodeps})
 }
 
+// unusableMidChainFixture builds a graph where a package REACHED TRANSITIVELY
+// carries a Requires-Dist entry PEP 508 rejects.
+//
+// The shape is what matters. "ubad" sits beside "ugood", which has its own child,
+// so a traversal that aborts on the bad entry loses "uleaf" as well — work it had
+// no reason to discard. That is the production failure in miniature: one malformed
+// entry several hops from the root cost 507 root packages their entire walk.
+func unusableMidChainFixture(t *testing.T) string {
+	t.Helper()
+
+	root := pypirsf.PackageRecord{
+		CanonicalName: "uroot",
+		ProjectName:   "URoot",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "1.0", requiresDist: []string{"ugood", "ubad"}},
+		}),
+	}
+
+	good := pypirsf.PackageRecord{
+		CanonicalName: "ugood",
+		ProjectName:   "UGood",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "1.0", requiresDist: []string{"uleaf"}},
+		}),
+	}
+
+	bad := pypirsf.PackageRecord{
+		CanonicalName: "ubad",
+		ProjectName:   "UBad",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "1.0", requiresDist: []string{"!!! not a requirement"}},
+		}),
+	}
+
+	leaf := pypirsf.PackageRecord{
+		CanonicalName: "uleaf",
+		ProjectName:   "ULeaf",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{{version: "1.0"}}),
+	}
+
+	return writeFixtureRSF(t, []pypirsf.PackageRecord{root, good, bad, leaf})
+}
+
 // noDepsDataFixture builds an RSF with a schema that has no dependency
 // fields at all, exercising pypirsf.ErrNoDependencyData.
 func noDepsDataFixture(t *testing.T) string {

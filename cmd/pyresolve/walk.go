@@ -28,9 +28,13 @@ const defaultWalkDepth = 3
 var walkHelp = `Usage: pyresolve walk --rsf <path> <package> [--depth N] [--json]
 
 Breadth-first walk of the dependency graph reachable from <package>: at each
-step it takes the HIGHEST captured version of a package and follows all of
-its Requires-Dist entries as edges. It prints the reachable package names
-and a count.
+step it selects one version of a package -- the highest that is not a
+pre-release, per PEP 440's default -- and follows all of its Requires-Dist
+entries as edges. It prints the reachable package names and a count.
+
+Packages it could not expand are reported separately rather than aborting the
+walk: those absent from the file, those with no captured dependency data, and
+those whose captured data does not conform to PEP 508.
 
 ` + walkNotResolverNotice + `
 
@@ -64,6 +68,16 @@ type walkResult struct {
 	// dependency metadata was captured, so the walk could not continue through
 	// them.
 	NoDependencyData []string `json:"no_dependency_data,omitempty"`
+
+	// UnusableMetadata lists names whose selected version HAS dependency
+	// metadata that does not conform to the specification -- in practice a
+	// Requires-Dist entry PEP 508 rejects -- so the walk could not expand them.
+	//
+	// Kept distinct from NoDependencyData on purpose. "Nothing was captured" and
+	// "what was captured does not conform" are different facts about the data and
+	// call for different follow-up, and collapsing distinct states into one
+	// report is a mistake this command has already made twice.
+	UnusableMetadata []string `json:"unusable_metadata,omitempty"`
 }
 
 func runWalk(w io.Writer, args []string) error {
@@ -120,7 +134,7 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 	}
 
 	visited := map[index.PackageName]bool{root: true}
-	var absent, noDeps []index.PackageName
+	var absent, noDeps, unusable []index.PackageName
 	queue := []queueItem{{root, 0}}
 
 	for len(queue) > 0 {
@@ -162,6 +176,27 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 				noDeps = append(noDeps, item.name)
 				continue
 			}
+			if errors.Is(err, index.ErrMetadataUnusable) {
+				// The metadata is present but something in it does not conform,
+				// so this version cannot be expanded. Reported as its own
+				// category and the walk continues.
+				//
+				// ⚠️ It used to abort the entire traversal. On a production
+				// snapshot that cost 507 root packages their whole walk over one
+				// malformed entry reached transitively — `walk apache-airflow`
+				// discarded 200+ already-resolved packages because a provider
+				// package several hops away carried "apache-airflow (>=2.3.0.*)".
+				// It also surfaced as exit status 1, which this CLI documents as
+				// "usage or file error", so a legitimate data condition looked
+				// like the user had done something wrong.
+				//
+				// Not folded into noDeps: "we captured nothing" and "what we
+				// captured does not conform" are different facts about the data,
+				// and collapsing distinct states into one report is a mistake this
+				// command has already made twice.
+				unusable = append(unusable, item.name)
+				continue
+			}
 			return usageErrorf("walk: %v", err)
 		}
 
@@ -193,6 +228,12 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 	}
 	sort.Strings(noDepsStrs)
 
+	unusableStrs := make([]string, 0, len(unusable))
+	for _, n := range unusable {
+		unusableStrs = append(unusableStrs, n.String())
+	}
+	sort.Strings(unusableStrs)
+
 	result := walkResult{
 		Root:             root.String(),
 		Depth:            maxDepth,
@@ -201,6 +242,7 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 		Count:            len(names),
 		Absent:           absentStrs,
 		NoDependencyData: noDepsStrs,
+		UnusableMetadata: unusableStrs,
 	}
 
 	if jsonOut {
@@ -220,6 +262,11 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 	if len(result.NoDependencyData) > 0 {
 		ew.printf("\n%d present in this RSF but with no captured dependency data, so the walk "+
 			"stopped there: %v\n", len(result.NoDependencyData), result.NoDependencyData)
+	}
+	if len(result.UnusableMetadata) > 0 {
+		ew.printf("\n%d present in this RSF with dependency metadata that does not conform to "+
+			"PEP 508, so the walk stopped there: %v\n",
+			len(result.UnusableMetadata), result.UnusableMetadata)
 	}
 	return ew.err
 }
