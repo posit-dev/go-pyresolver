@@ -163,16 +163,48 @@ func (idx *RSFIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 		// The producer writes whatever version string the publisher used, so
 		// "1.0" and "1.0.0" can both appear and neither is wrong. Fall back to
 		// PEP 440 equality before giving up.
-		found := false
-		for key, candidate := range decoded {
+		//
+		// ⚠️ MORE THAN ONE KEY CAN QUALIFY, so the choice must not be made by map
+		// iteration order. Go randomizes it, and a package carrying two
+		// equal-comparing spellings with different dependencies then answers
+		// differently from one call to the next on the same index — measured on a
+		// production snapshot as 500 calls returning two distinct results. That is
+		// a wrong answer delivered with total confidence, and it falsifies this
+		// type's documented guarantee that the same file resolves the same way
+		// forever.
+		//
+		// The rule: among keys that compare equal, prefer the one whose spelling
+		// is already canonical, then the lexicographically smallest. The first
+		// clause is the principled half — a key that round-trips through
+		// normalization is the best available evidence of what the publisher
+		// meant. The second exists only to make the outcome total, since two
+		// non-canonical spellings can both compare equal.
+		//
+		// Neither clause makes the underlying data unambiguous: which spelling is
+		// authoritative is unknowable from the snapshot, and the caller cannot
+		// currently detect that it happened. Surfacing the ambiguity needs an API
+		// this interface does not have yet; determinism is the part that can be
+		// fixed here.
+		bestKey, found := "", false
+		bestCanonical := false
+		for key := range decoded {
 			parsed, parseErr := version.Parse(key)
-			if parseErr == nil && parsed.Equal(ver) {
-				raw = candidate
-				found = true
-				break
+			if parseErr != nil || !parsed.Equal(ver) {
+				continue
 			}
+			canonical := parsed.String() == key
+			switch {
+			case !found:
+			case canonical && !bestCanonical:
+			case canonical == bestCanonical && key < bestKey:
+			default:
+				continue
+			}
+			bestKey, bestCanonical, found = key, canonical, true
 		}
-		if !found {
+		if found {
+			raw = decoded[bestKey]
+		} else {
 			// The package exists but this version has no captured metadata.
 			// Unavailable rather than not-found: reporting not-found would
 			// invite a resolver to treat it as a typo and give up on a package

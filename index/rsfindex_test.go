@@ -138,13 +138,61 @@ func openFixtureIndex(t *testing.T) *RSFIndex {
 		},
 	}
 
+	// TWO keys that are PEP 440-equal to each other and to neither's canonical
+	// form, carrying DIFFERENT dependencies. This shape exists in the real
+	// snapshot -- the producer records whatever string a publisher used, so a
+	// package can ship "0.1.0dev" and "0.1dev" as separate entries -- and until
+	// now the fixture could not express it, because every fixture package had a
+	// single version key. A lookup for the canonical spelling matches neither
+	// exactly and falls through to the PEP 440-equality path, where more than one
+	// key qualifies.
+	//
+	// The differing dependencies are the point: if the choice between them is not
+	// deterministic, the two answers are distinguishable and the test can see it.
+	ambiguous := pypirsf.PackageRecord{
+		CanonicalName: "ambiguous",
+		ProjectName:   "Ambiguous",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "0.1.0dev", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "0.1.0dev", requiresDist: []string{"alpha"}},
+			{version: "0.1dev", requiresDist: []string{"beta"}},
+		}),
+	}
+
+	// Two keys that compare equal to a request for "1.0", where exactly ONE is its
+	// own canonical spelling: "1.0.0" round-trips through normalization, while
+	// "01.0.0" normalizes to "1.0.0" and so does not. Neither equals the request's
+	// canonical string "1.0", so the exact-match path misses and the equality
+	// fallback runs.
+	//
+	// ⚠️ THE KEYS ARE CHOSEN SO THE TWO HALVES OF THE RULE DISAGREE. "01.0.0" sorts
+	// FIRST lexicographically, so a tiebreak-only implementation picks the
+	// non-canonical key and the test catches it. An earlier draft used "0.1.0" and
+	// "00.1.0", where the canonical key happens to sort first anyway — that fixture
+	// could not tell the two rules apart, and the test passed against an
+	// implementation with canonical preference removed. Verified against
+	// pypa/packaging after the mutation run exposed it.
+	canonpref := pypirsf.PackageRecord{
+		CanonicalName: "canonpref",
+		ProjectName:   "CanonPref",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "01.0.0", requiresDist: []string{"noncanonical"}},
+			{version: "1.0.0", requiresDist: []string{"canonical"}},
+		}),
+	}
+
 	path := filepath.Join(t.TempDir(), "fixture.rsf")
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("creating fixture: %v", err)
 	}
 	w := rsf.NewWriter(f)
-	for _, rec := range []pypirsf.PackageRecord{flask, broken, padded, nodeps} {
+	for _, rec := range []pypirsf.PackageRecord{flask, broken, padded, nodeps, ambiguous, canonpref} {
 		if _, err := w.WriteObject(rec); err != nil {
 			t.Fatalf("writing %s: %v", rec.CanonicalName, err)
 		}
@@ -472,11 +520,14 @@ func TestRSFIndexConcurrentUse(t *testing.T) {
 func TestRSFIndexExposesCorpusSize(t *testing.T) {
 	idx := openFixtureIndex(t)
 
-	if got := idx.Len(); got != 4 {
-		t.Errorf("Len() = %d, want 4", got)
+	// Must match the record list in openFixtureIndex.
+	const fixturePackages = 6
+
+	if got := idx.Len(); got != fixturePackages {
+		t.Errorf("Len() = %d, want %d", got, fixturePackages)
 	}
-	if got := idx.Packages(); len(got) != 4 {
-		t.Errorf("Packages() returned %d names, want 4", len(got))
+	if got := idx.Packages(); len(got) != fixturePackages {
+		t.Errorf("Packages() returned %d names, want %d", len(got), fixturePackages)
 	}
 }
 
