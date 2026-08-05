@@ -11,7 +11,7 @@
 //	stats     print package count, dependency-dictionary size, and file size
 //	versions  list every version of a package with captured dependency data
 //	deps      print the dependency metadata for one version of a package
-//	walk      breadth-first walk of the highest-version dependency graph
+//	walk      breadth-first walk of the dependency graph, one version per package
 //
 // walk is not a resolver: see its own --help for what that means.
 package main
@@ -34,7 +34,7 @@ Commands:
   stats     package count, dependency-dictionary size, and file size
   versions  every version of a package with captured dependency metadata
   deps      dependency metadata for one version of a package
-  walk      breadth-first walk of the highest-version dependency graph
+  walk      breadth-first walk of the dependency graph, one version per package
             (NOT dependency resolution -- see 'pyresolve walk --help')
 
 Global flags (accepted by every command):

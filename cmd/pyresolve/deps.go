@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/posit-dev/go-python-packaging/version"
@@ -22,7 +21,9 @@ Print the dependency metadata for one version of <package>: its
 Requires-Python constraint, its Requires-Dist requirement strings, and its
 declared extras.
 
-When [version] is omitted, the highest captured PEP 440 version is used.
+When [version] is omitted, the highest captured PEP 440 version is used, except
+that pre-releases are skipped unless a package has nothing else — the default
+PEP 440 selection rule. Name a version explicitly to inspect a pre-release.
 
 Flags:
   --rsf <path>   path to the RSF file (or set PYRESOLVE_RSF)
@@ -69,7 +70,8 @@ func runDeps(w io.Writer, args []string) error {
 }
 
 // depsCmd is the testable core. verArg is the empty string when the caller
-// omitted the version, meaning "use the highest captured version".
+// omitted the version, meaning "select a version per PEP 440's default" — see
+// selectHighest, which is the highest one that is not a pre-release.
 func depsCmd(w io.Writer, path string, jsonOut bool, pkgArg, verArg string) error {
 	file, idx, err := openRSF(path)
 	if err != nil {
@@ -158,6 +160,11 @@ func resolveVersion(ctx context.Context, idx *index.RSFIndex, pkg index.PackageN
 		return version.Version{}, notFoundErrorf("package %q has no captured dependency versions in this RSF", pkgArg)
 	}
 
-	sort.Sort(version.SortedVersions(vers))
-	return vers[len(vers)-1], nil
+	// Not simply the highest: PEP 440 excludes pre-releases from selection
+	// unless nothing else is available. See selectHighest.
+	v, ok := selectHighest(vers)
+	if !ok {
+		return version.Version{}, notFoundErrorf("package %q has no captured dependency versions in this RSF", pkgArg)
+	}
+	return v, nil
 }
