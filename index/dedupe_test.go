@@ -237,3 +237,51 @@ func TestPreferKeyRuleAndOrdering(t *testing.T) {
 		t.Error("between two non-canonical keys the lexicographically smaller must win")
 	}
 }
+
+// TestUnparseableVersionKeysDistinguishesTwoEmptyStates is the regression test for
+// a state collapse that made the CLI report present data as absent.
+//
+// Versions skips a key PEP 440 rejects, which is right for a resolver — a few
+// non-conforming keys are normal and one must not make a whole package
+// unreachable. But when EVERY key is rejected, Versions returns an empty slice,
+// which is indistinguishable from "nothing was captured for this package".
+//
+// Those are different facts. On a production snapshot `holygrail` holds exactly
+// one key, "0.2.1.Perceval", carrying a real dependency on sqlobject — so the data
+// is present and the old message ("no versions with captured dependency data")
+// sent the reader looking for something missing.
+func TestUnparseableVersionKeysDistinguishesTwoEmptyStates(t *testing.T) {
+	idx := openFixtureIndex(t)
+	ctx := context.Background()
+
+	// "flask" has both parseable keys and one bad one ("not-a-version"), so the
+	// bad key must be reported even though versions exist.
+	bad, err := idx.UnparseableVersionKeys(ctx, NewPackageName("flask"))
+	if err != nil {
+		t.Fatalf("UnparseableVersionKeys(flask): %v", err)
+	}
+	if len(bad) != 1 || bad[0] != "not-a-version" {
+		t.Errorf("flask unparseable keys = %v, want [not-a-version]", bad)
+	}
+
+	// A package whose keys all parse reports none.
+	bad, err = idx.UnparseableVersionKeys(ctx, NewPackageName("padded"))
+	if err != nil {
+		t.Fatalf("UnparseableVersionKeys(padded): %v", err)
+	}
+	if len(bad) != 0 {
+		t.Errorf("padded unparseable keys = %v, want none", bad)
+	}
+}
+
+// TestUnparseableVersionKeysPropagatesNotFound keeps the accessor consistent with
+// the rest of the type: an unknown package is ErrPackageNotFound, not an empty
+// result, so a caller cannot mistake "no such package" for "no bad keys".
+func TestUnparseableVersionKeysPropagatesNotFound(t *testing.T) {
+	idx := openFixtureIndex(t)
+
+	_, err := idx.UnparseableVersionKeys(context.Background(), NewPackageName("nonexistent"))
+	if !errors.Is(err, ErrPackageNotFound) {
+		t.Errorf("expected ErrPackageNotFound for an unknown package, got %v", err)
+	}
+}

@@ -31,6 +31,15 @@ type versionsResult struct {
 	Package  string   `json:"package"`
 	Versions []string `json:"versions"`
 	Count    int      `json:"count"`
+
+	// UnparseableKeys lists stored version keys this RSF holds for the package
+	// that PEP 440 rejects, so they cannot be reported as versions.
+	//
+	// Reported because an empty Versions list has two very different causes and
+	// conflating them sends someone hunting for data that is present. A package
+	// whose every key is rejected HAS dependency metadata; it is recorded under a
+	// string the specification does not accept.
+	UnparseableKeys []string `json:"unparseable_keys,omitempty"`
 }
 
 func runVersions(w io.Writer, args []string) error {
@@ -79,10 +88,21 @@ func versionsCmd(w io.Writer, path string, jsonOut bool, pkgArg string) error {
 		strs[i] = v.String()
 	}
 
+	// Only asked for when there is something to explain: a non-empty version list
+	// needs no caveat, and this walks the package's keys a second time.
+	var unparseable []string
+	if len(strs) == 0 {
+		unparseable, err = idx.UnparseableVersionKeys(context.Background(), pkg)
+		if err != nil {
+			return usageErrorf("versions: %v", err)
+		}
+	}
+
 	result := versionsResult{
-		Package:  pkg.String(),
-		Versions: strs,
-		Count:    len(strs),
+		Package:         pkg.String(),
+		Versions:        strs,
+		Count:           len(strs),
+		UnparseableKeys: unparseable,
 	}
 
 	if jsonOut {
@@ -91,6 +111,14 @@ func versionsCmd(w io.Writer, path string, jsonOut bool, pkgArg string) error {
 
 	ew := &errWriter{w: w}
 	if result.Count == 0 {
+		if len(result.UnparseableKeys) > 0 {
+			// The data IS here. Saying otherwise sends the reader looking for
+			// something missing when the problem is the spelling of the key.
+			ew.printf("%s: %d version key(s) present in this RSF, but none is a valid "+
+				"PEP 440 version, so no versions can be reported: %v\n",
+				result.Package, len(result.UnparseableKeys), result.UnparseableKeys)
+			return ew.err
+		}
 		ew.printf("%s: no versions with captured dependency data in this RSF\n", result.Package)
 		return ew.err
 	}

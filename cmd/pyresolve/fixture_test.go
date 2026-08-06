@@ -228,6 +228,31 @@ func unusableMidChainFixture(t *testing.T) string {
 	return writeFixtureRSF(t, []pypirsf.PackageRecord{root, good, bad, leaf})
 }
 
+// allKeysUnparseableFixture builds a package whose ONLY stored version key is one
+// PEP 440 rejects, while carrying real dependency data underneath.
+//
+// This is the shape the standard fixture could not express. "nodeps" there has no
+// dependency field at all, and "flask" has a bad key ALONGSIDE good ones — neither
+// produces the state that matters here, which is an empty version list from a
+// package that does have captured data. On a production snapshot `holygrail` is
+// exactly this: one key, "0.2.1.Perceval", requiring sqlobject.
+func allKeysUnparseableFixture(t *testing.T) string {
+	t.Helper()
+
+	rec := pypirsf.PackageRecord{
+		CanonicalName: "onlybadkeys",
+		ProjectName:   "OnlyBadKeys",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "0.2.1.Perceval", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "0.2.1.Perceval", requiresDist: []string{"sqlobject"}},
+		}),
+	}
+
+	return writeFixtureRSF(t, []pypirsf.PackageRecord{rec})
+}
+
 // noDepsDataFixture builds an RSF with a schema that has no dependency
 // fields at all, exercising pypirsf.ErrNoDependencyData.
 func noDepsDataFixture(t *testing.T) string {
