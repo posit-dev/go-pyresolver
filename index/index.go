@@ -64,6 +64,18 @@ type MetadataIndex interface {
 	// Versions returns every version of pkg the index knows about, in NO
 	// guaranteed order. Callers that need an order must sort.
 	//
+	// NO TWO RETURNED VERSIONS MAY COMPARE EQUAL. PEP 440 equality is coarser
+	// than string equality, so a source carrying both "1.0" and "1.0.0" holds one
+	// version under two spellings, and an implementation must return a single
+	// representative rather than both. Returning both is not merely redundant: a
+	// resolver cannot select between candidates that compare equal, so the choice
+	// silently falls to iteration order, and the two underlying records can
+	// disagree about dependencies.
+	//
+	// An implementation that collapses a class must make Metadata resolve the
+	// representative to the same record it treated as authoritative, or a caller
+	// can hold a version whose dependencies came from the spelling that lost.
+	//
 	// Returns ErrPackageNotFound if pkg is unknown. A known package with no
 	// versions is an empty slice and a nil error.
 	Versions(ctx context.Context, pkg PackageName) ([]version.Version, error)

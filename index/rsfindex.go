@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/posit-dev/go-python-packaging/extras"
@@ -122,6 +123,26 @@ func (idx *RSFIndex) deps(pkg PackageName) (map[string]pypirsf.VersionDeps, erro
 }
 
 // Versions implements MetadataIndex.
+//
+// # PEP 440-equal keys are collapsed to one version
+//
+// The producer records whatever version string a publisher used, so one package
+// can carry both "1.0" and "1.0.0" as separate stored keys. Those are the SAME
+// version under PEP 440, and returning both hands a resolver two candidates it
+// cannot tell apart: they compare equal, so no constraint can select between
+// them, and the choice falls to whatever order the caller happens to iterate.
+//
+// Worse, the two stored records can disagree about dependencies — measured on a
+// production snapshot as 59 equality classes across 56 packages, 10 of which
+// disagree. A resolver offered both would produce a different dependency graph
+// depending on which it picked, with nothing in the data to justify either.
+//
+// So one representative is returned per equality class, chosen by preferKey.
+// Metadata uses that same function, which is what makes the pair coherent: the
+// version handed out here resolves to the record dedup treated as authoritative.
+// It does NOT make the underlying data unambiguous; which spelling the publisher
+// meant is unknowable from the snapshot, and a caller still cannot detect that a
+// class was collapsed.
 func (idx *RSFIndex) Versions(ctx context.Context, pkg PackageName) ([]version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -132,7 +153,13 @@ func (idx *RSFIndex) Versions(ctx context.Context, pkg PackageName) ([]version.V
 		return nil, err
 	}
 
-	out := make([]version.Version, 0, len(decoded))
+	type candidate struct {
+		key       string
+		parsed    version.Version
+		canonical bool
+	}
+
+	candidates := make([]candidate, 0, len(decoded))
 	for raw := range decoded {
 		v, parseErr := version.Parse(raw)
 		if parseErr != nil {
@@ -141,10 +168,55 @@ func (idx *RSFIndex) Versions(ctx context.Context, pkg PackageName) ([]version.V
 			// them must not make every other version unreachable.
 			continue
 		}
-		out = append(out, v)
+		candidates = append(candidates, candidate{key: raw, parsed: v, canonical: v.String() == raw})
+	}
+
+	// Sorting is not about the returned order, which the interface does not
+	// promise — it is what puts the members of a PEP 440 equality class next to
+	// each other so one representative can be chosen per class.
+	sort.Slice(candidates, func(i, j int) bool {
+		if !candidates[i].parsed.Equal(candidates[j].parsed) {
+			return candidates[i].parsed.LessThan(candidates[j].parsed)
+		}
+		// Within a class, order by the same rule that picks the representative, so
+		// the winner is simply the first member.
+		return preferKey(candidates[i].key, candidates[i].canonical,
+			candidates[j].key, candidates[j].canonical)
+	})
+
+	out := make([]version.Version, 0, len(candidates))
+	for i, c := range candidates {
+		if i > 0 && candidates[i-1].parsed.Equal(c.parsed) {
+			// A later member of a class already represented. See the dedup note in
+			// the method doc.
+			continue
+		}
+		out = append(out, c.parsed)
 	}
 
 	return out, nil
+}
+
+// preferKey reports whether key a is the better representative of a PEP 440
+// equality class than key b.
+//
+// Canonical spellings win, then the lexicographically smallest. Shared by
+// Versions and Metadata deliberately: Versions decides which spelling a caller
+// ever sees, and Metadata decides which stored record that spelling resolves to.
+// If those two used separate implementations of "the same rule" they would agree
+// only by coincidence, and a resolver would be able to hold a version that
+// resolves to a different package's dependency set than the one dedup considered
+// authoritative.
+//
+// canonical means the key round-trips through PEP 440 normalization, which is the
+// best available evidence of what the publisher actually wrote. The lexicographic
+// tail exists only to make the outcome total, since two non-canonical spellings
+// can both compare equal.
+func preferKey(a string, aCanonical bool, b string, bCanonical bool) bool {
+	if aCanonical != bCanonical {
+		return aCanonical
+	}
+	return a < b
 }
 
 // Metadata implements MetadataIndex.
@@ -185,6 +257,11 @@ func (idx *RSFIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 		// currently detect that it happened. Surfacing the ambiguity needs an API
 		// this interface does not have yet; determinism is the part that can be
 		// fixed here.
+		//
+		// The rule itself lives in preferKey, shared with Versions, so the version
+		// Versions hands out and the record Metadata resolves for it cannot drift
+		// apart. Two separate implementations of "the same rule" would agree only
+		// by coincidence.
 		bestKey, found := "", false
 		bestCanonical := false
 		for key := range decoded {
@@ -193,14 +270,9 @@ func (idx *RSFIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 				continue
 			}
 			canonical := parsed.String() == key
-			switch {
-			case !found:
-			case canonical && !bestCanonical:
-			case canonical == bestCanonical && key < bestKey:
-			default:
-				continue
+			if !found || preferKey(key, canonical, bestKey, bestCanonical) {
+				bestKey, bestCanonical, found = key, canonical, true
 			}
-			bestKey, bestCanonical, found = key, canonical, true
 		}
 		if found {
 			raw = decoded[bestKey]
