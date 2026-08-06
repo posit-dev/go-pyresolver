@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -35,6 +36,10 @@ entries as edges. It prints the reachable package names and a count.
 Packages it could not expand are reported separately rather than aborting the
 walk: those absent from the file, those with no captured dependency data, and
 those whose captured data does not conform to PEP 508.
+
+A requirement pinned to a URL ("name @ url") is reported rather than followed.
+That form names a specific distribution, so the name is a local label for it and
+not a package in this RSF.
 
 ` + walkNotResolverNotice + `
 
@@ -68,6 +73,15 @@ type walkResult struct {
 	// dependency metadata was captured, so the walk could not continue through
 	// them.
 	NoDependencyData []string `json:"no_dependency_data,omitempty"`
+
+	// DirectURLRequirements lists requirements pinned to a URL with PEP 508's
+	// "name @ url" form, which the walk does not follow.
+	//
+	// Recorded as whole requirement strings rather than names, because the NAME IS
+	// NOT AN IDENTITY HERE. It is a local label for whatever the URL provides, so
+	// reporting "clip" would suggest a PyPI package that the requirement has
+	// nothing to do with. The URL is the only identifying part.
+	DirectURLRequirements []string `json:"direct_url_requirements,omitempty"`
 
 	// UnusableMetadata lists names whose selected version HAS dependency
 	// metadata that does not conform to the specification -- in practice a
@@ -135,6 +149,7 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 
 	visited := map[index.PackageName]bool{root: true}
 	var absent, noDeps, unusable []index.PackageName
+	var directURL []string
 	queue := []queueItem{{root, 0}}
 
 	for len(queue) > 0 {
@@ -201,6 +216,25 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 		}
 
 		for _, req := range meta.RequiresDist {
+			if req.URL != "" {
+				// ⚠️ A DIRECT REFERENCE IS A DIFFERENT PACKAGE FROM THE INDEX ENTRY
+				// OF THE SAME NAME, and following the name substitutes an unrelated
+				// project for the one the publisher asked for.
+				//
+				// PEP 508's "name @ url" form pins the distribution to that URL. The
+				// name is a local label for it, not a lookup key: `memery` requires
+				// "clip @ git+https://github.com/openai/CLIP@main", which is OpenAI's
+				// CLIP and has nothing to do with the "clip" on PyPI. Walking into
+				// the index by name reported that unrelated project as reachable,
+				// and would have reported ITS dependencies as reachable too.
+				//
+				// Reported as its own category rather than traversed. This RSF holds
+				// PyPI, so a direct reference is by definition not in it, and
+				// resolving one would mean fetching the URL — which this tool
+				// deliberately never does.
+				directURL = append(directURL, req.String())
+				continue
+			}
 			depName := index.NewPackageName(req.Name)
 			if visited[depName] {
 				continue
@@ -234,15 +268,21 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 	}
 	sort.Strings(unusableStrs)
 
+	// Deduplicated: the same direct reference can be reached from several
+	// packages, and listing it repeatedly says nothing extra.
+	sort.Strings(directURL)
+	directURL = slices.Compact(directURL)
+
 	result := walkResult{
-		Root:             root.String(),
-		Depth:            maxDepth,
-		Note:             walkNotResolverNotice,
-		Packages:         names,
-		Count:            len(names),
-		Absent:           absentStrs,
-		NoDependencyData: noDepsStrs,
-		UnusableMetadata: unusableStrs,
+		Root:                  root.String(),
+		Depth:                 maxDepth,
+		Note:                  walkNotResolverNotice,
+		Packages:              names,
+		Count:                 len(names),
+		Absent:                absentStrs,
+		NoDependencyData:      noDepsStrs,
+		UnusableMetadata:      unusableStrs,
+		DirectURLRequirements: directURL,
 	}
 
 	if jsonOut {
@@ -267,6 +307,11 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 		ew.printf("\n%d present in this RSF with dependency metadata that does not conform to "+
 			"PEP 508, so the walk stopped there: %v\n",
 			len(result.UnusableMetadata), result.UnusableMetadata)
+	}
+	if len(result.DirectURLRequirements) > 0 {
+		ew.printf("\n%d requirement(s) pinned to a URL, which name a specific distribution "+
+			"rather than a package in this RSF and were not followed: %v\n",
+			len(result.DirectURLRequirements), result.DirectURLRequirements)
 	}
 	return ew.err
 }
