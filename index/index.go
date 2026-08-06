@@ -30,6 +30,29 @@ var (
 	// unbuildable sdist as "not found" would let the resolver silently choose
 	// an older version, which looks like a successful resolution and is not.
 	ErrMetadataUnavailable = errors.New("metadata unavailable")
+
+	// ErrMetadataUnusable means the metadata for a package version EXISTS but
+	// cannot be used, because something in it does not conform to the
+	// specification the resolver relies on -- in practice a Requires-Dist entry
+	// PEP 508 rejects.
+	//
+	// # Why this is a separate sentinel
+	//
+	// Refusing such a version is deliberate and must stay that way: silently
+	// dropping a requirement the module cannot parse would hand the resolver an
+	// incomplete dependency set and produce a confident wrong answer. But a
+	// caller has to be able to tell that refusal apart from an I/O failure or a
+	// programming error, and before this sentinel existed it could not -- the
+	// failure arrived as an opaque error, so every caller had to either abort or
+	// swallow everything.
+	//
+	// The distinction from ErrMetadataUnavailable is the presence of a record.
+	// There, nothing was captured and no amount of care would help. Here the data
+	// is present and specific, so the right response depends on the caller: a
+	// resolver should treat the version as ineligible and try another, while a
+	// diagnostic traversal should report the package and carry on rather than
+	// discard everything it has already learned.
+	ErrMetadataUnusable = errors.New("metadata unusable")
 )
 
 // MetadataIndex is the architectural seam between the resolver and storage.

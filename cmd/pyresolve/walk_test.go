@@ -247,3 +247,79 @@ func TestWalkCmdDistinguishesAbsentFromUncaptured(t *testing.T) {
 		t.Errorf("text output should report uncaptured names distinctly:\n%s", out)
 	}
 }
+
+// TestWalkCmdSurvivesUnusableMetadataMidChain is the regression test for the
+// failure that cost 507 root packages their entire walk on a production snapshot.
+//
+// A package reached transitively carried a Requires-Dist entry PEP 508 rejects.
+// The index refuses that version — correctly, since silently dropping the entry
+// would under-constrain the graph — but walk turned the refusal into an abort,
+// discarding everything already traversed and exiting 1, a status this CLI
+// documents as "usage or file error".
+//
+// The fixture puts the bad package BESIDE a good branch that has its own child, so
+// an abort loses "uleaf" too. Asserting that uleaf is present is what proves
+// progress was kept rather than merely that no error surfaced.
+func TestWalkCmdSurvivesUnusableMetadataMidChain(t *testing.T) {
+	path := unusableMidChainFixture(t)
+
+	var buf bytes.Buffer
+	if err := walkCmd(&buf, path, true, "uroot", 5); err != nil {
+		t.Fatalf("walkCmd aborted on unusable metadata instead of reporting it: %v", err)
+	}
+
+	var result walkResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshaling JSON: %v\noutput: %s", err, buf.String())
+	}
+
+	got := map[string]bool{}
+	for _, p := range result.Packages {
+		got[p] = true
+	}
+	for _, name := range []string{"uroot", "ugood", "ubad", "uleaf"} {
+		if !got[name] {
+			t.Errorf("expected %q reachable, packages = %v", name, result.Packages)
+		}
+	}
+
+	// uleaf is the load-bearing one: it is only reachable by continuing past the
+	// bad package, so its presence is what distinguishes "reported and continued"
+	// from "happened not to crash".
+	if !got["uleaf"] {
+		t.Error("uleaf is beyond the bad package's sibling branch; losing it means the " +
+			"walk discarded work it had already done")
+	}
+
+	if len(result.UnusableMetadata) != 1 || result.UnusableMetadata[0] != "ubad" {
+		t.Errorf("UnusableMetadata = %v, want exactly [ubad]", result.UnusableMetadata)
+	}
+
+	// Not conflated with the no-data category: those are different facts about the
+	// data and this command has collapsed distinct states twice before.
+	for _, n := range result.NoDependencyData {
+		if n == "ubad" {
+			t.Error("ubad has metadata that does not conform; reporting it as having NO " +
+				"captured dependency data sends the reader looking for the wrong thing")
+		}
+	}
+}
+
+// TestWalkCmdTextOutputReportsUnusableMetadata checks the human-readable path too.
+// The JSON field existing is no help to someone running the command without --json.
+func TestWalkCmdTextOutputReportsUnusableMetadata(t *testing.T) {
+	path := unusableMidChainFixture(t)
+
+	var buf bytes.Buffer
+	if err := walkCmd(&buf, path, false, "uroot", 5); err != nil {
+		t.Fatalf("walkCmd: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "ubad") {
+		t.Errorf("text output does not mention the package it could not expand:\n%s", out)
+	}
+	if !strings.Contains(out, "PEP 508") {
+		t.Errorf("text output does not say WHY it could not expand it:\n%s", out)
+	}
+}
