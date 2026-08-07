@@ -79,3 +79,77 @@ func TestVersionsCmdPackageWithNoCapturedDeps(t *testing.T) {
 		t.Errorf("expected a clear zero-versions message, got:\n%s", buf.String())
 	}
 }
+
+// TestVersionsCmdReportsUnparseableKeysRatherThanClaimingNoData is the regression
+// test for the state collapse: a package whose every stored key PEP 440 rejects
+// was reported as having no captured dependency data, when it HAS data recorded
+// under a key the specification does not accept.
+//
+// Asserting the key is named is the point. "None of the keys is valid" without
+// saying which one leaves the reader no better off than the old message did.
+func TestVersionsCmdReportsUnparseableKeysRatherThanClaimingNoData(t *testing.T) {
+	path := allKeysUnparseableFixture(t)
+
+	var buf bytes.Buffer
+	if err := versionsCmd(&buf, path, false, "onlybadkeys"); err != nil {
+		t.Fatalf("versionsCmd: %v", err)
+	}
+	out := buf.String()
+
+	if strings.Contains(out, "no versions with captured dependency data") {
+		t.Errorf("reported present data as absent; the package has a key carrying a real "+
+			"dependency:\n%s", out)
+	}
+	if !strings.Contains(out, "0.2.1.Perceval") {
+		t.Errorf("did not name the offending key, so the reader cannot act on it:\n%s", out)
+	}
+	if !strings.Contains(out, "PEP 440") {
+		t.Errorf("did not say WHY the key was rejected:\n%s", out)
+	}
+}
+
+// TestVersionsCmdJSONCarriesUnparseableKeys covers the machine-readable path; a
+// message only in the text output is invisible to anything scripting this.
+func TestVersionsCmdJSONCarriesUnparseableKeys(t *testing.T) {
+	path := allKeysUnparseableFixture(t)
+
+	var buf bytes.Buffer
+	if err := versionsCmd(&buf, path, true, "onlybadkeys"); err != nil {
+		t.Fatalf("versionsCmd: %v", err)
+	}
+
+	var result versionsResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshaling JSON: %v\noutput: %s", err, buf.String())
+	}
+	if result.Count != 0 {
+		t.Errorf("Count = %d, want 0", result.Count)
+	}
+	if len(result.UnparseableKeys) != 1 || result.UnparseableKeys[0] != "0.2.1.Perceval" {
+		t.Errorf("UnparseableKeys = %v, want [0.2.1.Perceval]", result.UnparseableKeys)
+	}
+}
+
+// TestVersionsCmdOmitsUnparseableKeysWhenVersionsExist keeps the new field from
+// becoming noise. "flask" in the standard fixture has a bad key alongside good
+// ones; the command answers the question asked and does not caveat a successful
+// listing.
+func TestVersionsCmdOmitsUnparseableKeysWhenVersionsExist(t *testing.T) {
+	path := standardFixture(t)
+
+	var buf bytes.Buffer
+	if err := versionsCmd(&buf, path, true, "flask"); err != nil {
+		t.Fatalf("versionsCmd: %v", err)
+	}
+
+	var result versionsResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshaling JSON: %v", err)
+	}
+	if result.Count == 0 {
+		t.Fatal("precondition: flask should have versions")
+	}
+	if len(result.UnparseableKeys) != 0 {
+		t.Errorf("UnparseableKeys = %v, want empty when versions were reported", result.UnparseableKeys)
+	}
+}

@@ -166,6 +166,13 @@ func (idx *RSFIndex) Versions(ctx context.Context, pkg PackageName) ([]version.V
 			// A version key PEP 440 rejects is skipped rather than failing the
 			// package. Real corpora carry a few non-conforming keys, and one of
 			// them must not make every other version unreachable.
+			//
+			// ⚠️ Skipping is silent HERE by design, but it must not be silent to a
+			// human. When EVERY key of a package is rejected this returns an empty
+			// slice, which is indistinguishable from a package for which nothing
+			// was captured at all — and those are different facts. See
+			// UnparseableVersionKeys, which exists so a diagnostic caller can tell
+			// them apart.
 			continue
 		}
 		candidates = append(candidates, candidate{key: raw, parsed: v, canonical: v.String() == raw})
@@ -212,6 +219,47 @@ func (idx *RSFIndex) Versions(ctx context.Context, pkg PackageName) ([]version.V
 // best available evidence of what the publisher actually wrote. The lexicographic
 // tail exists only to make the outcome total, since two non-canonical spellings
 // can both compare equal.
+// UnparseableVersionKeys returns the stored version keys for pkg that PEP 440
+// rejects, sorted. It is empty when every key parses.
+//
+// # Why this exists
+//
+// Versions skips a key it cannot parse, which is the right behaviour for a
+// resolver: a few non-conforming keys are normal in a real corpus and one of them
+// must not make every other version of that package unreachable.
+//
+// ⚠️ But when EVERY key of a package is rejected, Versions returns an empty slice,
+// and that is indistinguishable from a package for which nothing was captured at
+// all. Those are different facts and they call for different responses. Reporting
+// the second when the first is true sends someone looking for missing data that is
+// actually present, just recorded under a string the specification does not
+// accept — the snapshot holds `holygrail` with one key, "0.2.1.Perceval", carrying
+// a real dependency on sqlobject.
+//
+// Deliberately NOT on the MetadataIndex interface. A resolver has no use for it;
+// it exists for diagnostics, and widening the resolver seam for a reporting
+// concern would oblige every implementation to answer a question none of them are
+// asked.
+func (idx *RSFIndex) UnparseableVersionKeys(ctx context.Context, pkg PackageName) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	decoded, err := idx.deps(pkg)
+	if err != nil {
+		return nil, err
+	}
+
+	var bad []string
+	for raw := range decoded {
+		if _, parseErr := version.Parse(raw); parseErr != nil {
+			bad = append(bad, raw)
+		}
+	}
+	sort.Strings(bad)
+	return bad, nil
+}
+
 func preferKey(a string, aCanonical bool, b string, bCanonical bool) bool {
 	if aCanonical != bCanonical {
 		return aCanonical
