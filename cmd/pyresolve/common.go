@@ -43,6 +43,20 @@ func notFoundErrorf(format string, a ...any) error {
 	return &cliError{code: 2, msg: fmt.Sprintf(format, a...)}
 }
 
+// unusableErrorf builds a cliError that exits 3: the record is present in this
+// RSF, and what it contains does not conform to the spec — in practice a
+// Requires-Dist entry PEP 508 rejects.
+//
+// This gets a code of its own rather than reusing 1 or 2 because it is neither
+// of those things. Exiting 1 says "usage or file error", which blames the
+// caller for a fact about the data, and a script cannot tell it apart from a
+// typo in the arguments. Exiting 2 says the package or version is absent, when
+// the record is present and specific. `walk` already keeps this state separate
+// in its report; this is the same distinction at the process boundary.
+func unusableErrorf(format string, a ...any) error {
+	return &cliError{code: 3, msg: fmt.Sprintf(format, a...)}
+}
+
 // exitCodeFor maps err to a process exit code. Any error that is not a
 // *cliError (for example an I/O failure surfaced from deep inside pypirsf)
 // defaults to 1, a generic runtime failure.

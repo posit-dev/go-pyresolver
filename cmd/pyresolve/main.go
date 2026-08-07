@@ -43,7 +43,8 @@ Global flags (accepted by every command):
 
 Run 'pyresolve <command> --help' for details on a specific command.
 
-Exit codes: 0 success, 1 usage or file error, 2 package not found.
+Exit codes: 0 success, 1 usage or file error, 2 package not found,
+3 metadata present but not conforming.
 `
 
 func main() {

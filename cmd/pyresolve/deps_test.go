@@ -89,6 +89,34 @@ func TestDepsCmdUncapturedVersion(t *testing.T) {
 	}
 }
 
+// A record that is present but does not conform must not be reported as a
+// usage error. `walk` already keeps this state separate; `deps` used to fall
+// through to exit 1, which this CLI documents as "usage or file error", so a
+// fact about the data read as the caller having mistyped something. Exit 3 is
+// the state's own code: not 1, and not 2 either, because the package and the
+// version are both present.
+func TestDepsCmdUnusableMetadata(t *testing.T) {
+	// unusableMidChainFixture already carries `ubad` 1.0, whose sole
+	// Requires-Dist entry PEP 508 rejects. It was built for the walk test; the
+	// condition is the same one at a different command.
+	path := unusableMidChainFixture(t)
+
+	var buf bytes.Buffer
+	err := depsCmd(&buf, path, false, "ubad", "1.0")
+	if err == nil {
+		t.Fatal("expected an error for a version whose Requires-Dist does not parse")
+	}
+	if got := exitCodeFor(err); got != 3 {
+		t.Errorf("exit code = %d, want 3 (metadata present but not conforming); "+
+			"1 would blame the caller, 2 would claim the version is absent", got)
+	}
+	// The offending string is the only actionable detail, so it must survive
+	// to the message rather than being summarized away.
+	if !strings.Contains(err.Error(), "!!! not a requirement") {
+		t.Errorf("error should quote the offending requirement, got: %v", err)
+	}
+}
+
 func TestDepsCmdInvalidVersionString(t *testing.T) {
 	path := standardFixture(t)
 

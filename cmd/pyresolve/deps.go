@@ -95,6 +95,13 @@ func depsCmd(w io.Writer, path string, jsonOut bool, pkgArg, verArg string) erro
 		if errors.Is(err, index.ErrMetadataUnavailable) {
 			return notFoundErrorf("package %q has no captured dependency metadata for version %s in this RSF", pkgArg, ver)
 		}
+		if errors.Is(err, index.ErrMetadataUnusable) {
+			// The record is present and does not conform. Distinct from
+			// ErrMetadataUnavailable above, where nothing was captured at all.
+			// The wrapped error names the offending string, so it is passed
+			// through rather than summarized.
+			return unusableErrorf("package %q version %s has dependency metadata that does not conform: %v", pkgArg, ver, err)
+		}
 		return usageErrorf("deps: %v", err)
 	}
 
