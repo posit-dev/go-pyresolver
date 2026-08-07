@@ -13,6 +13,42 @@ served it.
 
 ## [Unreleased]
 
+### Breaking
+
+- `pyresolve`'s `--` now works. It never did, in any position: `reorderArgs` consumed the
+  terminator without re-emitting it, so `flag.Parse` — which does its own scan over the
+  reordered arguments, and for which `--` is the only stop token — never saw it. A package
+  named `--json` was parsed as the `--json` flag, and the command then exited **1**
+  ("usage or file error") reporting `expected exactly one package name argument, got []`,
+  blaming the caller for a name it had silently eaten. Listed as Breaking because arguments
+  after `--` are now taken literally, which is the documented behavior but not the previous
+  one.
+
+### Fixed
+
+- `RSFIndex.Metadata` and `RSFIndex.Files` reject an uninitialized (zero-value)
+  `version.Version` with an explicit error naming it as a caller bug, rather than reporting
+  `ErrMetadataUnavailable` — which blames the RSF for having no such version when the real
+  problem is the argument. Deliberately not a new sentinel: there is nothing to branch on,
+  only code to fix.
+
+  This also closed a crash. Before `go-python-packaging` v0.3.1, `Version.String()` panicked
+  on a zero value, so `Metadata` died on `decoded[ver.String()]`. `Files` did *not*, because
+  `fmt` recovers a panic raised inside a `String` method and substitutes
+  `%!s(PANIC=...)` — so it returned a garbled but plausible-looking error. The bump alone
+  would have converted the crash into a silent wrong answer; the guard is what keeps it
+  diagnosable.
+
+### Changed
+
+- Requires `go-python-packaging` **v0.3.1** (from v0.3.0), for the zero-value `Version`
+  fixes above.
+- Documented why `walk`'s `ErrMetadataUnavailable` branch is unreachable and kept. It is
+  unreachable only for `RSFIndex`, whose `Versions`/`Metadata` agreement is a tested
+  invariant; the `MetadataIndex` contract permits that error for a known sdist-only release
+  and `MockIndex` already returns it, so deleting the branch would trade dead code for a
+  latent gap that reappears the moment the command is generalized to the interface.
+
 ## [0.1.0] - 2026-08-07
 
 First release. **Read what is not in it before depending on it.**

@@ -4,8 +4,8 @@ github.com/klauspost/compress v1.19.1 h1:VsB4HPswih7mmZ8WleSFQ75c/Ui1M4trX5oAsJn
 github.com/klauspost/compress v1.19.1/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/posit-dev/go-python-packaging v0.3.0 h1:JGGslJqxOd5i6eRLDr8crIPXVuCMWTEloYPqcONEsqM=
-github.com/posit-dev/go-python-packaging v0.3.0/go.mod h1:NkELXOh/eRDT7c+LKFxJd+HkyGpKFsUIxpTYaq5xdkU=
+github.com/posit-dev/go-python-packaging v0.3.1 h1:0iFrlgqg/DdE3wo7SKBjAATG11hq9PsHq2/6B4dzo2c=
+github.com/posit-dev/go-python-packaging v0.3.1/go.mod h1:NkELXOh/eRDT7c+LKFxJd+HkyGpKFsUIxpTYaq5xdkU=
 github.com/rstudio/go-version v0.0.2 h1:ihU0xaF+Yuya0p2J6C8dfyB4gu/YehM1d6cTpabf/7A=
 github.com/rstudio/go-version v0.0.2/go.mod h1:Xfuma+m4R9L0P+Hof8iDDiL4/TJ8VjpdDXWq8qGXHL4=
 github.com/rstudio/repository-snapshot-format v0.12.0 h1:a6gRfXPLOR+5YxN7irO097lpWGOPMe8ZoATGkC9hcWE=

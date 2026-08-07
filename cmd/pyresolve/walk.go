@@ -188,6 +188,29 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 				// The package and version exist, but this version's metadata
 				// was not captured — same practical outcome as no versions at
 				// all, and equally not an absent package.
+				//
+				// ⚠️ THIS BRANCH IS UNREACHABLE TODAY, AND IS KEPT DELIBERATELY.
+				// Mutation testing across 8 real walks could not reach it, which
+				// looks like dead code worth deleting. It is not:
+				//
+				//   - It is unreachable only for *index.RSFIndex, which is the
+				//     concrete type this command holds. RSFIndex builds Versions
+				//     and Metadata from the same decoded map, and selectHighest
+				//     only ever returns a member of what Versions just returned,
+				//     so Metadata always finds a record. index/dedupe_test.go's
+				//     TestVersionsAndMetadataAgreeOnEveryVersion pins exactly
+				//     that invariant, so this is a guaranteed property of one
+				//     implementation rather than an accident.
+				//   - The MetadataIndex CONTRACT (index/index.go) permits
+				//     ErrMetadataUnavailable for a known version whose metadata
+				//     would need a build (sdist-only), and index.MockIndex
+				//     already returns it. Any index that is not backed purely by
+				//     an RSF -- a JSON or DB index -- will reach this.
+				//
+				// So deleting it would trade dead code for a latent gap that
+				// reappears the moment walkCmd is generalized to the interface,
+				// and the failure would be a silently wrong walk rather than a
+				// compile error.
 				noDeps = append(noDeps, item.name)
 				continue
 			}

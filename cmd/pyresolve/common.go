@@ -98,6 +98,20 @@ func newFlagSet(name string) (*flag.FlagSet, *globalFlags) {
 //
 // "--" ends flag scanning early, matching flag.Parse's own convention: every
 // token after it is treated as positional without inspection.
+//
+// ⚠️ The "--" token is RE-EMITTED, not swallowed. Stopping our own scan is only
+// half the job: flag.Parse does its own scan over whatever we return, and "--"
+// is the only thing that stops it (flag/flag.go: `if len(s) == 2` terminates the
+// flags). Dropping the token therefore un-protected exactly the arguments it was
+// written to protect -- `versions -- --json` came back as ["--json"], which
+// flag.Parse read as the --json flag, leaving zero positional arguments and
+// reporting "expected exactly one package name argument, got []" about a package
+// legitimately named "--json".
+//
+// It never worked in any position, because positional always follows flagArgs in
+// the returned slice: `versions pkg -- --json` came back as ["pkg", "--json"],
+// where flag.Parse stops at the non-flag "pkg" and hands back two positional
+// arguments instead of one.
 func reorderArgs(fs *flag.FlagSet, args []string) []string {
 	var flagArgs, positional []string
 
@@ -105,7 +119,10 @@ func reorderArgs(fs *flag.FlagSet, args []string) []string {
 		a := args[i]
 
 		if a == "--" {
-			positional = append(positional, args[i+1:]...)
+			// Keep the terminator at the head of the positional run so it
+			// survives into fs.Parse, which is what actually protects the
+			// tokens after it.
+			positional = append(positional, args[i:]...)
 			break
 		}
 
