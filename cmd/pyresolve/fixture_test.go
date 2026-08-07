@@ -170,7 +170,29 @@ func standardFixture(t *testing.T) string {
 		},
 	}
 
-	return writeFixtureRSF(t, []pypirsf.PackageRecord{flask, werkzeug, markupsafe, requests, nodeps})
+	// A record whose Requires-Python cannot be parsed. Deliberately its own
+	// package rather than another flask version: flask's highest version is
+	// asserted to be 3.0.1 by TestDepsCmdOmittedVersionUsesHighest, so adding a
+	// higher one here would silently retarget that test.
+	//
+	// ">= 3.8 or whatever" is representative of the real shape -- prose where a
+	// specifier belongs -- and the point is that it is NOT empty. An absent
+	// Requires-Python and an unreadable one are different facts, and both used
+	// to print "(unconstrained)".
+	badPython := pypirsf.PackageRecord{
+		CanonicalName: "badpython",
+		ProjectName:   "BadPython",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "1.0", requiresPython: ">= 3.8 or whatever"},
+		}),
+	}
+
+	return writeFixtureRSF(t, []pypirsf.PackageRecord{
+		flask, werkzeug, markupsafe, requests, nodeps, badPython,
+	})
 }
 
 // unusableMidChainFixture builds a graph where a package REACHED TRANSITIVELY
@@ -251,6 +273,43 @@ func allKeysUnparseableFixture(t *testing.T) string {
 	}
 
 	return writeFixtureRSF(t, []pypirsf.PackageRecord{rec})
+}
+
+// absentAndUncapturedFixture builds a root with two dependencies that fail in
+// DIFFERENT ways: one has no record in this RSF at all, the other has a record
+// but no captured dependency data.
+//
+// Extracted from TestWalkCmdDistinguishesAbsentFromUncaptured, which built it
+// inline, so the reachable-set tests can use the same shape rather than growing
+// a third near-duplicate. Both states are needed together: the whole point is
+// that they are not interchangeable.
+//
+// The root is named "aroot" rather than "root" so it sorts ahead of its
+// dependencies, which keeps the text-output assertions stable.
+func absentAndUncapturedFixture(t *testing.T) string {
+	t.Helper()
+
+	root := pypirsf.PackageRecord{
+		CanonicalName: "aroot",
+		ProjectName:   "ARoot",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "1.0", requiresDist: []string{"present-but-empty", "totally-absent"}},
+		}),
+		Depsdict: buildDepsdictField(),
+	}
+	// Present in the file, but no deps field at all, so no captured versions.
+	presentButEmpty := pypirsf.PackageRecord{
+		CanonicalName: "present-but-empty",
+		ProjectName:   "PresentButEmpty",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "9.9", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+	}
+
+	return writeFixtureRSF(t, []pypirsf.PackageRecord{root, presentButEmpty})
 }
 
 // noDepsDataFixture builds an RSF with a schema that has no dependency

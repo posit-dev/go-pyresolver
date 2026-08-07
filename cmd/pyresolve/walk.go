@@ -59,14 +59,23 @@ Flags:
 // The second case is common and expected: a package with no built distribution
 // has no captured dependency metadata.
 type walkResult struct {
-	Root     string   `json:"root"`
-	Depth    int      `json:"depth"`
-	Note     string   `json:"note"`
+	Root  string `json:"root"`
+	Depth int    `json:"depth"`
+	Note  string `json:"note"`
+
+	// Packages lists the names reached that HAVE a record in this RSF, and Count
+	// is its length. Names in Absent are excluded: they are referenced by some
+	// dependency but are not in this file, so calling them reachable packages
+	// both double-reports them and inflates Count with things that cannot be
+	// installed from here.
+	//
+	// Names in NoDependencyData and UnusableMetadata ARE included. Those
+	// packages exist in this RSF; the walk simply could not expand them.
 	Packages []string `json:"packages"`
 	Count    int      `json:"count"`
 
 	// Absent lists names referenced by some dependency but having no record in
-	// this RSF at all.
+	// this RSF at all. Disjoint from Packages.
 	Absent []string `json:"absent,omitempty"`
 
 	// NoDependencyData lists names present in this RSF for which no usable
@@ -267,8 +276,32 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 		}
 	}
 
+	// A name is added to `visited` when its EDGE is discovered, before anything
+	// is known about whether it exists. Names that turn out to have no record in
+	// this RSF are therefore removed here, or the same name is reported twice
+	// with contradictory meanings: once under Packages ("reachable") and once
+	// under Absent ("no record in this RSF"). The trailing "N package(s)
+	// reachable" counted them too, inflating the total with names that cannot be
+	// installed from this file.
+	//
+	// ⚠️ Only ABSENT names are removed. NoDependencyData and UnusableMetadata
+	// names DO have records here -- they are real packages that the walk merely
+	// could not expand, one because nothing was captured and one because what
+	// was captured does not conform. Dropping those would understate the closure
+	// and lose the distinction between "not in this file" and "in this file but
+	// unreadable", which is the collapse this command keeps having to fix. The
+	// finding this fixes (rstudio/package-manager#19466 F10) grouped absent and
+	// uncaptured together; they are not the same, and only the first is wrong.
+	absentSet := make(map[index.PackageName]bool, len(absent))
+	for _, n := range absent {
+		absentSet[n] = true
+	}
+
 	names := make([]string, 0, len(visited))
 	for n := range visited {
+		if absentSet[n] {
+			continue
+		}
 		names = append(names, n.String())
 	}
 	sort.Strings(names)

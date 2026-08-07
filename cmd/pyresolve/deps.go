@@ -33,11 +33,20 @@ Flags:
 
 // depsResult is the deps command's output shape.
 type depsResult struct {
-	Package        string   `json:"package"`
-	Version        string   `json:"version"`
-	RequiresPython string   `json:"requires_python,omitempty"`
-	RequiresDist   []string `json:"requires_dist"`
-	ProvidesExtra  []string `json:"provides_extra,omitempty"`
+	Package        string `json:"package"`
+	Version        string `json:"version"`
+	RequiresPython string `json:"requires_python,omitempty"`
+
+	// RequiresPythonRaw and RequiresPythonUnreadable are only emitted when the
+	// record's interpreter constraint could not be parsed. Together they say
+	// "the publisher declared this, and we could not read it" -- which the
+	// RequiresPython field alone cannot express, since an unreadable constraint
+	// and an absent one both leave it empty.
+	RequiresPythonRaw        string `json:"requires_python_raw,omitempty"`
+	RequiresPythonUnreadable bool   `json:"requires_python_unreadable,omitempty"`
+
+	RequiresDist  []string `json:"requires_dist"`
+	ProvidesExtra []string `json:"provides_extra,omitempty"`
 }
 
 func runDeps(w io.Writer, args []string) error {
@@ -111,11 +120,15 @@ func depsCmd(w io.Writer, path string, jsonOut bool, pkgArg, verArg string) erro
 	}
 
 	result := depsResult{
-		Package:        pkg.String(),
-		Version:        ver.String(),
-		RequiresPython: meta.RequiresPython.String(),
-		RequiresDist:   reqs,
-		ProvidesExtra:  meta.ProvidesExtra,
+		Package:                  pkg.String(),
+		Version:                  ver.String(),
+		RequiresPython:           meta.RequiresPython.String(),
+		RequiresPythonUnreadable: meta.RequiresPythonUnreadable,
+		RequiresDist:             reqs,
+		ProvidesExtra:            meta.ProvidesExtra,
+	}
+	if meta.RequiresPythonUnreadable {
+		result.RequiresPythonRaw = meta.RequiresPythonRaw
 	}
 
 	if jsonOut {
@@ -124,9 +137,18 @@ func depsCmd(w io.Writer, path string, jsonOut bool, pkgArg, verArg string) erro
 
 	ew := &errWriter{w: w}
 	ew.printf("%s %s\n", result.Package, result.Version)
-	if result.RequiresPython != "" {
+	// Three states, not two. "(unconstrained)" was printed for both an absent
+	// constraint and an unreadable one, which asserts the publisher declared
+	// nothing when the publisher declared something we could not read -- and
+	// hides that this version is being admitted for every interpreter by
+	// fallback rather than by declaration.
+	switch {
+	case result.RequiresPythonUnreadable:
+		ew.printf("Requires-Python: (unreadable: %q, treated as unconstrained)\n",
+			result.RequiresPythonRaw)
+	case result.RequiresPython != "":
 		ew.printf("Requires-Python: %s\n", result.RequiresPython)
-	} else {
+	default:
 		ew.println("Requires-Python: (unconstrained)")
 	}
 	if len(result.RequiresDist) == 0 {

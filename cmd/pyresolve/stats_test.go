@@ -18,8 +18,8 @@ func TestStatsCmdText(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "Packages:               5\n") {
-		t.Errorf("expected 5 packages in output, got:\n%s", out)
+	if !strings.Contains(out, "Packages:               6\n") {
+		t.Errorf("expected 6 packages in output, got:\n%s", out)
 	}
 	if !strings.Contains(out, "File size:") {
 		t.Errorf("expected a file size line, got:\n%s", out)
@@ -38,8 +38,8 @@ func TestStatsCmdJSON(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshaling JSON: %v\noutput: %s", err, buf.String())
 	}
-	if result.Packages != 5 {
-		t.Errorf("Packages = %d, want 5", result.Packages)
+	if result.Packages != 6 {
+		t.Errorf("Packages = %d, want 6", result.Packages)
 	}
 	if result.FileSizeB <= 0 {
 		t.Errorf("FileSizeB = %d, want > 0", result.FileSizeB)

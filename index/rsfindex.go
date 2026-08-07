@@ -375,6 +375,13 @@ func (idx *RSFIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 		}
 	}
 
+	// Preserved verbatim whether or not it parses, so a caller can tell "the
+	// record declared no interpreter constraint" from "the record declared one
+	// we could not read". Discarding it made those two indistinguishable, and
+	// the CLI reported both as "(unconstrained)" -- claiming the publisher said
+	// nothing when the publisher said something unreadable.
+	meta.RequiresPythonRaw = raw.RequiresPython
+
 	if raw.RequiresPython != "" {
 		specs, specErr := version.NewSpecifiers(raw.RequiresPython)
 		if specErr != nil {
@@ -386,12 +393,11 @@ func (idx *RSFIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 			// InvalidSpecifier on Requires-Python and treats the candidate as
 			// compatible.
 			//
-			// ⚠️ The empty set only MEANS unconstrained if callers ask through
-			// PackageMetadata.SupportsPython. Specifiers.Check answers false for
-			// every version when it holds no groups, so a caller reaching for
-			// Check directly gets the exact inverse of this policy. See
-			// SupportsPython.
+			// The permissiveness is recorded rather than merely applied: this is
+			// a decision the decoder made, not a fact about the record, and
+			// RequiresPythonUnreadable is what lets a caller say so.
 			meta.RequiresPython = version.Specifiers{}
+			meta.RequiresPythonUnreadable = true
 		} else {
 			meta.RequiresPython = specs
 		}
