@@ -96,11 +96,12 @@ go vet ./...
 
 Module floor is **Go 1.25**, matching `go-python-packaging`.
 
-The module currently has **no dependencies**. `go-python-packaging` is added
-when #18646 lands the interface that references `version.Version` — an unused
-`require` would just be stripped by `go mod tidy`. When adding it, pin **v0.2.0
-or later**: earlier tags predate the PEP 440/508 conformance work and contain a
-local-label ordering bug.
+Dependencies: `go-python-packaging`, `repository-snapshot-format`, and
+`klauspost/compress`. Pin `go-python-packaging` at **v0.3.0 or later**. Earlier
+tags accept two version specifiers written adjacently and re-render them with a
+comma the input never contained, so `cryptography (>=3.3.2<4)` silently became
+`cryptography>=3.3.2,<4` — a fabricated constraint boundary. v0.1.x additionally
+predates the conformance work and has a local-label ordering bug.
 
 ## Code Style
 
@@ -134,7 +135,14 @@ under `linters:` fails config load and turns CI red before any file is scanned.
 
 ## Versioning
 
-No tags yet. When releasing: while the major version is `0`, breaking changes
-take a **minor** bump (`0.1.x` → `0.2.0`), never a patch, and get a
-`CHANGELOG.md` entry under an explicit `Breaking` heading. A consumer pinning
-`^0.1` would otherwise pick up a breaking change silently.
+While the major version is `0`, breaking changes take a **minor** bump
+(`0.1.x` → `0.2.0`), never a patch, and get a `CHANGELOG.md` entry under an
+explicit `Breaking` heading. A consumer pinning `^0.1` would otherwise pick up a
+breaking change silently.
+
+⚠️ **Add changelog entries under `## [Unreleased]` only, never into a dated
+section** — not even one that looks unreleased. Check `git ls-remote --tags
+origin` before assuming. **A Go module tag is immutable once the module proxy has
+served it**, so an entry filed under an already-tagged version claims something
+the published module does not contain, and the only remedy is a new release.
+This has already happened once in `go-python-packaging`, to three entries.
