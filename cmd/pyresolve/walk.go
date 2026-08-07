@@ -74,6 +74,25 @@ type walkResult struct {
 	Packages []string `json:"packages"`
 	Count    int      `json:"count"`
 
+	// SelectedVersions maps each package to the one version this walk used for
+	// it, PEP 440-normalized.
+	//
+	// The walk takes ONE version of each package and its shape depends on which,
+	// so without this a reader cannot tell which version produced any edge, and
+	// two walks over different snapshots print identically while describing
+	// different graphs.
+	//
+	// ⚠️ PARTIAL BY DESIGN. A package appears here only if a version was
+	// selected for it, so names under Absent (no record) and NoDependencyData
+	// (nothing captured, or nothing selectable) are missing. Do not treat a
+	// missing entry as "version unknown" -- it means no version was chosen, and
+	// the category lists say why. Names under UnusableMetadata DO appear: a
+	// version was selected and its metadata then failed to parse.
+	//
+	// A map rather than turning Packages into objects, because Packages is
+	// published JSON and changing its element type would break consumers.
+	SelectedVersions map[string]string `json:"selected_versions,omitempty"`
+
 	// Absent lists names referenced by some dependency but having no record in
 	// this RSF at all. Disjoint from Packages.
 	Absent []string `json:"absent,omitempty"`
@@ -157,6 +176,7 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 	}
 
 	visited := map[index.PackageName]bool{root: true}
+	selected := map[index.PackageName]string{}
 	var absent, noDeps, unusable []index.PackageName
 	var directURL []string
 	queue := []queueItem{{root, 0}}
@@ -178,16 +198,33 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 			noDeps = append(noDeps, item.name)
 			continue
 		}
-		if item.depth >= maxDepth {
-			// Reachable, but we stop expanding it further.
-			continue
-		}
-
 		// Not simply the highest: PEP 440 excludes pre-releases from selection
 		// unless nothing else is available. See selectHighest.
 		highest, ok := selectHighest(vers)
 		if !ok {
 			noDeps = append(noDeps, item.name)
+			continue
+		}
+		// Recorded for every package we select a version for, not only the ones
+		// we go on to expand. The walk takes ONE version of each package and its
+		// answer depends on which -- without this, a reader could not tell which
+		// version produced any edge, and two runs over different snapshots looked
+		// identical while walking different graphs.
+		selected[item.name] = highest.String()
+
+		// ⚠️ Selection deliberately happens BEFORE this check, where it used to
+		// happen after. At the depth cutoff we already hold the version list, so
+		// selecting costs nothing and lets every reachable package report its
+		// version instead of only those within the cutoff -- with --depth 1 that
+		// was almost none of them.
+		//
+		// One behavior change falls out: a package AT the cutoff whose selection
+		// fails is now classified as having no usable version, where before the
+		// cutoff returned first and it was reported as plainly reachable. That is
+		// the more honest answer -- having no selectable version is a fact about
+		// the package, not about how deep the walk happened to go.
+		if item.depth >= maxDepth {
+			// Reachable, but we stop expanding it further.
 			continue
 		}
 
@@ -329,12 +366,22 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 	sort.Strings(directURL)
 	directURL = slices.Compact(directURL)
 
+	// Keyed by the reported name, and only for packages that made it into
+	// Packages, so the map cannot disagree with the list beside it.
+	selectedVersions := make(map[string]string, len(names))
+	for _, n := range names {
+		if v, ok := selected[index.NewPackageName(n)]; ok {
+			selectedVersions[n] = v
+		}
+	}
+
 	result := walkResult{
 		Root:                  root.String(),
 		Depth:                 maxDepth,
 		Note:                  walkNotResolverNotice,
 		Packages:              names,
 		Count:                 len(names),
+		SelectedVersions:      selectedVersions,
 		Absent:                absentStrs,
 		NoDependencyData:      noDepsStrs,
 		UnusableMetadata:      unusableStrs,
@@ -349,7 +396,15 @@ func walkCmd(w io.Writer, path string, jsonOut bool, rootArg string, maxDepth in
 	ew.println(walkNotResolverNotice)
 	ew.printf("\nWalking %s (max depth %d):\n\n", result.Root, result.Depth)
 	for _, n := range result.Packages {
-		ew.println(n)
+		// A package with no selected version prints bare rather than with a
+		// placeholder: the category lists below say why it has none, and
+		// inventing "(unknown)" here would suggest the version is a mystery
+		// rather than that none was chosen.
+		if v, ok := result.SelectedVersions[n]; ok {
+			ew.printf("%s %s\n", n, v)
+		} else {
+			ew.println(n)
+		}
 	}
 	ew.printf("\n%d package(s) reachable\n", result.Count)
 	if len(result.Absent) > 0 {
