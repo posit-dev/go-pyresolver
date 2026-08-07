@@ -323,3 +323,71 @@ func TestWalkCmdTextOutputReportsUnusableMetadata(t *testing.T) {
 		t.Errorf("text output does not say WHY it could not expand it:\n%s", out)
 	}
 }
+
+// TestWalkCmdDoesNotSubstituteAPackageForADirectURL is the regression test for a
+// wrong answer delivered silently: a requirement pinned to a URL was followed by
+// NAME into the index, reporting an unrelated project as reachable.
+//
+// `memery` requires "clip @ git+https://github.com/openai/CLIP@main". That is
+// OpenAI's CLIP; walk reported PyPI's unrelated "clip" instead. Measured on a
+// production snapshot, 87 of 98 direct-reference labels collide with a real
+// package of the same name, including ipython, marshmallow and vyper.
+//
+// The impostor in the fixture has its own dependency, and asserting that
+// dependency is absent is the load-bearing part: it proves the wrong edge was not
+// followed, rather than merely that the wrong node was relabelled.
+func TestWalkCmdDoesNotSubstituteAPackageForADirectURL(t *testing.T) {
+	path := directURLFixture(t)
+
+	var buf bytes.Buffer
+	if err := walkCmd(&buf, path, true, "durroot", 5); err != nil {
+		t.Fatalf("walkCmd: %v", err)
+	}
+
+	var result walkResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshaling JSON: %v\noutput: %s", err, buf.String())
+	}
+
+	got := map[string]bool{}
+	for _, p := range result.Packages {
+		got[p] = true
+	}
+
+	if !got["durroot"] || !got["durplain"] {
+		t.Errorf("ordinary dependencies must still be followed, packages = %v", result.Packages)
+	}
+	if got["durlabel"] {
+		t.Errorf("the URL requirement's label was reported as a reachable package; that is a "+
+			"DIFFERENT project from the one the URL names: %v", result.Packages)
+	}
+	if got["durimpostordep"] {
+		t.Errorf("the impostor's OWN dependency was pulled in, so the wrong edge was followed "+
+			"and one substitution became a wrong subtree: %v", result.Packages)
+	}
+
+	want := "durlabel @ git+https://github.com/example/Other@main"
+	if len(result.DirectURLRequirements) != 1 || result.DirectURLRequirements[0] != want {
+		t.Errorf("DirectURLRequirements = %v, want [%q]", result.DirectURLRequirements, want)
+	}
+}
+
+// TestWalkCmdDirectURLTextOutputKeepsTheURL checks the human-readable path, and
+// specifically that the URL survives.
+//
+// Reporting only the label would be nearly as misleading as following it: the
+// label is not an identity, so "durlabel" alone tells a reader nothing about which
+// distribution was skipped.
+func TestWalkCmdDirectURLTextOutputKeepsTheURL(t *testing.T) {
+	path := directURLFixture(t)
+
+	var buf bytes.Buffer
+	if err := walkCmd(&buf, path, false, "durroot", 5); err != nil {
+		t.Fatalf("walkCmd: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "git+https://github.com/example/Other@main") {
+		t.Errorf("text output dropped the URL, which is the only identifying part:\n%s", out)
+	}
+}

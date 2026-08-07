@@ -277,3 +277,64 @@ func noDepsDataFixture(t *testing.T) string {
 	}
 	return path
 }
+
+// directURLFixture builds a package requiring another BY URL, where a package of
+// that same name also exists in the file with its own dependency.
+//
+// The collision is the whole point. PEP 508's "name @ url" form pins the
+// requirement to that distribution, so the name is a local label rather than a
+// lookup key. Walking into the index by name substitutes an unrelated project —
+// and then follows ITS dependencies too, which is how one wrong edge becomes a
+// wrong subtree. On a production snapshot 87 of 98 direct-reference labels collide
+// with a real package, including ipython, marshmallow and vyper.
+func directURLFixture(t *testing.T) string {
+	t.Helper()
+
+	root := pypirsf.PackageRecord{
+		CanonicalName: "durroot",
+		ProjectName:   "DURRoot",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "1.0", requiresDist: []string{
+				"durplain",
+				"durlabel @ git+https://github.com/example/Other@main",
+			}},
+		}),
+	}
+
+	// An ordinary dependency, to show the walk still follows those.
+	plain := pypirsf.PackageRecord{
+		CanonicalName: "durplain",
+		ProjectName:   "DURPlain",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{{version: "1.0"}}),
+	}
+
+	// The impostor: same name as the URL requirement's label, unrelated project,
+	// with a dependency of its own that must NOT be pulled in.
+	impostor := pypirsf.PackageRecord{
+		CanonicalName: "durlabel",
+		ProjectName:   "DURLabel",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "9.9", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "9.9", requiresDist: []string{"durimpostordep"}},
+		}),
+	}
+
+	impostorDep := pypirsf.PackageRecord{
+		CanonicalName: "durimpostordep",
+		ProjectName:   "DURImpostorDep",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{{version: "1.0"}}),
+	}
+
+	return writeFixtureRSF(t, []pypirsf.PackageRecord{root, plain, impostor, impostorDep})
+}
