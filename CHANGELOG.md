@@ -26,6 +26,25 @@ served it.
 
 ### Added
 
+- `pyresolve walk` reports the version it selected for each package. The text output shows
+  it beside the name, and `--json` gains `selected_versions`. The walk takes one version of
+  each package and its shape depends on which, so previously a reader could not tell which
+  version produced any edge, and two walks over different snapshots printed identically
+  while describing different graphs.
+
+  `selected_versions` is partial by design: a package appears only if a version was
+  selected for it, so names under `absent` and `no_dependency_data` are missing. A missing
+  entry means no version was chosen, not that the version is unknown, and the category
+  lists say why. Names under `unusable_metadata` **do** appear, since a version was
+  selected and its metadata then failed to parse. Added as a map rather than by changing
+  `packages` into objects, which would break existing JSON consumers.
+
+  ⚠️ Version selection now happens before the depth cutoff rather than after, so packages
+  *at* the cutoff report a version too. With `--depth 1` almost none of them did otherwise.
+  One behavior change follows: a package at the cutoff with no selectable version is now
+  reported under `no_dependency_data`, where before the cutoff returned first and it was
+  reported as plainly reachable. Having no selectable version is a fact about the package,
+  not about how deep the walk went.
 - `PackageMetadata.RequiresPythonRaw` and `PackageMetadata.RequiresPythonUnreadable`
   preserve an interpreter constraint that could not be parsed. `RequiresPython` alone
   cannot distinguish "the record declared nothing" from "the record declared something we
