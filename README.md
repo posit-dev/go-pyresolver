@@ -6,8 +6,11 @@ metadata.
 
 Part of [RFD 0001 — Native Go PyPI Dependency Resolution](https://github.com/rstudio/package-manager/blob/main/docs/rfds/0001-pypi-native-resolver/README.md).
 
-> **Status: skeleton.** Packages are populated per RFD 0001 Phase 3. Nothing
-> here is usable yet, and the module has no released version.
+> **Status: partial.** `pypirsf/`, `index/`, and `cmd/pyresolve` are implemented
+> and released in `v0.1.0`. `candidate/`, `provider/`, and `resolver/` are still
+> documentation-only stubs with no declarations — **version solving is not
+> implemented yet**, and importing those three gives you nothing. They are
+> populated per RFD 0001's later phases. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Where this sits
 
