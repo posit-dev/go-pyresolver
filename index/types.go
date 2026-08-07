@@ -38,13 +38,50 @@ type PackageMetadata struct {
 	// usable candidate, which makes this a filter input rather than
 	// information.
 	//
-	// ⚠️ DO NOT CALL Check ON THIS DIRECTLY. Use SupportsPython. The zero value
-	// means "unconstrained" here, but version.Specifiers.Check returns FALSE for
-	// every version when it holds no specifier groups — so calling Check
-	// directly inverts the intended meaning and rejects every interpreter. That
-	// zero value is what an absent Requires-Python leaves behind, which in a
-	// production PyPI snapshot is over two million versions.
+	// Prefer SupportsPython over calling Check directly. It is the
+	// intention-revealing spelling, and it keeps working if this package is
+	// ever built against an older go-python-packaging.
+	//
+	// This comment used to warn that Check INVERTED the meaning of the zero
+	// value, returning false for every version when the set holds no groups.
+	// That was true and is no longer: go-python-packaging v0.3.0 made an empty
+	// specifier set admit every version, which is what PEP 508 requires of an
+	// omitted Requires-Python. The zero value now means "unconstrained" in both
+	// this field and in Check. Verified against v0.3.1 rather than assumed.
+	//
+	// An absent Requires-Python is what leaves that zero value behind, and in a
+	// production PyPI snapshot that is over two million versions.
 	RequiresPython version.Specifiers
+
+	// RequiresPythonRaw is the interpreter constraint exactly as the record
+	// carried it, or "" when the record declared none.
+	//
+	// It exists because RequiresPython alone cannot distinguish two different
+	// facts, and a caller that conflates them reports a falsehood:
+	//
+	//	record said nothing          -> RequiresPython empty, Raw ""
+	//	record said something we
+	//	  could not parse            -> RequiresPython empty, Raw "the string"
+	//
+	// The decoder deliberately treats an unparseable constraint as
+	// unconstrained rather than failing the version, because an unreadable
+	// interpreter constraint only over-admits a candidate (surfacing later as an
+	// install-time failure) while an unreadable *requirement* would silently
+	// under-constrain the graph and change the resolution. But "we chose to
+	// ignore it" is not the same claim as "there was nothing to ignore", and
+	// only this field preserves the difference.
+	RequiresPythonRaw string
+
+	// RequiresPythonUnreadable reports that the record declared an interpreter
+	// constraint which could not be parsed, so RequiresPython is a permissive
+	// fallback rather than a faithful reading of the record.
+	//
+	// Stored explicitly rather than derived from
+	// `RequiresPythonRaw != "" && RequiresPython is empty`, because that
+	// derivation silently becomes wrong the day an empty-but-parseable
+	// constraint string exists, and because a caller should not have to
+	// reconstruct a decision the decoder already made.
+	RequiresPythonUnreadable bool
 
 	// ProvidesExtra lists the extras this version defines, PEP 685-normalized.
 	//

@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/posit-dev/go-pyresolver/pypirsf"
 )
 
 // The fixture chain is flask -> werkzeug -> markupsafe, three edges deep.
@@ -194,31 +192,10 @@ func TestWalkCmdCyclesDoNotHang(t *testing.T) {
 // big-o and curio, both of which ARE present in the file with zero captured
 // versions. An earlier version of this command reported them as "not found".
 func TestWalkCmdDistinguishesAbsentFromUncaptured(t *testing.T) {
-	// root depends on two packages: one present-but-uncaptured, one absent.
-	root := pypirsf.PackageRecord{
-		CanonicalName: "root",
-		ProjectName:   "Root",
-		Snapshots: []pypirsf.SnapshotRecord{
-			{Snapshot: "2026080100", Version: "1.0", ReleaseDate: "\x00\x01", Summary: "x"},
-		},
-		Deps: buildStoredDepsField([]fixtureVersion{
-			{version: "1.0", requiresDist: []string{"present-but-empty", "totally-absent"}},
-		}),
-		Depsdict: buildDepsdictField(),
-	}
-	// Present in the file, but no deps field at all, so no captured versions.
-	presentButEmpty := pypirsf.PackageRecord{
-		CanonicalName: "present-but-empty",
-		ProjectName:   "PresentButEmpty",
-		Snapshots: []pypirsf.SnapshotRecord{
-			{Snapshot: "2026080100", Version: "9.9", ReleaseDate: "\x00\x01", Summary: "x"},
-		},
-	}
-
-	path := writeFixtureRSF(t, []pypirsf.PackageRecord{root, presentButEmpty})
+	path := absentAndUncapturedFixture(t)
 
 	var buf bytes.Buffer
-	if err := walkCmd(&buf, path, true, "root", 3); err != nil {
+	if err := walkCmd(&buf, path, true, "aroot", 3); err != nil {
 		t.Fatalf("walkCmd: %v", err)
 	}
 
@@ -236,7 +213,7 @@ func TestWalkCmdDistinguishesAbsentFromUncaptured(t *testing.T) {
 
 	// And the text output must say two different things, not one.
 	var text bytes.Buffer
-	if err := walkCmd(&text, path, false, "root", 3); err != nil {
+	if err := walkCmd(&text, path, false, "aroot", 3); err != nil {
 		t.Fatalf("walkCmd (text): %v", err)
 	}
 	out := text.String()

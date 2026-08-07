@@ -24,8 +24,34 @@ served it.
   after `--` are now taken literally, which is the documented behavior but not the previous
   one.
 
+### Added
+
+- `PackageMetadata.RequiresPythonRaw` and `PackageMetadata.RequiresPythonUnreadable`
+  preserve an interpreter constraint that could not be parsed. `RequiresPython` alone
+  cannot distinguish "the record declared nothing" from "the record declared something we
+  could not read" — both leave it empty — so a caller had no way to report the difference.
+  The decoder still treats an unreadable constraint as unconstrained, which is deliberate
+  and matches pip; what is new is that the decision is now visible rather than silent.
+
 ### Fixed
 
+- `pyresolve deps` distinguishes an unreadable `Requires-Python` from an absent one. It
+  printed `(unconstrained)` for both, asserting the publisher declared no interpreter
+  constraint when the publisher declared one this tool could not read, and hiding that the
+  version was being admitted for every interpreter by fallback rather than by declaration.
+  536 packages in a production PyPI snapshot are in that state. The unreadable case now
+  quotes the raw string, and `--json` gains `requires_python_raw` and
+  `requires_python_unreadable` — previously the two states were byte-identical in JSON,
+  since `requires_python` carries `omitempty`.
+- `pyresolve walk` no longer counts names that are absent from the RSF as reachable
+  packages. A missing name appeared in **both** `packages` and `absent`, which are
+  contradictory claims, and `count` included it, inflating "N package(s) reachable" with
+  names that cannot be installed from the file. `packages` and `absent` are now disjoint.
+
+  Names under `no_dependency_data` and `unusable_metadata` **remain** reachable: those
+  packages do have records, and the walk simply could not expand them. The finding this
+  addresses grouped absent and uncaptured names together; they are different facts, and
+  only the first was wrong.
 - `RSFIndex.Metadata` and `RSFIndex.Files` reject an uninitialized (zero-value)
   `version.Version` with an explicit error naming it as a caller bug, rather than reporting
   `ErrMetadataUnavailable` — which blames the RSF for having no such version when the real
@@ -43,6 +69,12 @@ served it.
 
 - Requires `go-python-packaging` **v0.3.1** (from v0.3.0), for the zero-value `Version`
   fixes above.
+- Corrected a stale warning on `PackageMetadata.RequiresPython`. It said `Specifiers.Check`
+  returns false for every version when the set holds no groups, inverting the zero value's
+  meaning. That was true when written and stopped being true in `go-python-packaging`
+  v0.3.0, which made an empty specifier set admit every version. Verified against v0.3.1
+  rather than assumed. `SupportsPython` is still the preferred spelling, for clarity and for
+  older builds, but not for the reason the comment gave.
 - Documented why `walk`'s `ErrMetadataUnavailable` branch is unreachable and kept. It is
   unreachable only for `RSFIndex`, whose `Versions`/`Metadata` agreement is a tested
   invariant; the `MetadataIndex` contract permits that error for a known sdist-only release
