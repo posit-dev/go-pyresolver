@@ -273,6 +273,10 @@ func (idx *RSFIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 		return PackageMetadata{}, err
 	}
 
+	if err := checkVersionInitialized("Metadata", pkg, ver); err != nil {
+		return PackageMetadata{}, err
+	}
+
 	decoded, err := idx.deps(pkg)
 	if err != nil {
 		return PackageMetadata{}, err
@@ -411,8 +415,38 @@ func (idx *RSFIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 // yanked flag, so there is nothing to report. This is the data's shape, not a
 // missing feature.
 func (idx *RSFIndex) Files(_ context.Context, pkg PackageName, ver version.Version) ([]DistFile, error) {
+	if err := checkVersionInitialized("Files", pkg, ver); err != nil {
+		return nil, err
+	}
 	return nil, fmt.Errorf("index %q: %q %s: an RSF carries dependency metadata only: %w",
 		idx.origin, pkg, ver, ErrFilesUnavailable)
+}
+
+// checkVersionInitialized rejects an uninitialized version.Version.
+//
+// This is a CALLER BUG, not a state of the data, so it is deliberately not one
+// of the four sentinels: there is nothing to branch on, only code to fix. Left
+// unguarded it would collapse into ErrMetadataUnavailable -- "no metadata for
+// that version" -- which blames the RSF for the caller passing a zero value, the
+// same class of state collapse this package has already had to fix four times.
+//
+// The empty rendering is a sound test because go-python-packaging guarantees no
+// version Parse accepts renders as "" (the PEP 440 grammar requires a release
+// segment, and gpp asserts this), so "" means an uninitialized Version and
+// nothing else.
+//
+// ⚠️ Before gpp v0.3.1 this could not even be checked this way: Version.String()
+// PANICKED on a zero value rather than returning "". Metadata crashed on
+// decoded[ver.String()], while Files looked healthy because fmt recovers a panic
+// raised inside a String method and substitutes "%!s(PANIC=...)" -- which is why
+// rstudio/package-manager#19466's F14 reported this against Files, the one call
+// site that did not crash.
+func checkVersionInitialized(method string, pkg PackageName, ver version.Version) error {
+	if ver.String() != "" {
+		return nil
+	}
+	return fmt.Errorf("%s(%q): version is uninitialized (the zero value); "+
+		"pass a version obtained from Versions or version.Parse", method, pkg)
 }
 
 // Len reports how many packages the underlying file carries.
