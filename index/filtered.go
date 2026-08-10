@@ -34,11 +34,12 @@ import (
 // by the shape of the data) can admit NOTHING, because there is no file to admit
 // anything on.
 //
-// ⚠️ It answers with an empty version list rather than failing, and this package
-// twice claimed otherwise. Verifying that a file-level policy sits over a
-// file-serving source is the CALLER's job; FilteredIndex cannot do it, because
-// "no file evidence" looks the same whether the operator wired up a fileless
-// index or the package is simply absent from the file source. See FilteredIndex.
+// ⚠️ Such a policy REFUSES rather than answering: Versions, Metadata and Files
+// all report ErrFilesUnavailable. Returning empty version lists instead would
+// report every package as having no acceptable version, which downstream reads as
+// a constraint conflict that does not exist. v0.3.0 did exactly that; see
+// hasAdmissibleFile for why, and for why refusing is sound now when it was not
+// then.
 //
 // # The two file axes fail in OPPOSITE directions
 //
@@ -176,7 +177,7 @@ func (p FilterPolicy) String() string {
 // and a nil error from Versions, never ErrPackageNotFound. The interface makes
 // that distinction load-bearing.
 //
-// # A file-level policy needs a file-serving inner index, and CANNOT check that
+// # A file-level policy needs a file-serving inner index, and SAYS SO
 //
 // ExcludeYanked and SnapshotDate cannot be evaluated over an index that serves no
 // files. Since RSFIndex returns ErrFilesUnavailable unconditionally -- an RSF
@@ -184,17 +185,22 @@ func (p FilterPolicy) String() string {
 // 0001 calls for is a file-level policy over a MultiIndex pairing the RSF with a
 // file-serving source, not over the RSF alone.
 //
-// ⚠️ WHAT HAPPENS IF YOU GET THAT WRONG IS AN EMPTY ANSWER, NOT AN ERROR. Every
-// version is dropped for want of file evidence, so every package looks like it
-// has no acceptable version. That is a bad outcome and it is deliberately not
-// guarded, because the guard could not be made to work: see hasAdmissibleFile for
-// the three ways the earlier hard-error behavior was wrong, the most decisive
-// being that "the operator wired up a fileless index" and "this package is absent
-// from the file source" are the same observation from in here, and the second is
-// a supported configuration (a partial mirror).
+// ⚠️ GET THAT WRONG AND YOU GET AN ERROR, NOT AN EMPTY ANSWER. Versions, Metadata
+// and Files all report ErrFilesUnavailable, wrapped with the advice to compose
+// over a file-serving source. The alternative -- dropping every version for want
+// of file evidence -- makes every package look like it has no acceptable version,
+// which downstream reads as a constraint conflict that does not exist. That is
+// strictly worse than an error, because it is indistinguishable from a real
+// resolution failure.
 //
-// So this is a CALLER obligation. Verify once, at wiring time, that a file-level
-// policy sits over something that serves files.
+// This is the behavior v0.3.0 got wrong, and the reason is worth knowing before
+// changing it back: the refusal was dropped when ErrFilesUnavailable could not be
+// trusted through a MultiIndex, and the change that made it trustworthy shipped in
+// the same release. See hasAdmissibleFile.
+//
+// Note the refusal is a property of the WRAPPER's configuration, not of any one
+// package's data, so a caller cannot make it go away by choosing a different
+// package. That is what makes it safe to surface from Versions.
 //
 // # Cost: one Files lookup per version
 //
@@ -410,36 +416,57 @@ func (f *FilteredIndex) Files(ctx context.Context, pkg PackageName, ver version.
 // Files carved the zero-file case out. See FilteredIndex.Files for the full
 // reasoning.
 //
-// ⚠️ EVERY "no file evidence" ANSWER IS TREATED THE SAME WAY: the version is not
-// admitted, with a nil error. ErrFilesUnavailable, ErrMetadataUnavailable and
-// ErrPackageNotFound all mean this index cannot produce a file for this version,
-// and none of them is a reason to fail the lookup.
+// ⚠️ A CAPABILITY ANSWER AND A DATA ANSWER ARE NOT THE SAME THING, and the whole
+// correctness of a file-level policy rests on the difference:
 //
-// This reverses an earlier design in which ErrFilesUnavailable was propagated as
-// a hard error, on the reasoning that it is a statement about a source's
-// CAPABILITY -- RSFIndex returns it for every lookup without inspecting pkg or
-// ver -- so silently dropping would report every package as having no acceptable
-// version. The reasoning was sound; the behavior was not achievable:
+//	ErrFilesUnavailable       the index cannot serve files AT ALL, so the policy
+//	                          cannot be evaluated. REFUSED, loudly.
+//	ErrMetadataUnavailable    this version has no file this index can produce.
+//	ErrPackageNotFound        A data answer: the version is DROPPED, nil error.
 //
-//   - Through a MultiIndex the sentinel is not a capability statement. A
-//     fileless source and a file-serving source that simply lacks the package
-//     produced the same error, so a legitimate partial mirror hard-errored with
-//     a message telling the operator to compose exactly what they had composed.
-//     (MultiIndex.Files now demotes the fileless answer to weakest evidence,
-//     which narrows this but does not eliminate it: a wholly fileless
-//     MultiIndex still answers ErrFilesUnavailable, correctly.)
-//   - It was data-dependent, so it was never the guarantee it claimed to be.
-//     hasAdmissibleFile is reached only inside the per-version loop, so if the
-//     pre-release axis emptied the version list first, or the package had no
-//     versions, the same misconfiguration returned an empty list and no error.
-//   - The two states are genuinely indistinguishable from here. "The operator
-//     wired up a fileless index" and "this package is absent from the file
-//     source" are both just the absence of file evidence.
+// Silently dropping on a capability failure would report every package in the
+// index as having no acceptable version, which downstream reads as a constraint
+// conflict that does not exist. That is the outcome this whole file is arranged to
+// avoid, so it is an error rather than an empty answer.
 //
-// A half-guard that fires on favourable data and misfires on a supported
-// composition is worse than a uniform rule, so the rule is uniform and the
-// hazard is documented instead: see FilteredIndex, and note that verifying a
-// file-level policy is composed over a file-serving source is the CALLER's job.
+// # Why this is now sound, having twice not been
+//
+// v0.3.0 dropped silently here, because ErrFilesUnavailable could not be trusted:
+// MultiIndex emitted it for a mere data condition, so a legitimate partial mirror
+// hard-errored with advice to compose the very thing it had composed. That was
+// real. But the fix for it landed in the SAME change -- MultiIndex now reserves
+// the sentinel for a genuine capability statement, emitting it only when EVERY
+// source is fileless, and demoting a fileless source's answer to the weakest
+// evidence otherwise. The two fixes over-corrected past each other: one made the
+// signal trustworthy while the other stopped trusting it.
+//
+// The signal is trustworthy at every layer, not just the top one, which is what
+// makes this compositional rather than lucky. A FilteredIndex over a fileless
+// inner can never serve a file, so its own ErrFilesUnavailable is a true statement
+// about itself; a MultiIndex above it demotes that in turn. The partial-mirror
+// case now stays silent because it arrives as ErrMetadataUnavailable, not because
+// this method guesses.
+//
+// # The refusal is TOTAL where it matters
+//
+// It cannot fire when the per-version loop never runs -- a package with no
+// versions, or one whose versions the version-level axis already excluded. An
+// earlier review read that as the guard being incomplete, and it is worth being
+// precise about why it is not:
+//
+//	IN THOSE CASES THE FILE AXES COULD NOT HAVE CHANGED THE ANSWER.
+//
+// An empty result is then correct over ANY index, files or not, so there is
+// nothing for a capability check to report. This is the opposite of a guard that
+// fires only on favourable data: it fires exactly where it is load-bearing and is
+// silent exactly where it would be noise. The invariant, stated once:
+//
+//	A capability failure is reported wherever a file-level axis could have
+//	changed the answer, and nowhere else.
+//
+// TestFilteredIndexCapabilityRefusalIsTotal pins that by asserting a fileless and
+// a file-serving index with identical version content give identical answers in
+// the non-firing cases. If they ever diverge, the silence has become a real gap.
 //
 // Reaching ErrMetadataUnavailable or ErrPackageNotFound for a version the inner
 // index just listed means that index disowns its own listing; RSFIndex and
@@ -449,9 +476,16 @@ func (f *FilteredIndex) hasAdmissibleFile(ctx context.Context, pkg PackageName, 
 	files, err := f.inner.Files(ctx, pkg, ver)
 	switch {
 	case err == nil:
-	case errors.Is(err, ErrFilesUnavailable),
-		errors.Is(err, ErrMetadataUnavailable),
-		errors.Is(err, ErrPackageNotFound):
+	case errors.Is(err, ErrFilesUnavailable):
+		// Capability, not data. See the method doc.
+		return false, fmt.Errorf(
+			"filtered index (%s): cannot apply a file-level policy to %q: the inner index "+
+				"serves no distribution files at all, so yanked status and upload time are "+
+				"unknowable and no version could be admitted; compose the policy over an "+
+				"index that serves files, such as a MultiIndex pairing this one with a "+
+				"file-serving source: %w",
+			f.policy, pkg, err)
+	case errors.Is(err, ErrMetadataUnavailable), errors.Is(err, ErrPackageNotFound):
 		return false, nil
 	default:
 		return false, err
