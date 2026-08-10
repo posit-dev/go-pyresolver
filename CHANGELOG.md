@@ -13,6 +13,22 @@ served it.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-10
+
+### Changed
+
+- Requires `go-python-packaging` **v0.5.0** (from v0.4.0). ⚠️ **Anyone on `v0.2.0` of this
+  module should upgrade**, because `v0.4.0` shipped a wildcard/`~=` padding defect that this
+  module inherited: the zero-padding loops appended `⌈gap/2⌉` zeros instead of `gap`, so
+  `!=7.0.0.*` matched `7` where `pypa/packaging` excludes it, and `==0.0.0.*` matched
+  `1!1.0`. Measured over an 82-row oracle sweeping version-segment gaps of 1-4 in both
+  directions, `v0.4.0` diverged from the reference on **30 of 82** cases and `v0.5.0` on
+  **0**. It survived undetected because `⌈1/2⌉ == 1`, making a one-segment gap correct by
+  accident — and every test written for it used a one-segment gap.
+
+  `go build` and `go test ./...` are clean against `v0.5.0`; the fix changes no behavior this
+  module's own suite depended on.
+
 ### Added
 
 - `index.FilteredIndex` and `index.FilterPolicy` — a `MetadataIndex` wrapper applying
@@ -297,6 +313,7 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/posit-dev/go-pyresolver/releases/tag/v0.1.0
