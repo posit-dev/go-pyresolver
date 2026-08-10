@@ -13,6 +13,60 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `index.FilteredIndex` and `index.FilterPolicy` — a `MetadataIndex` wrapper applying
+  release-admission policy: pre-release exclusion, PEP 592 yanked-file exclusion, and an
+  inclusive snapshot-date cutoff. The zero `FilterPolicy` filters nothing, which is why the
+  fields are spelled `Exclude*`: a wrapper that silently dropped every pre-release would
+  punish whoever wrapped an index only to compose it.
+
+  The policy is enforced on **all three** methods, not only `Versions`. Filtering the listing
+  alone would be bypassed by any caller holding a version from elsewhere — a pin, a lockfile,
+  another index — so it would be a default rather than a policy.
+
+  ⚠️ Only pre-release exclusion is decidable from a version alone. Yanking is per-file per
+  PEP 592 and an upload time belongs to a file, so those two axes are evaluated through
+  `Files`, and a file-level policy over an index that serves no files is **unsatisfiable**:
+  it reports `ErrFilesUnavailable` instead of answering. Admitting everything would defeat
+  the policy invisibly, and dropping everything would report every package in the index as
+  having no acceptable version — a constraint conflict that does not exist. Since `RSFIndex`
+  serves no files by the shape of the data, the arrangement that works is a `FilteredIndex`
+  over a `MultiIndex` pairing the RSF with a file-serving source.
+
+  A file whose `UploadTime` is the zero value is **dropped** by a snapshot cutoff, not
+  admitted: an unrecorded time is a different fact from one before the cutoff, and conflating
+  them would let a file published yesterday into a snapshot dated last year, with nothing in
+  the result saying so.
+
+- `index.MultiIndex` — a `MetadataIndex` over ordered sources. `Versions` returns the
+  **union**; `Metadata` and `Files` return the first source that can answer, with
+  `PackageMetadata.Origin` naming which one did. The asymmetry is the design: which versions
+  exist is naturally a union, but two sources can disagree about one release, and merging
+  their answers would produce a record no publisher ever made.
+
+  Error taxonomy across sources, since a source's `ErrPackageNotFound` is that source's
+  answer about itself and not a fact about the composed index:
+
+  - `Versions` reports `ErrPackageNotFound` only when **no** source knows the name. One
+    source knowing it and carrying no versions is an empty slice and a nil error.
+  - `Metadata` prefers, in order of how much was learned, a malformed record somewhere
+    (`ErrMetadataUnusable`) over no record anywhere (`ErrMetadataUnavailable`) over nobody
+    having heard of the package (`ErrPackageNotFound`).
+  - `Files` treats an **empty list with a nil error as an answer**, not a miss — a release
+    can have every file deleted, and "keep looking" would let a stale mirror resurrect files
+    the authoritative source removed. `ErrFilesUnavailable` does mean "ask another source".
+
+  ⚠️ Source A knowing the package but not the version, while source B knows neither, is
+  `ErrMetadataUnavailable` — **not** `ErrPackageNotFound`. The package was found; a caller
+  branching on not-found there reports a missing package for a present one.
+
+  Versions are deduped by PEP 440 equality across sources, collapsing a class to the
+  **earliest** source's spelling so the representative resolves to the record `MultiIndex`
+  treated as authoritative. A cross-source spelling difference is not bridged when the
+  earliest source can list a version but not supply its metadata; that limitation is
+  documented on the type and pinned by a test.
+
 ## [0.2.0] - 2026-08-10
 
 ### Breaking

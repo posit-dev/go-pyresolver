@@ -17,9 +17,17 @@
 //     file via the pypirsf package. This is the standalone path: one file on
 //     disk, no network, no database, and therefore reproducible — the file is a
 //     dated artifact, so the same file resolves the same way forever.
-//   - FilteredIndex (prerelease and yanked policy) and MultiIndex (ordered
-//     sources) are generic and belong here. Not yet built; tracked as
-//     rstudio/package-manager#18648.
+//   - FilteredIndex (pre-release, yanked, and snapshot-date policy) and
+//     MultiIndex (ordered sources) — implemented. Both are generic wrappers, so
+//     they belong here rather than in any one consumer.
+//
+//     ⚠️ Only the pre-release axis is decidable from a version alone. Yanking is
+//     per-file per PEP 592 and an upload time belongs to a file, so those two
+//     axes are evaluated through Files — which means a file-level policy is not
+//     expressible over an index that serves none. The composition that works is
+//     a FilteredIndex over a MultiIndex pairing an RSF with a file-serving
+//     source; a file-level policy over the RSF alone reports
+//     ErrFilesUnavailable rather than quietly admitting or dropping everything.
 //   - Package Manager implements its own index against this interface, over its
 //     resident RSF and its own caching. That is a different access path to the
 //     same data rather than a duplicate of RSFIndex, and it stays in PPM.
