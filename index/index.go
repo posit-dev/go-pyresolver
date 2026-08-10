@@ -105,9 +105,30 @@ type MetadataIndex interface {
 
 	// Metadata returns the dependency information for one (pkg, ver).
 	//
-	// Returns ErrPackageNotFound if pkg or ver is unknown, and
-	// ErrMetadataUnavailable for a release whose metadata would require a
-	// build (sdist-only).
+	// Returns ErrPackageNotFound only when pkg itself is absent from this index.
+	//
+	// Returns ErrMetadataUnavailable when pkg is present but this index cannot
+	// supply metadata for ver -- whether because ver is unknown to it, or
+	// because ver is known and nothing was captured (a release whose metadata
+	// would require a build, sdist-only).
+	//
+	// ⚠️ THOSE TWO CASES SHARE ONE ERROR DELIBERATELY, and this doc previously
+	// promised ErrPackageNotFound for an unknown ver, which was wrong twice
+	// over. It is wrong on its face -- the package WAS found, so a caller
+	// branching on not-found reports a missing package for a present one. And it
+	// promised a distinction the primary implementation cannot make: RSFIndex
+	// derives its version list from the RSF's dependency map, so a version
+	// absent from that map is indistinguishable from one present with nothing
+	// captured. An interface must not promise what its implementations cannot
+	// deliver; that is how a consumer's branch becomes dead code against one
+	// index and live against another.
+	//
+	// The RSF does carry a separate per-snapshot version list, so the
+	// distinction is recoverable in principle -- but pypirsf does not expose it
+	// today, so it is deliberately NOT promised here rather than half-supported.
+	//
+	// See rstudio/package-manager#19466 F12, which found this doc, MockIndex and
+	// RSFIndex giving three different answers.
 	Metadata(ctx context.Context, pkg PackageName, ver version.Version) (PackageMetadata, error)
 
 	// Files returns the distribution files -- wheels and sdists -- for one
@@ -120,8 +141,25 @@ type MetadataIndex interface {
 	// for a platform other than the one you are running on) expressible at
 	// all.
 	//
-	// Returns ErrPackageNotFound if pkg or ver is unknown. A known version
-	// with no files is an empty slice and a nil error -- which does happen,
-	// since a release can have every file deleted.
+	// A known version with no files is an empty slice and a nil error -- which
+	// does happen, since a release can have every file deleted.
+	//
+	// Error precedence, for an index that serves files at all:
+	//
+	//   - ErrPackageNotFound only when pkg itself is absent.
+	//   - ErrMetadataUnavailable when pkg is present but ver is not one this
+	//     index can speak to. Same rule as Metadata, for the same reason.
+	//
+	// ⚠️ An index that serves NO files may return ErrFilesUnavailable
+	// unconditionally, WITHOUT inspecting pkg or ver. RSFIndex is exactly that:
+	// an RSF carries dependency metadata and no distribution files, so there is
+	// nothing to validate against and checking would be busywork that invents a
+	// not-found answer for a lookup it never performed.
+	//
+	// This paragraph replaces a promise of "ErrPackageNotFound if pkg or ver is
+	// unknown" that NO implementation kept: RSFIndex never returned it here for
+	// either, and the mock only did so by sharing a lookup helper. Documenting
+	// the two shapes separately is what makes the difference intentional rather
+	// than a discrepancy waiting to be reported again.
 	Files(ctx context.Context, pkg PackageName, ver version.Version) ([]DistFile, error)
 }

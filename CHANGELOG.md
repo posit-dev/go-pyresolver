@@ -15,6 +15,14 @@ served it.
 
 ### Breaking
 
+- `MockIndex.Metadata` and `MockIndex.Files` return `ErrMetadataUnavailable`, not
+  `ErrPackageNotFound`, for an unknown **version** of a **known** package. `ErrPackageNotFound`
+  is untrue on its face there — the package *was* found — so a consumer branching on it
+  reported a missing package for a present one.
+
+  This aligns the mock with `RSFIndex`, which already answered `ErrMetadataUnavailable`.
+  Listed as Breaking because a test written against the mock's old answer will now fail; the
+  fix is to expect `ErrMetadataUnavailable`, which is what a real index returns.
 - `pyresolve`'s `--` now works. It never did, in any position: `reorderArgs` consumed the
   terminator without re-emitting it, so `flag.Parse` — which does its own scan over the
   reordered arguments, and for which `--` is the only stop token — never saw it. A package
@@ -54,6 +62,21 @@ served it.
 
 ### Fixed
 
+- The `MetadataIndex` contract documented an answer no implementation gave. It promised
+  `ErrPackageNotFound` "if pkg **or ver** is unknown", while `RSFIndex` returned
+  `ErrMetadataUnavailable` for an unknown version and `MockIndex` returned
+  `ErrPackageNotFound` — three sources, three answers for one state.
+
+  The contract now says `ErrPackageNotFound` only when the *package* is absent, and
+  `ErrMetadataUnavailable` when the package is present but the index cannot supply metadata
+  for that version, whether the version is unknown to it or known with nothing captured.
+
+  ⚠️ Those two cases share one error **deliberately**: `RSFIndex` derives its version list
+  from the RSF's dependency map, so a version absent from that map is indistinguishable from
+  one present with nothing captured. An interface must not promise a distinction its
+  implementations cannot make. The RSF does carry a separate per-snapshot version list, so
+  the distinction is recoverable in principle, but `pypirsf` does not expose it today and it
+  is therefore left unpromised rather than half-supported.
 - `pyresolve deps` distinguishes an unreadable `Requires-Python` from an absent one. It
   printed `(unconstrained)` for both, asserting the publisher declared no interpreter
   constraint when the publisher declared one this tool could not read, and hiding that the
