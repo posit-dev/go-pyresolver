@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-10
+
 ### Breaking
 
 - `MockIndex.Metadata` and `MockIndex.Files` return `ErrMetadataUnavailable`, not
@@ -109,8 +111,14 @@ served it.
 
 ### Changed
 
-- Requires `go-python-packaging` **v0.3.1** (from v0.3.0), for the zero-value `Version`
-  fixes above.
+- Requires `go-python-packaging` **v0.4.0** (from v0.3.0), for the zero-value `Version`
+  fixes above and for its comma requirement. That requirement is inherited, so a
+  requirement string whose version constraints are not comma-separated (`>=1.0<2.0`) is now
+  rejected here too. Over the production PyPI snapshot upstream measured 21 such strings
+  rejected out of 2,804,136, and 0 newly accepted; each one previously parsed into a
+  constraint boundary the input never contained.
+- Requires `klauspost/compress` **v1.19.2** (from v1.19.1). Worth noting because a consumer
+  adding this module raises its own pin through minimal version selection.
 - Corrected a stale warning on `PackageMetadata.RequiresPython`. It said `Specifiers.Check`
   returns false for every version when the set holds no groups, inverting the zero value's
   meaning. That was true when written and stopped being true in `go-python-packaging`
@@ -170,5 +178,6 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/posit-dev/go-pyresolver/releases/tag/v0.1.0
