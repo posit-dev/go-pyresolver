@@ -19,15 +19,9 @@
 //     dated artifact, so the same file resolves the same way forever.
 //   - FilteredIndex (pre-release, yanked, and snapshot-date policy) and
 //     MultiIndex (ordered sources) — implemented. Both are generic wrappers, so
-//     they belong here rather than in any one consumer.
-//
-//     ⚠️ Only the pre-release axis is decidable from a version alone. Yanking is
-//     per-file per PEP 592 and an upload time belongs to a file, so those two
-//     axes are evaluated through Files — which means a file-level policy is not
-//     expressible over an index that serves none. The composition that works is
-//     a FilteredIndex over a MultiIndex pairing an RSF with a file-serving
-//     source; a file-level policy over the RSF alone reports
-//     ErrFilesUnavailable rather than quietly admitting or dropping everything.
+//     they belong here rather than in any one consumer. See "A file-level policy
+//     needs a file-serving index" below for the constraint that shapes how they
+//     compose.
 //   - Package Manager implements its own index against this interface, over its
 //     resident RSF and its own caching. That is a different access path to the
 //     same data rather than a duplicate of RSFIndex, and it stays in PPM.
@@ -55,4 +49,19 @@
 // ask another"; ErrMetadataUnavailable means "this version is unusable, choose
 // another". Returning an empty slice instead would assert something false —
 // that the version ships no files.
+//
+// # A file-level policy needs a file-serving index
+//
+// Of FilterPolicy's three axes, only pre-release exclusion is decidable from a
+// version alone. Yanking is per-file per PEP 592 and an upload time belongs to a
+// file, so those two are evaluated through Files — which means a file-level
+// policy is not expressible over an index that serves none.
+//
+// FilteredIndex reports ErrFilesUnavailable there rather than resolving it
+// either way. Admitting everything would defeat the policy invisibly, and
+// dropping everything would report every package in the index as having no
+// acceptable version — a constraint conflict that does not exist. The
+// composition that works is a FilteredIndex over a MultiIndex pairing an RSF
+// with a file-serving source, which is also the arrangement RFD 0001 Section 6
+// describes.
 package index
