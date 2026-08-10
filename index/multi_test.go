@@ -371,17 +371,63 @@ func TestMultiIndexFilesErrorTaxonomyAcrossSources(t *testing.T) {
 			notWant: []error{ErrPackageNotFound},
 		},
 		{
-			// The only source that could have had it serves no files, and the
-			// other has never heard of the package. Not-found would be wrong:
-			// the package IS known, to the RSF.
-			name: "a files-less source knows the package, another does not know it",
+			// ⚠️ THE MIXED CASE. A file-serving source denied the name while a
+			// fileless source was also present.
+			//
+			// The answer is ErrMetadataUnavailable, and NOT ErrFilesUnavailable:
+			// a source that serves files WAS asked and did answer, so "no source
+			// serves files" is false. Nor ErrPackageNotFound: the fileless source
+			// cannot speak to existence through Files, so absence is not a claim
+			// this index may make.
+			//
+			// This row previously asserted ErrFilesUnavailable and justified it
+			// with "the package IS known, to the RSF" -- which was a FALSE
+			// RATIONALIZATION. RSFIndex.Files returns ErrFilesUnavailable without
+			// inspecting pkg or ver at all, so it says nothing about whether
+			// flask is known, and the row passed identically for a package no
+			// source had ever heard of. See the companion row below, which is the
+			// case that rationale actually described.
+			name: "a fileless source is present and the file-serving source denies the name",
 			sources: []MetadataIndex{
 				openFixtureIndex(t),
 				NewMockIndex("empty"),
 			},
 			pkg: "flask", ver: "3.0.0",
-			want:    ErrFilesUnavailable,
-			notWant: []error{ErrPackageNotFound},
+			want:    ErrMetadataUnavailable,
+			notWant: []error{ErrPackageNotFound, ErrFilesUnavailable},
+		},
+		{
+			// ⚠️ Finding 6: the ONLY row that sets both sawUnavailable and
+			// sawFilesUnavailable, so it is the only one that exercises the
+			// precedence between them. Without it, swapping the two case arms in
+			// the resolution switch leaves the whole table green.
+			//
+			// A source that knows the package and cannot serve this version's
+			// files is strictly more informative than a source that serves no
+			// files at all, so it wins.
+			name: "a knowing file-serving source and a fileless source together",
+			sources: []MetadataIndex{
+				openFixtureIndex(t),
+				NewMockIndex("files").AddFiles("flask", "3.0.0", distFile("a.whl", cutoff, false)),
+			},
+			pkg: "flask", ver: "9.9.9",
+			want:    ErrMetadataUnavailable,
+			notWant: []error{ErrFilesUnavailable, ErrPackageNotFound},
+		},
+		{
+			// ErrPackageNotFound is REACHABLE, which it was not while a fileless
+			// source's answer outranked everything: every source here can speak
+			// to files and every one denies the name, so absence is a claim this
+			// index can actually make. Without this row a caller could not tell a
+			// typo from "nobody serves files".
+			name: "every file-serving source denies the name",
+			sources: []MetadataIndex{
+				NewMockIndex("files-a").AddFiles("flask", "3.0.0", distFile("a.whl", cutoff, false)),
+				NewMockIndex("files-b").AddFiles("django", "5.0", distFile("b.whl", cutoff, false)),
+			},
+			pkg: "ghost", ver: "1.0",
+			want:    ErrPackageNotFound,
+			notWant: []error{ErrMetadataUnavailable, ErrFilesUnavailable},
 		},
 		{
 			// A file-serving source knows the package but not this version.

@@ -57,11 +57,16 @@
 // file, so those two are evaluated through Files — which means a file-level
 // policy is not expressible over an index that serves none.
 //
-// FilteredIndex reports ErrFilesUnavailable there rather than resolving it
-// either way. Admitting everything would defeat the policy invisibly, and
-// dropping everything would report every package in the index as having no
-// acceptable version — a constraint conflict that does not exist. The
-// composition that works is a FilteredIndex over a MultiIndex pairing an RSF
+// ⚠️ Such a policy then admits NOTHING, and does so by returning empty version
+// lists rather than by failing. Every package looks like it has no acceptable
+// version. FilteredIndex deliberately does not guard against this, because it
+// cannot: "no file evidence" is the same observation whether the operator wired
+// up a fileless index or the package is merely absent from the file source, and
+// the second is a supported configuration. Checking the composition is the
+// caller's job — see FilteredIndex and hasAdmissibleFile, which record the three
+// ways an earlier hard-error version of this got it wrong.
+//
+// The composition that works is a FilteredIndex over a MultiIndex pairing an RSF
 // with a file-serving source, which is also the arrangement RFD 0001 Section 6
 // describes.
 package index

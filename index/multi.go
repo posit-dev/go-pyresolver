@@ -40,10 +40,12 @@ import (
 //	           (ErrPackageNotFound).
 //
 //	Files      first success wins, INCLUDING an empty list. Otherwise
-//	           ErrMetadataUnavailable if a file-serving source knew the
-//	           package but not the version, else ErrFilesUnavailable if the
-//	           only sources that could have answered serve no files at all,
-//	           else ErrPackageNotFound.
+//	           ErrMetadataUnavailable if any source knows the package and
+//	           cannot serve this version's files, OR if a file-serving source
+//	           denied the name while a fileless source was also present;
+//	           ErrPackageNotFound when every source that can speak to files
+//	           denied the name and none was fileless; ErrFilesUnavailable only
+//	           when EVERY source is fileless.
 //
 // ⚠️ The case worth stating plainly, because getting it wrong is a reported
 // defect waiting to happen: source A knows the package but not the version and
@@ -51,6 +53,26 @@ import (
 // ErrPackageNotFound. The package was found. A caller branching on not-found
 // there reports a missing package for a present one, which is the defect
 // rstudio/package-manager#19466's F12 chased through three implementations.
+//
+// ⚠️ Note the asymmetry in Files: ErrFilesUnavailable is the WEAKEST evidence,
+// not the strongest, because a fileless source emits it for every lookup without
+// inspecting pkg or ver. Letting it win made ErrPackageNotFound unreachable
+// whenever an RSF was in the composition and made the sentinel useless to a
+// FilteredIndex above. See Files for the full account.
+//
+// # Which sentinels each method tolerates from a source
+//
+// A source may itself be a FilteredIndex, so a method can receive a sentinel the
+// interface does not list for it. Rather than aborting the whole lookup over one
+// source's choice of error, each method tolerates and skips what it can:
+//
+//	Versions   ErrPackageNotFound and ErrFilesUnavailable are skipped. Neither
+//	           marks the package as known.
+//	Metadata   ErrPackageNotFound skipped; ErrMetadataUnavailable and
+//	           ErrFilesUnavailable both count as "this source supplied no
+//	           metadata"; ErrMetadataUnusable is remembered and reported only
+//	           if no source can answer.
+//	Files      all four sentinels are tolerated per the precedence above.
 //
 // # A real failure is never masked
 //
@@ -73,6 +95,15 @@ import (
 // its own lookup is by string. Bridging that would cost a Versions call per
 // Metadata miss on every source, to rescue a case a real corpus produces rarely,
 // so it is documented rather than paid for.
+//
+// ⚠️ THE CONSEQUENCE IS LARGER THAN A METADATA MISS, and this paragraph used to
+// undersell it. Under a FilteredIndex carrying a file-level policy, the file
+// lookup goes through the same string-keyed path, so a version whose file
+// evidence lives in another source under another spelling is not merely awkward
+// to fetch -- it is DROPPED FROM THE VERSION LIST. A package can therefore appear
+// to have no usable versions at all. "One version resolves oddly" and "this
+// package looks empty" are very different things to debug, and only the second
+// is what actually happens.
 //
 // A MultiIndex is immutable after construction and therefore safe for concurrent
 // use whenever its sources are.
@@ -140,6 +171,13 @@ func (m *MultiIndex) Versions(ctx context.Context, pkg PackageName) ([]version.V
 		case errors.Is(err, ErrPackageNotFound):
 			// This source's answer about itself, not about the union.
 			continue
+		case errors.Is(err, ErrFilesUnavailable):
+			// A source that refuses at the files layer contributes nothing here
+			// and must not abort the union. Reachable through a per-source
+			// FilteredIndex carrying a file-level policy, which is a natural
+			// shape. Deliberately does NOT set known: this says nothing about
+			// whether the package exists.
+			continue
 		default:
 			return nil, fmt.Errorf("multi index: source %d of %d: %w", i+1, len(m.sources), err)
 		}
@@ -204,7 +242,12 @@ func (m *MultiIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 			return meta, nil
 		case errors.Is(err, ErrPackageNotFound):
 			continue
-		case errors.Is(err, ErrMetadataUnavailable):
+		case errors.Is(err, ErrMetadataUnavailable), errors.Is(err, ErrFilesUnavailable):
+			// ErrFilesUnavailable is out of contract for Metadata, but a source
+			// that is itself a FilteredIndex under a file-level policy can emit
+			// it, and the operative meaning is the same: this source did not
+			// supply metadata for this version. Tolerated rather than aborting
+			// the whole lookup over one source's choice of sentinel.
 			sawUnavailable = true
 		case errors.Is(err, ErrMetadataUnusable):
 			// A later source may still hold a usable record for this version, so
@@ -245,13 +288,58 @@ func (m *MultiIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 // package's data. Pairing an RSF, which serves no files at all, with a
 // file-serving source is the composition RFD 0001 calls for, and it works
 // because of this.
+//
+// # ErrFilesUnavailable is only returned when NO source serves files
+//
+// ⚠️ This is the load-bearing part, and it did not hold at first. A fileless
+// source sets its flag for EVERY lookup, without inspecting pkg or ver --
+// RSFIndex is documented as doing exactly that -- so letting that flag win
+// meant ErrFilesUnavailable came back whenever an RSF was in the composition,
+// even though a file-serving source had been asked and had answered. Two things
+// broke:
+//
+//   - ErrPackageNotFound became unreachable, so a caller could not tell a
+//     typo'd package name from "nobody serves files".
+//   - A FilteredIndex above could no longer read the sentinel as a statement
+//     about the whole inner index, because it no longer was one. A legitimate
+//     partial mirror hard-errored with advice to compose the very thing it had
+//     composed.
+//
+// So a fileless source's answer is now the WEAKEST evidence, not the strongest:
+// it is consulted only when no other source said anything.
+//
+// # What each residual answer claims
+//
+// A fileless source's ErrFilesUnavailable says nothing about whether the package
+// exists, so the residual cases are ordered by which claim is actually
+// supportable:
+//
+//	ErrMetadataUnavailable   some source knows the package and cannot serve
+//	                         files for this version.
+//	ErrPackageNotFound       every source that CAN speak to files denied the
+//	                         name, and no fileless source was involved -- so
+//	                         absence is a claim this index can actually make.
+//	ErrFilesUnavailable      every source is fileless. A true capability
+//	                         statement, and the only case a caller should read
+//	                         as "compose differently".
+//
+// ⚠️ The MIXED case -- a file-serving source denied the name while a fileless
+// source was also present -- reports ErrMetadataUnavailable, not
+// ErrPackageNotFound. Absence cannot be confirmed there: the fileless source may
+// well hold the package and simply cannot say so through Files. Claiming
+// not-found would send someone hunting a typo for a package that exists, which
+// is the F12 failure in a new costume. ErrMetadataUnavailable's operative
+// meaning -- "this index cannot give you files for this version" -- is true in
+// every one of these cases, which is why it is the fallback.
 func (m *MultiIndex) Files(ctx context.Context, pkg PackageName, ver version.Version) ([]DistFile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
 	sawUnavailable := false
+	sawNotFound := false
 	sawFilesUnavailable := false
+	var unusable error
 
 	for i, src := range m.sources {
 		files, err := src.Files(ctx, pkg, ver)
@@ -259,9 +347,17 @@ func (m *MultiIndex) Files(ctx context.Context, pkg PackageName, ver version.Ver
 		case err == nil:
 			return files, nil
 		case errors.Is(err, ErrPackageNotFound):
-			continue
+			// This source CAN speak to files and says the name is absent.
+			sawNotFound = true
 		case errors.Is(err, ErrMetadataUnavailable):
 			sawUnavailable = true
+		case errors.Is(err, ErrMetadataUnusable):
+			// A file record that exists and is malformed. Tolerated here rather
+			// than aborting, since a later source may serve the same version
+			// cleanly; see the type doc on which sentinels each method accepts.
+			if unusable == nil {
+				unusable = err
+			}
 		case errors.Is(err, ErrFilesUnavailable):
 			sawFilesUnavailable = true
 		default:
@@ -270,15 +366,27 @@ func (m *MultiIndex) Files(ctx context.Context, pkg PackageName, ver version.Ver
 	}
 
 	switch {
+	case unusable != nil:
+		return nil, fmt.Errorf("multi index (%d sources): %w", len(m.sources), unusable)
 	case sawUnavailable:
-		// A source that DOES serve files was asked and did not have this
-		// version. More informative than "nobody serves files".
 		return nil, fmt.Errorf("multi index (%d sources): %q %s: %w",
 			len(m.sources), pkg, ver, ErrMetadataUnavailable)
+	case sawNotFound && sawFilesUnavailable:
+		// Mixed. A file-serving source denied the name, but a fileless source
+		// was present and cannot speak to existence either way, so absence is
+		// not a claim this index may make. See the method doc.
+		return nil, fmt.Errorf(
+			"multi index (%d sources): %q %s: no source that serves files has it, "+
+				"and a fileless source cannot confirm whether the package exists: %w",
+			len(m.sources), pkg, ver, ErrMetadataUnavailable)
+	case sawNotFound:
+		return nil, fmt.Errorf("multi index (%d sources): %q: %w",
+			len(m.sources), pkg, ErrPackageNotFound)
 	case sawFilesUnavailable:
 		return nil, fmt.Errorf("multi index (%d sources): %q %s: no source serves distribution files: %w",
 			len(m.sources), pkg, ver, ErrFilesUnavailable)
 	default:
+		// No sources at all.
 		return nil, fmt.Errorf("multi index (%d sources): %q: %w",
 			len(m.sources), pkg, ErrPackageNotFound)
 	}

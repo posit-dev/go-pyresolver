@@ -447,37 +447,11 @@ func TestFilteredIndexMetadataEnforcesFileLevelPolicy(t *testing.T) {
 	}
 }
 
-// A file-level policy over an index that serves NO files is unsatisfiable, and
-// it must FAIL rather than answer.
-//
-// Silently admitting everything would defeat the policy invisibly. Silently
-// dropping everything would report every package in the index as having no
-// acceptable version -- a constraint conflict that does not exist -- which is
-// the worse of the two. RSFIndex returns ErrFilesUnavailable unconditionally,
-// so this is a composition mistake, not a property of one package's data, and
-// the error says so.
-func TestFilteredIndexFileLevelPolicyOverFilelessIndexFails(t *testing.T) {
-	ctx := context.Background()
-	rsf := openFixtureIndex(t)
-
-	for name, policy := range map[string]FilterPolicy{
-		"yanked": {ExcludeYanked: true},
-		"date":   {SnapshotDate: cutoff},
-	} {
-		t.Run(name, func(t *testing.T) {
-			f := NewFilteredIndex(rsf, policy)
-
-			_, err := f.Versions(ctx, NewPackageName("flask"))
-			if !errors.Is(err, ErrFilesUnavailable) {
-				t.Fatalf("Versions: err = %v, want ErrFilesUnavailable", err)
-			}
-			_, err = f.Metadata(ctx, NewPackageName("flask"), mustVersion(t, "3.0.0"))
-			if !errors.Is(err, ErrFilesUnavailable) {
-				t.Fatalf("Metadata: err = %v, want ErrFilesUnavailable", err)
-			}
-		})
-	}
-}
+// A file-level policy over an index that serves no files admits nothing. That
+// behavior, and why it is no longer a hard error, is pinned by
+// TestFilteredIndexFileLevelPolicyOverFilelessIndexAdmitsNothing in
+// composition_test.go, alongside the partial-mirror case that made the hard
+// error untenable.
 
 // The same index with only the pre-release policy active never calls Files, so
 // it composes over RSFIndex. That is the whole reason the file-level policies

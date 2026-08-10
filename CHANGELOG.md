@@ -27,17 +27,30 @@ served it.
 
   ⚠️ Only pre-release exclusion is decidable from a version alone. Yanking is per-file per
   PEP 592 and an upload time belongs to a file, so those two axes are evaluated through
-  `Files`, and a file-level policy over an index that serves no files is **unsatisfiable**:
-  it reports `ErrFilesUnavailable` instead of answering. Admitting everything would defeat
-  the policy invisibly, and dropping everything would report every package in the index as
-  having no acceptable version — a constraint conflict that does not exist. Since `RSFIndex`
-  serves no files by the shape of the data, the arrangement that works is a `FilteredIndex`
-  over a `MultiIndex` pairing the RSF with a file-serving source.
+  `Files`. A file-level policy over an index that serves no files therefore admits
+  **nothing**, and it says so with empty version lists rather than by failing — every package
+  looks like it has no acceptable version. This is **not** guarded, because it cannot be:
+  "no file evidence" is the same observation whether the operator wired up a fileless index
+  or the package is simply absent from the file source, and the second is a supported
+  configuration (a partial mirror). Since `RSFIndex` serves no files by the shape of the
+  data, the arrangement that works is a `FilteredIndex` over a `MultiIndex` pairing the RSF
+  with a file-serving source, and **verifying that is the caller's job**.
 
-  A file whose `UploadTime` is the zero value is **dropped** by a snapshot cutoff, not
-  admitted: an unrecorded time is a different fact from one before the cutoff, and conflating
-  them would let a file published yesterday into a snapshot dated last year, with nothing in
-  the result saying so.
+  ⚠️ The two file axes fail in opposite directions, and not in the safe one. `SnapshotDate`
+  fails **closed**: a file whose `UploadTime` is the zero value is dropped, because an
+  unrecorded time cannot be shown to precede the cutoff, and admitting it would let a file
+  published yesterday into a snapshot dated last year. `ExcludeYanked` fails **open**:
+  `DistFile.Yanked` cannot express "not captured", so a source that does not record PEP 592
+  data reports every file as un-yanked and the policy admits everything while appearing to
+  work. Only set `ExcludeYanked` over a source whose files genuinely carry PEP 592 data. The
+  gap is fixable additively later (a `YankedKnown` field on `DistFile`), so it is not locked
+  in by this release.
+
+  Under an active file-level policy, `Versions` issues one `Files` lookup per surviving
+  version, serially. Cheap in-process; a 500-version package over a network-backed source is
+  500 sequential round trips. Accepted for now because it is fixable additively — an optional
+  batch interface adds nothing to existing implementations — and because caching belongs in
+  the index being wrapped.
 
   Under an active file-level policy, a version with **no admissible file** is refused with
   `ErrMetadataUnavailable` by all three methods — including a version that had zero files to
@@ -60,7 +73,16 @@ served it.
     having heard of the package (`ErrPackageNotFound`).
   - `Files` treats an **empty list with a nil error as an answer**, not a miss — a release
     can have every file deleted, and "keep looking" would let a stale mirror resurrect files
-    the authoritative source removed. `ErrFilesUnavailable` does mean "ask another source".
+    the authoritative source removed. `ErrFilesUnavailable` does mean "ask another source",
+    and it is returned only when **every** source is fileless: a fileless source emits it for
+    every lookup without inspecting the package, so it is the weakest evidence available, not
+    the strongest. Letting it win would make `ErrPackageNotFound` unreachable whenever an RSF
+    is in the composition, leaving a caller unable to tell a typo'd name from "nobody serves
+    files".
+  - Each method tolerates sentinels the interface does not list for it, since a source may
+    itself be a `FilteredIndex`. `Versions` skips `ErrFilesUnavailable`; `Metadata` treats it
+    as "this source supplied no metadata"; `Files` tolerates all four. One source's choice of
+    error does not abort the whole lookup.
 
   ⚠️ Source A knowing the package but not the version, while source B knows neither, is
   `ErrMetadataUnavailable` — **not** `ErrPackageNotFound`. The package was found; a caller
@@ -71,6 +93,11 @@ served it.
   treated as authoritative. A cross-source spelling difference is not bridged when the
   earliest source can list a version but not supply its metadata; that limitation is
   documented on the type and pinned by a test.
+
+  ⚠️ Under a file-level `FilteredIndex` that limitation is larger than a metadata miss: the
+  file lookup takes the same string-keyed path, so a version whose file evidence lives in
+  another source under another spelling is **dropped from the version list**, and the package
+  can appear to have no usable versions at all.
 
 ## [0.2.0] - 2026-08-10
 
