@@ -141,8 +141,25 @@ type MetadataIndex interface {
 	// for a platform other than the one you are running on) expressible at
 	// all.
 	//
-	// Returns ErrPackageNotFound if pkg or ver is unknown. A known version
-	// with no files is an empty slice and a nil error -- which does happen,
-	// since a release can have every file deleted.
+	// A known version with no files is an empty slice and a nil error -- which
+	// does happen, since a release can have every file deleted.
+	//
+	// Error precedence, for an index that serves files at all:
+	//
+	//   - ErrPackageNotFound only when pkg itself is absent.
+	//   - ErrMetadataUnavailable when pkg is present but ver is not one this
+	//     index can speak to. Same rule as Metadata, for the same reason.
+	//
+	// ⚠️ An index that serves NO files may return ErrFilesUnavailable
+	// unconditionally, WITHOUT inspecting pkg or ver. RSFIndex is exactly that:
+	// an RSF carries dependency metadata and no distribution files, so there is
+	// nothing to validate against and checking would be busywork that invents a
+	// not-found answer for a lookup it never performed.
+	//
+	// This paragraph replaces a promise of "ErrPackageNotFound if pkg or ver is
+	// unknown" that NO implementation kept: RSFIndex never returned it here for
+	// either, and the mock only did so by sharing a lookup helper. Documenting
+	// the two shapes separately is what makes the difference intentional rather
+	// than a discrepancy waiting to be reported again.
 	Files(ctx context.Context, pkg PackageName, ver version.Version) ([]DistFile, error)
 }

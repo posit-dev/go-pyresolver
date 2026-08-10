@@ -74,3 +74,56 @@ func TestImplementationsAgreeOnErrorStates(t *testing.T) {
 		})
 	}
 }
+
+// Files does NOT follow Metadata's precedence for every implementation, and the
+// difference is intentional -- so it is pinned separately rather than folded into
+// the agreement table above, where it would look like a violation.
+//
+// An index that serves no files at all short-circuits: there is nothing to look
+// up, so it reports ErrFilesUnavailable without inspecting pkg or ver. An index
+// that does serve files follows the same rule as Metadata.
+func TestFilesErrorPrecedenceDiffersByCapability(t *testing.T) {
+	ctx := context.Background()
+	known := NewPackageName("flask")
+	unknownPkg := NewPackageName("definitely-not-a-package")
+
+	t.Run("RSFIndex serves no files, so it never looks up", func(t *testing.T) {
+		idx := openFixtureIndex(t)
+		for _, c := range []struct {
+			what string
+			pkg  PackageName
+			ver  string
+		}{
+			{"known pkg and version", known, "3.0.0"},
+			{"unknown version", known, "99.99.99"},
+			{"unknown package", unknownPkg, "1.0"},
+		} {
+			_, err := idx.Files(ctx, c.pkg, mustVersion(t, c.ver))
+			if !errors.Is(err, ErrFilesUnavailable) {
+				t.Errorf("Files(%s) = %v, want ErrFilesUnavailable", c.what, err)
+			}
+			// ⚠️ It must NOT invent a not-found answer for a lookup it never did.
+			if errors.Is(err, ErrPackageNotFound) {
+				t.Errorf("Files(%s) reported ErrPackageNotFound for a lookup it "+
+					"never performed: %v", c.what, err)
+			}
+		}
+	})
+
+	t.Run("MockIndex serves files, so it follows Metadata's precedence", func(t *testing.T) {
+		idx := NewMockIndex("agree").AddVersion("flask", "3.0.0")
+
+		if _, err := idx.Files(ctx, unknownPkg, mustVersion(t, "1.0")); !errors.Is(err, ErrPackageNotFound) {
+			t.Errorf("Files on an unknown package = %v, want ErrPackageNotFound", err)
+		}
+
+		_, err := idx.Files(ctx, known, mustVersion(t, "99.99.99"))
+		if !errors.Is(err, ErrMetadataUnavailable) {
+			t.Errorf("Files on an unknown version = %v, want ErrMetadataUnavailable", err)
+		}
+		if errors.Is(err, ErrPackageNotFound) {
+			t.Errorf("an unknown VERSION of a present package must not report "+
+				"ErrPackageNotFound from Files either: %v", err)
+		}
+	})
+}
