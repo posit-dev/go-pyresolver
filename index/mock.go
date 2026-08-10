@@ -228,7 +228,16 @@ func (m *MockIndex) lookup(pkg PackageName, ver version.Version) (*mockVersion, 
 
 	mv, ok := p.versions[ver.String()]
 	if !ok {
-		return nil, fmt.Errorf("mock index %q: %q %s: %w", m.origin, pkg, ver, ErrPackageNotFound)
+		// ⚠️ ErrMetadataUnavailable, NOT ErrPackageNotFound: the package WAS
+		// found, so "package not found" is untrue on its face, and a caller
+		// branching on it would report a missing package for a present one.
+		//
+		// This used to return ErrPackageNotFound and was the mock half of
+		// rstudio/package-manager#19466's F12: the mock said not-found, RSFIndex
+		// said unavailable, and the interface doc said not-found. Only one answer
+		// can be right, and it is this one -- see the MetadataIndex contract for
+		// why an unknown version and an uncaptured one share an error.
+		return nil, fmt.Errorf("mock index %q: %q %s: %w", m.origin, pkg, ver, ErrMetadataUnavailable)
 	}
 	return mv, nil
 }
