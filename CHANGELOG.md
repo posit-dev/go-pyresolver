@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-10
+
 ### Breaking
 
 - `FilteredIndex` carrying a **file-level policy** (`ExcludeYanked` or `SnapshotDate`) over an
@@ -346,7 +348,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/posit-dev/go-pyresolver/releases/tag/v0.1.0
