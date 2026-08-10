@@ -5,6 +5,7 @@ package index
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -126,55 +127,202 @@ func TestFilteredOverMultiIndexTreatsUnknownNameAndUnknownVersionAlike(t *testin
 	}
 }
 
-// A file-level policy over a wholly fileless index admits NOTHING, and does so
-// by returning an empty list rather than by failing.
+// filelessIndex serves versions and metadata but no distribution files. That is
+// RSFIndex's shape -- an RSF carries no filename, hash, upload time or yanked
+// flag -- and it is what PPM's index will be.
 //
-// ⚠️ This pins a deliberate reversal. Earlier versions of this code hard-errored
-// here, on the reasoning that silently admitting nothing would report every
-// package as having no acceptable version -- a constraint conflict that does not
-// exist. That reasoning was sound but the property was not achievable:
+// A MockIndex is wrapped rather than reimplemented so the version content is easy
+// to vary. RSFIndex's own fixture cannot grow a pre-release-only package without
+// editing a test file this change does not own, and the totality proof below
+// needs exactly that shape.
+type filelessIndex struct{ *MockIndex }
+
+func (filelessIndex) Files(ctx context.Context, pkg PackageName, ver version.Version) ([]DistFile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, fmt.Errorf("fileless index: %q %s: carries dependency metadata only: %w",
+		pkg, ver, ErrFilesUnavailable)
+}
+
+var _ MetadataIndex = filelessIndex{}
+
+// ⚠️ A file-level policy over a wholly fileless index REFUSES. It must not
+// quietly report every package as having no acceptable version, which downstream
+// reads as a constraint conflict that does not exist.
 //
-//   - It misfired on a legitimate partial mirror (see above), where the same
-//     sentinel arrives for an entirely different reason.
-//   - It was data-dependent. If the pre-release axis emptied the version list
-//     first, or the package had no versions, the file axis was never consulted
-//     and the same misconfiguration returned an empty list anyway. So the
-//     "always fails" promise held only for favourable data.
-//   - FilteredIndex cannot actually distinguish "the operator wired up a
-//     fileless index" from "this package is absent from the file source". Both
-//     are the absence of file evidence.
+// This reverses the behavior released as v0.3.0, and the reversal is the point.
+// v0.3.0 dropped silently because ErrFilesUnavailable had been unreliable: a
+// MultiIndex emitted it for a mere data condition, so a legitimate partial mirror
+// hard-errored. But the fix for that landed in the SAME change -- MultiIndex now
+// reserves the sentinel for a genuine capability statement, emitting it only when
+// every source is fileless. The two fixes over-corrected past each other: one
+// made the signal trustworthy while the other stopped trusting it.
 //
-// So the rule is now uniform and predictable, and the hazard is documented
-// instead of half-guarded. Verifying that a file-level policy is composed over a
-// file-serving source is the caller's job, which the docs now say plainly.
-func TestFilteredIndexFileLevelPolicyOverFilelessIndexAdmitsNothing(t *testing.T) {
+// With the signal reliable, refusing is available again, and it is the right
+// uniform rule. The partial-mirror case stays silent because it now arrives as
+// ErrMetadataUnavailable, not because this method guesses.
+func TestFilteredIndexFileLevelPolicyOverFilelessIndexRefuses(t *testing.T) {
 	ctx := context.Background()
+	pkg := NewPackageName("flask")
 
 	for name, policy := range map[string]FilterPolicy{
-		"yanked": {ExcludeYanked: true},
-		"date":   {SnapshotDate: cutoff},
-		// Finding 3's shape: the version axis empties the list first. This used
-		// to return empty-and-nil while the rows above hard-errored, for the
-		// same misconfiguration.
+		"yanked":               {ExcludeYanked: true},
+		"date":                 {SnapshotDate: cutoff},
 		"date and pre-release": {SnapshotDate: cutoff, ExcludePrereleases: true},
+		"both file axes":       {SnapshotDate: cutoff, ExcludeYanked: true},
 	} {
 		t.Run(name, func(t *testing.T) {
+			// RSFIndex itself, so this is pinned against the real fileless
+			// implementation and not only against the stub.
 			f := NewFilteredIndex(openFixtureIndex(t), policy)
 
-			versions, err := f.Versions(ctx, NewPackageName("flask"))
-			if err != nil {
-				t.Fatalf("Versions: err = %v, want nil error", err)
-			}
-			if len(versions) != 0 {
-				t.Fatalf("Versions = %v, want empty", versionStrings(versions))
+			_, err := f.Versions(ctx, pkg)
+			if !errors.Is(err, ErrFilesUnavailable) {
+				t.Fatalf("Versions: err = %v, want ErrFilesUnavailable", err)
 			}
 
-			_, err = f.Metadata(ctx, NewPackageName("flask"), mustVersion(t, "3.0.0"))
-			if !errors.Is(err, ErrMetadataUnavailable) {
-				t.Fatalf("Metadata: err = %v, want ErrMetadataUnavailable", err)
+			_, err = f.Metadata(ctx, pkg, mustVersion(t, "3.0.0"))
+			if !errors.Is(err, ErrFilesUnavailable) {
+				t.Fatalf("Metadata: err = %v, want ErrFilesUnavailable", err)
+			}
+
+			// Files was already loud, by passing the inner error through.
+			_, err = f.Files(ctx, pkg, mustVersion(t, "3.0.0"))
+			if !errors.Is(err, ErrFilesUnavailable) {
+				t.Fatalf("Files: err = %v, want ErrFilesUnavailable", err)
 			}
 		})
 	}
+}
+
+// ⚠️ THE TOTALITY PROOF, and the reason this is not the guard the reviewer
+// rightly rejected as "firing only on favourable data".
+//
+// The refusal cannot fire when the per-version loop never runs -- a package with
+// no versions, or one whose versions the version-level axis already excluded. The
+// earlier review read that as the property being incomplete. It is not, and the
+// distinction is what makes the design defensible:
+//
+//	IN THOSE CASES THE FILE AXES COULD NOT HAVE CHANGED THE ANSWER.
+//
+// An empty result is then the correct answer over ANY index, files or not, so
+// there is nothing for a capability check to report. This test proves that by
+// asserting the fileless index and a file-serving index with the SAME version
+// content give the SAME answer. If a future change makes them diverge, the
+// silence has become a real gap and this test says so.
+//
+// The invariant, stated once: a capability failure is reported wherever a
+// file-level axis could have changed the answer, and nowhere else.
+func TestFilteredIndexCapabilityRefusalIsTotal(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name   string
+		policy FilterPolicy
+		// build populates an index with identical version content in both the
+		// fileless and file-serving cases. addFiles is called only for the
+		// file-serving one.
+		build    func(m *MockIndex)
+		addFiles func(m *MockIndex)
+		pkg      string
+	}{
+		{
+			// No versions at all: the file axes have nothing to evaluate.
+			name:     "known package with no versions",
+			policy:   FilterPolicy{SnapshotDate: cutoff, ExcludeYanked: true},
+			build:    func(m *MockIndex) { m.AddPackage("lonely") },
+			addFiles: func(*MockIndex) {},
+			pkg:      "lonely",
+		},
+		{
+			// The version axis empties the list first, so the file axes are
+			// never reached. This is the exact case the review raised.
+			name:   "every version excluded by the version-level axis",
+			policy: FilterPolicy{ExcludePrereleases: true, SnapshotDate: cutoff},
+			build:  func(m *MockIndex) { m.AddVersion("flask", "3.0.0b1") },
+			addFiles: func(m *MockIndex) {
+				m.AddFiles("flask", "3.0.0b1", distFile("beta.whl", cutoff.Add(-time.Hour), false))
+			},
+			pkg: "flask",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fileless := NewMockIndex("fileless")
+			tc.build(fileless)
+
+			serving := NewMockIndex("serving")
+			tc.build(serving)
+			tc.addFiles(serving)
+
+			refusing := NewFilteredIndex(filelessIndex{fileless}, tc.policy)
+			answering := NewFilteredIndex(serving, tc.policy)
+
+			refusedVersions, refusedErr := refusing.Versions(ctx, NewPackageName(tc.pkg))
+			servedVersions, servedErr := answering.Versions(ctx, NewPackageName(tc.pkg))
+
+			if refusedErr != nil || servedErr != nil {
+				t.Fatalf("Versions errored where the file axes are not load-bearing:\n"+
+					"  fileless: %v\n  file-serving: %v\n"+
+					"neither should fail, because the answer does not depend on files here",
+					refusedErr, servedErr)
+			}
+
+			// The proof: identical answers, so the silence is correct rather
+			// than a missed refusal.
+			if !slices.Equal(versionStrings(refusedVersions), versionStrings(servedVersions)) {
+				t.Fatalf("fileless gave %v but file-serving gave %v; "+
+					"they must agree wherever the file axes cannot change the answer",
+					versionStrings(refusedVersions), versionStrings(servedVersions))
+			}
+			if len(refusedVersions) != 0 {
+				t.Fatalf("Versions = %v, want empty", versionStrings(refusedVersions))
+			}
+		})
+	}
+}
+
+// The coordinator's specific worry: whether ErrFilesUnavailable from a NESTED
+// FilteredIndex reintroduces the ambiguity that made the sentinel untrustworthy.
+//
+// It does not, and the reason is compositional. A FilteredIndex over a fileless
+// inner can never serve a file, so its own ErrFilesUnavailable is a true
+// capability statement about itself. A MultiIndex above it then demotes that to
+// weakest evidence, so it only escapes when every sibling is fileless too. The
+// invariant holds at each layer rather than by luck.
+func TestNestedFilteredIndexPreservesTheCapabilitySignal(t *testing.T) {
+	ctx := context.Background()
+	pkg := NewPackageName("flask")
+
+	// A nested FilteredIndex whose own inner serves no files.
+	nested := NewFilteredIndex(openFixtureIndex(t), FilterPolicy{ExcludePrereleases: true})
+
+	t.Run("a file-serving sibling keeps the composition answerable", func(t *testing.T) {
+		mirror := NewMockIndex("mirror").
+			AddFiles("flask", "3.0.0", distFile("ok.whl", cutoff.Add(-time.Hour), false))
+		f := NewFilteredIndex(NewMultiIndex(nested, mirror), FilterPolicy{SnapshotDate: cutoff})
+
+		versions, err := f.Versions(ctx, pkg)
+		if err != nil {
+			t.Fatalf("Versions: %v, want nil -- a file-serving sibling is present", err)
+		}
+		if got, want := versionStrings(versions), []string{"3.0.0"}; !slices.Equal(got, want) {
+			t.Fatalf("Versions = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("all-fileless siblings still refuse", func(t *testing.T) {
+		f := NewFilteredIndex(
+			NewMultiIndex(nested, openFixtureIndex(t)),
+			FilterPolicy{SnapshotDate: cutoff},
+		)
+
+		if _, err := f.Versions(ctx, pkg); !errors.Is(err, ErrFilesUnavailable) {
+			t.Fatalf("Versions: err = %v, want ErrFilesUnavailable", err)
+		}
+	})
 }
 
 // ⚠️ Finding 5: a cross-source spelling difference does not merely cost a

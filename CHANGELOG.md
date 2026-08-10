@@ -13,6 +13,39 @@ served it.
 
 ## [Unreleased]
 
+### Breaking
+
+- `FilteredIndex` carrying a **file-level policy** (`ExcludeYanked` or `SnapshotDate`) over an
+  index that serves **no files** now **refuses** instead of answering: `Versions`, `Metadata`
+  and `Files` all report `ErrFilesUnavailable`, wrapped with the advice to compose over a
+  file-serving source.
+
+  ⚠️ **Anyone on `v0.3.0` should upgrade.** There, such a composition returned an **empty
+  version list with a nil error** for every package — so every package looked like it had no
+  acceptable version, which downstream reads as a constraint conflict that does not exist.
+  That is indistinguishable from a real resolution failure, which makes it strictly worse
+  than an error. `RSFIndex` serves no files *by design* and no index ever will, so this is the
+  default outcome of the most obvious wiring, not an exotic edge case.
+
+  How `v0.3.0` came to be wrong is worth recording, because it argues against changing it
+  back. The refusal existed, and was removed because `ErrFilesUnavailable` could not be
+  trusted: `MultiIndex` emitted it for a mere data condition, so a legitimate partial mirror
+  hard-errored with advice to compose the very thing it had composed. The fix for *that*
+  — reserving the sentinel for a genuine capability statement, emitted only when every source
+  is fileless — landed in the **same release**. The two corrections passed each other: one
+  made the signal trustworthy while the other stopped trusting it.
+
+  A partial mirror still stays silent and drops the affected versions, because that case now
+  arrives as `ErrMetadataUnavailable`. The distinction is capability versus data, and it holds
+  at every layer: a `FilteredIndex` over a fileless inner can never serve a file, so its own
+  `ErrFilesUnavailable` is true about itself, and a `MultiIndex` above it demotes that in turn.
+
+  The refusal is **total where it matters**. It cannot fire when there are no versions to
+  check, or when the version-level axis already excluded them all — but in those cases the
+  file axes could not have changed the answer, so an empty result is correct over any index.
+  A test pins that by asserting a fileless and a file-serving index with identical version
+  content give identical answers in exactly those cases.
+
 ## [0.3.0] - 2026-08-10
 
 ### Changed
