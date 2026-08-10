@@ -27,6 +27,16 @@ ported; the encoder remains in the producer pipeline. The golden test vectors
 in pypirsf/testdata originate from that producer's own test fixtures, so they
 pin this decoder to the encoder rather than only to itself.
 
+index/testdata/pypi-trimmed.rsf is an excerpt of a Repository Snapshot Format
+file produced by Posit Package Manager's PyPI manifest tooling, Copyright (c)
+Posit Software, PBC. Its records are copied byte for byte, so it also carries
+that producer's trained compression dictionary. The metadata within — project
+names, versions, Requires-Dist, Requires-Python, Provides-Extra and release
+summaries — originates with the projects published on the Python Package Index.
+The excerpt is included so that tests read what the producer emits rather than
+what this module's own writer emits; see index/testdata/README.md for its
+composition and how it was derived.
+
 github.com/klauspost/compress is licensed under a three-clause BSD license,
 with portions under the Apache License, Version 2.0, and the MIT license.
 

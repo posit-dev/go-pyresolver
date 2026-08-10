@@ -11,11 +11,17 @@ import (
 
 // TestRealRSF validates the reader against a real, production-sized RSF.
 //
-// Skipped unless PYPIRSF_TEST_FILE names a decompressed RSF, because the file is
-// ~1 GB and cannot be committed. It is kept as a test rather than thrown away
-// because the synthetic fixtures in file_test.go are written by this same
-// package's structs — they prove self-consistency, not that the reader handles
-// what the producer actually emits.
+// Skipped unless PYPIRSF_TEST_FILE names a decompressed RSF, because what it
+// asserts is about production SCALE — hundreds of thousands of records, and a
+// lookup that seeks rather than scans — and an excerpt small enough to commit
+// cannot demonstrate either.
+//
+// ⚠️ This being opt-in no longer means CI runs nothing against producer output.
+// index/testdata/pypi-trimmed.rsf is a committed excerpt of a real snapshot, and
+// the tests in index/rsfindex_real_test.go read it through this package on every
+// pull request — so the reader IS exercised against bytes it did not write, just
+// not at production scale. See rstudio/package-manager#19466 and
+// index/testdata/README.md.
 //
 // To get a file:
 //
