@@ -99,6 +99,39 @@ served it.
   another source under another spelling is **dropped from the version list**, and the package
   can appear to have no usable versions at all.
 
+- The tests that read **producer output** now run on every pull request, against a committed
+  ~988 KB excerpt of a real production snapshot at `index/testdata/pypi-trimmed.rsf`.
+  `TestRSFIndexAgainstRealFile` was gated behind `PYPIRSF_TEST_FILE`, which CI does not set,
+  so the only tests reading bytes this module did not write never ran — the suite was green
+  and the property was unchecked. A missing fixture now **fails** rather than skipping, and
+  CI fails if any of these tests skips: a silent skip is the defect, not the fallback.
+  `index/testdata/README.md` records how the excerpt was derived and how to regenerate it.
+- Assertions on the shapes the walk does not reach. Wiring the real-data test into CI closed
+  half the gap: it passes on a real snapshot because its root is `flask`, whose closure is
+  well-behaved, and the review measured 507 roots for which it would have failed. The
+  excerpt therefore also carries seven packages chosen for the state they carry — every
+  version key unparseable (`holygrail`), a `Requires-Dist` entry PEP 508 rejects
+  (`aad-token-verify`), PEP 440-equal keys with contradictory dependencies
+  (`database-connector`, `guessproj`), a direct-URL requirement (`memery`), an unreadable
+  `Requires-Python` (`admobilize-malos`), and an ambiguous spelling resolved by tiebreak
+  (`anpy`) — each with its own assertion.
+- Tests pinning behaviours that no test constrained, found by re-running a mutation pass over
+  this module (rstudio/package-manager#19466). Thirteen mutations that the suite did not
+  notice now fail a test, each verified by applying the mutation, watching the test go red,
+  and reverting: the choice of representative within a PEP 440 equality class, the ordering of
+  `UnparseableVersionKeys`, deduplication of a repeated direct-URL requirement, `walk`'s exit
+  code for an uncaptured root, `deps` emitting `requires_python_raw` only when the constraint
+  is unreadable, JSON output leaving `<` and `>` unescaped, a bool flag not consuming the
+  token after it, `exitCodeFor`'s fallback, the guidance on an RSF that predates dependency
+  capture, and four decoder refusals on malformed input — two of which panicked rather than
+  returning an error once the bounds check was loosened.
+
+  Mutations that no test can distinguish are recorded as such in
+  `index/pinned_mutations_test.go` and `cmd/pyresolve/pinned_mutations_test.go`, with the
+  reason, rather than being covered by a test that only appears to pin them. One pair is
+  mutually masking: reversing `Versions`' internal ordering and dropping `versions`' own sort
+  are each invisible alone and caught together.
+
 ## [0.2.0] - 2026-08-10
 
 ### Breaking

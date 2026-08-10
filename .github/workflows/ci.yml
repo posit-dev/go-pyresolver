@@ -22,6 +22,27 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      # The tests that read PRODUCER output, run explicitly and verbosely so the
+      # log shows they executed. They were env-var gated until
+      # rstudio/package-manager#19466, so CI never ran the only tests reading what
+      # the manifest tooling actually emits: the suite was green and the property
+      # was unchecked. They now read the committed excerpt at
+      # index/testdata/pypi-trimmed.rsf and FAIL if it is missing, and this step
+      # fails if any of them skips -- a silent skip is the defect being fixed.
+      - name: Producer-output tests (must not skip)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./index/ -run 'TestRSFIndexAgainstRealFile|TestRealFile' -v -count=1 \
+            | tee producer-output.log
+          if grep -q -e '--- SKIP' -e '^--- SKIP' producer-output.log; then
+            echo "::error::A producer-output test skipped. These must run on every PR."
+            exit 1
+          fi
+          if ! grep -q 'walked .* packages to depth' producer-output.log; then
+            echo "::error::The real-file walk did not report its traversal, so it did not run."
+            exit 1
+          fi
       - name: Format check
         run: |
           unformatted=$(gofmt -l .)
