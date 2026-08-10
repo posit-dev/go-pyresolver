@@ -39,6 +39,11 @@ served it.
   them would let a file published yesterday into a snapshot dated last year, with nothing in
   the result saying so.
 
+  Under an active file-level policy, a version with **no admissible file** is refused with
+  `ErrMetadataUnavailable` by all three methods — including a version that had zero files to
+  begin with, since there is then nothing to admit it on. The interface's "known version with
+  no files is empty plus nil" answer still applies whenever no file-level policy is active.
+
 - `index.MultiIndex` — a `MetadataIndex` over ordered sources. `Versions` returns the
   **union**; `Metadata` and `Files` return the first source that can answer, with
   `PackageMetadata.Origin` naming which one did. The asymmetry is the design: which versions

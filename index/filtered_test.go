@@ -297,31 +297,132 @@ func TestFilteredIndexVersionsDropsVersionsWithNoSurvivingFiles(t *testing.T) {
 	}
 }
 
-// ⚠️ The distinction the F10 finding was about, at the file level: a release
-// that genuinely ships no files answers empty-and-nil (the contract says so
-// explicitly, since a release can have every file deleted), while a release
-// whose files the POLICY removed answers ErrMetadataUnavailable. Returning
-// empty for the second would assert something false -- that the release ships
-// no files -- and it would disagree with what Metadata says for the same
-// version.
-func TestFilteredIndexEmptyFilesIsNotTheSameAsEmptiedByPolicy(t *testing.T) {
+// A release the policy emptied answers ErrMetadataUnavailable rather than an
+// empty list, because returning empty would assert something false -- that the
+// release ships no files -- and would disagree with what Metadata says about the
+// same version.
+func TestFilteredIndexEmptiedByPolicyIsRefusedNotEmpty(t *testing.T) {
 	ctx := context.Background()
 	inner := NewMockIndex("inner").
-		AddVersion("flask", "3.0.0"). // registered, zero files
 		AddFiles("flask", "3.1.0", distFile("late.whl", cutoff.Add(time.Hour), false))
 	f := NewFilteredIndex(inner, FilterPolicy{SnapshotDate: cutoff})
 
-	files, err := f.Files(ctx, NewPackageName("flask"), mustVersion(t, "3.0.0"))
-	if err != nil {
-		t.Fatalf("Files for a release with no files: %v, want nil error", err)
-	}
-	if len(files) != 0 {
-		t.Fatalf("Files = %v, want empty", filenames(files))
-	}
-
-	_, err = f.Files(ctx, NewPackageName("flask"), mustVersion(t, "3.1.0"))
+	_, err := f.Files(ctx, NewPackageName("flask"), mustVersion(t, "3.1.0"))
 	if !errors.Is(err, ErrMetadataUnavailable) {
 		t.Fatalf("Files for a release the policy emptied: err = %v, want ErrMetadataUnavailable", err)
+	}
+}
+
+// ⚠️ ALL THREE METHODS must agree about a known version with ZERO files under an
+// active file-level policy, and the agreed answer is "refused".
+//
+// This pins a real inconsistency, found in review of the first version of this
+// code. Files used a `len(kept) == 0 && len(files) > 0` guard, so a version with
+// no files at all fell through and answered empty-and-nil -- while
+// hasAdmissibleFile found nothing admissible, so Metadata refused it and
+// Versions dropped it. The same (pkg, ver) was "exists, ships no files" through
+// one method and "excluded by policy" through the other two.
+//
+// Refusing is the side that had to win, for three reasons:
+//
+//   - It is what the policy MEANS. "Has at least one file uploaded at or before
+//     the cutoff" and "has at least one un-yanked file" are both false when
+//     there is no file. A release with nothing in it cannot be shown to have
+//     existed at a date, and admitting it under ExcludeYanked would admit it on
+//     no evidence whatsoever.
+//   - Otherwise the policy is bypassable, which is the entire reason it is
+//     enforced on all three methods rather than only on Versions. A caller
+//     holding a version from a pin or a lockfile and calling Files IS that
+//     bypass.
+//   - The old guard made the answer depend on whether the INNER index happened
+//     to hold files before filtering -- an implementation detail invisible to
+//     the caller. Two releases with zero admissible files answered differently.
+//
+// What is given up is only the zero-file case UNDER an active file-level policy;
+// see the companion test for the distinction that survives.
+func TestFilteredIndexZeroFileVersionIsRefusedByAllThreeMethods(t *testing.T) {
+	ctx := context.Background()
+
+	for name, policy := range map[string]FilterPolicy{
+		"snapshot date": {SnapshotDate: cutoff},
+		"yanked":        {ExcludeYanked: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// "empty" is registered with metadata but NO files at all; "full"
+			// exists alongside it so the package is not trivially versionless.
+			inner := NewMockIndex("inner").
+				AddVersion("flask", "3.0.0").
+				AddFiles("flask", "3.1.0", distFile("ok.whl", cutoff.Add(-time.Hour), false))
+			f := NewFilteredIndex(inner, policy)
+			empty := mustVersion(t, "3.0.0")
+
+			// Versions: dropped.
+			vs, err := f.Versions(ctx, NewPackageName("flask"))
+			if err != nil {
+				t.Fatalf("Versions: %v", err)
+			}
+			if got, want := versionStrings(vs), []string{"3.1.0"}; !slices.Equal(got, want) {
+				t.Fatalf("Versions = %v, want %v: the zero-file version must be dropped", got, want)
+			}
+
+			// Metadata: refused, and as ErrMetadataUnavailable -- the package
+			// WAS found, so ErrPackageNotFound would be untrue on its face.
+			_, err = f.Metadata(ctx, NewPackageName("flask"), empty)
+			if !errors.Is(err, ErrMetadataUnavailable) {
+				t.Fatalf("Metadata: err = %v, want ErrMetadataUnavailable", err)
+			}
+			if errors.Is(err, ErrPackageNotFound) {
+				t.Fatalf("Metadata: err = %v, must not be ErrPackageNotFound", err)
+			}
+
+			// Files: refused too. This is the assertion the old guard failed.
+			files, err := f.Files(ctx, NewPackageName("flask"), empty)
+			if !errors.Is(err, ErrMetadataUnavailable) {
+				t.Fatalf("Files: err = %v (files = %v), want ErrMetadataUnavailable: "+
+					"a file-level policy cannot admit a version it has no file to verify",
+					err, filenames(files))
+			}
+		})
+	}
+}
+
+// The distinction that SURVIVES the rule above: with no file-level policy
+// active, filtersFiles() short-circuits and Files passes the inner answer
+// through verbatim. So "this release genuinely ships no files" -- which the
+// interface documents as empty-and-nil, since a release can have every file
+// deleted -- is still expressible, and a FilteredIndex does not invent a refusal
+// for it.
+//
+// A pre-release policy is active here to prove the short-circuit is about the
+// FILE axes specifically, not about the policy being empty.
+func TestFilteredIndexEmptyFilesSurviveWithoutAFileLevelPolicy(t *testing.T) {
+	ctx := context.Background()
+	inner := NewMockIndex("inner").AddVersion("flask", "3.0.0") // registered, zero files
+
+	for name, policy := range map[string]FilterPolicy{
+		"zero policy":             {},
+		"pre-release policy only": {ExcludePrereleases: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := NewFilteredIndex(inner, policy)
+
+			files, err := f.Files(ctx, NewPackageName("flask"), mustVersion(t, "3.0.0"))
+			if err != nil {
+				t.Fatalf("Files: err = %v, want nil: a release with no files is empty-and-nil", err)
+			}
+			if len(files) != 0 {
+				t.Fatalf("Files = %v, want empty", filenames(files))
+			}
+
+			// And the version is still listed -- nothing about it was refused.
+			vs, err := f.Versions(ctx, NewPackageName("flask"))
+			if err != nil {
+				t.Fatalf("Versions: %v", err)
+			}
+			if got, want := versionStrings(vs), []string{"3.0.0"}; !slices.Equal(got, want) {
+				t.Fatalf("Versions = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

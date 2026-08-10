@@ -268,14 +268,40 @@ func (f *FilteredIndex) Metadata(ctx context.Context, pkg PackageName, ver versi
 
 // Files implements MetadataIndex, returning only the files the policy admits.
 //
-// ⚠️ An empty result is not one answer but two, and they are kept apart. A
-// release that genuinely ships no files answers empty-and-nil, because the
-// interface says so -- a release can have every file deleted. A release whose
-// files the POLICY removed answers ErrMetadataUnavailable, because returning
-// empty there would assert something false about the release and would disagree
-// with what Metadata says about the same version. Conflating a value that was
-// never there with one that was removed is finding F10 of
-// rstudio/package-manager#19466, in a different shape.
+// ⚠️ Under an ACTIVE FILE-LEVEL POLICY, no admissible file means
+// ErrMetadataUnavailable -- and that includes a version with ZERO files to begin
+// with, not only one whose files were filtered away.
+//
+// The zero-file case is worth stating because it is subtle enough to be
+// "corrected" back. An earlier version of this method guarded with
+// `len(kept) == 0 && len(files) > 0`, meaning to preserve the interface's
+// empty-and-nil answer for a release that genuinely ships no files. It instead
+// produced an inconsistency: hasAdmissibleFile found nothing admissible either
+// way, so Metadata refused that version and Versions dropped it, while Files
+// called it "exists, ships no files". One (pkg, ver), two answers.
+//
+// Refusing is the side that wins, because:
+//
+//   - It is what the policy means. "Has a file uploaded at or before the cutoff"
+//     and "has an un-yanked file" are both false when there is no file at all. A
+//     release with nothing in it cannot be shown to have existed at a date, and
+//     admitting it under ExcludeYanked would admit it on no evidence.
+//   - Otherwise the policy is bypassable by a caller holding a version from a
+//     pin, a lockfile, or another index -- which is the whole reason it is
+//     enforced here and not only on Versions.
+//   - The old guard made the answer depend on whether the inner index held files
+//     BEFORE filtering, an implementation detail invisible to the caller.
+//
+// The interface's empty-and-nil answer is NOT lost: with no file-level policy
+// active, filtersFiles below short-circuits and the inner answer passes through
+// verbatim. What the rule gives up is only the zero-file case under a file-level
+// policy, where "refused" is the truthful answer rather than a claim about what
+// the release ships.
+//
+// See rstudio/package-manager#19466 F10 for the general shape of the hazard --
+// conflating a value that was never there with one that was removed -- and note
+// that here the two are distinguished by whether the policy is active at all,
+// which is a fact about this index rather than a guess about the data.
 func (f *FilteredIndex) Files(ctx context.Context, pkg PackageName, ver version.Version) ([]DistFile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -300,7 +326,10 @@ func (f *FilteredIndex) Files(ctx context.Context, pkg PackageName, ver version.
 			kept = append(kept, file)
 		}
 	}
-	if len(kept) == 0 && len(files) > 0 {
+	// No admissible file, whether because they were all filtered away or because
+	// there were none to begin with. Both mean the policy has nothing to admit
+	// this version on. See the method doc for why zero files is not carved out.
+	if len(kept) == 0 {
 		return nil, f.excluded("Files", pkg, ver)
 	}
 	return kept, nil
@@ -308,6 +337,13 @@ func (f *FilteredIndex) Files(ctx context.Context, pkg PackageName, ver version.
 
 // hasAdmissibleFile reports whether (pkg, ver) has at least one file the policy
 // admits.
+//
+// ⚠️ ZERO FILES IS FALSE, not a special case. A version with no files has no file
+// satisfying the cutoff and no un-yanked file, so there is nothing to admit it
+// on. Versions therefore drops it and Metadata refuses it, and Files agrees --
+// the three must not disagree about one (pkg, ver), which they briefly did when
+// Files carved the zero-file case out. See FilteredIndex.Files for the full
+// reasoning.
 //
 // ⚠️ ErrFilesUnavailable is propagated, not swallowed. It is the one sentinel
 // about a source's CAPABILITY rather than about one package's data -- RSFIndex
