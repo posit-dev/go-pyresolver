@@ -15,6 +15,90 @@ served it.
 
 ### Added
 
+- `index.FilteredIndex` and `index.FilterPolicy` — a `MetadataIndex` wrapper applying
+  release-admission policy: pre-release exclusion, PEP 592 yanked-file exclusion, and an
+  inclusive snapshot-date cutoff. The zero `FilterPolicy` filters nothing, which is why the
+  fields are spelled `Exclude*`: a wrapper that silently dropped every pre-release would
+  punish whoever wrapped an index only to compose it.
+
+  The policy is enforced on **all three** methods, not only `Versions`. Filtering the listing
+  alone would be bypassed by any caller holding a version from elsewhere — a pin, a lockfile,
+  another index — so it would be a default rather than a policy.
+
+  ⚠️ Only pre-release exclusion is decidable from a version alone. Yanking is per-file per
+  PEP 592 and an upload time belongs to a file, so those two axes are evaluated through
+  `Files`. A file-level policy over an index that serves no files therefore admits
+  **nothing**, and it says so with empty version lists rather than by failing — every package
+  looks like it has no acceptable version. This is **not** guarded, because it cannot be:
+  "no file evidence" is the same observation whether the operator wired up a fileless index
+  or the package is simply absent from the file source, and the second is a supported
+  configuration (a partial mirror). Since `RSFIndex` serves no files by the shape of the
+  data, the arrangement that works is a `FilteredIndex` over a `MultiIndex` pairing the RSF
+  with a file-serving source, and **verifying that is the caller's job**.
+
+  ⚠️ The two file axes fail in opposite directions, and not in the safe one. `SnapshotDate`
+  fails **closed**: a file whose `UploadTime` is the zero value is dropped, because an
+  unrecorded time cannot be shown to precede the cutoff, and admitting it would let a file
+  published yesterday into a snapshot dated last year. `ExcludeYanked` fails **open**:
+  `DistFile.Yanked` cannot express "not captured", so a source that does not record PEP 592
+  data reports every file as un-yanked and the policy admits everything while appearing to
+  work. Only set `ExcludeYanked` over a source whose files genuinely carry PEP 592 data. The
+  gap is fixable additively later (a `YankedKnown` field on `DistFile`), so it is not locked
+  in by this release.
+
+  Under an active file-level policy, `Versions` issues one `Files` lookup per surviving
+  version, serially. Cheap in-process; a 500-version package over a network-backed source is
+  500 sequential round trips. Accepted for now because it is fixable additively — an optional
+  batch interface adds nothing to existing implementations — and because caching belongs in
+  the index being wrapped.
+
+  Under an active file-level policy, a version with **no admissible file** is refused with
+  `ErrMetadataUnavailable` by all three methods — including a version that had zero files to
+  begin with, since there is then nothing to admit it on. The interface's "known version with
+  no files is empty plus nil" answer still applies whenever no file-level policy is active.
+
+- `index.MultiIndex` — a `MetadataIndex` over ordered sources. `Versions` returns the
+  **union**; `Metadata` and `Files` return the first source that can answer, with
+  `PackageMetadata.Origin` naming which one did. The asymmetry is the design: which versions
+  exist is naturally a union, but two sources can disagree about one release, and merging
+  their answers would produce a record no publisher ever made.
+
+  Error taxonomy across sources, since a source's `ErrPackageNotFound` is that source's
+  answer about itself and not a fact about the composed index:
+
+  - `Versions` reports `ErrPackageNotFound` only when **no** source knows the name. One
+    source knowing it and carrying no versions is an empty slice and a nil error.
+  - `Metadata` prefers, in order of how much was learned, a malformed record somewhere
+    (`ErrMetadataUnusable`) over no record anywhere (`ErrMetadataUnavailable`) over nobody
+    having heard of the package (`ErrPackageNotFound`).
+  - `Files` treats an **empty list with a nil error as an answer**, not a miss — a release
+    can have every file deleted, and "keep looking" would let a stale mirror resurrect files
+    the authoritative source removed. `ErrFilesUnavailable` does mean "ask another source",
+    and it is returned only when **every** source is fileless: a fileless source emits it for
+    every lookup without inspecting the package, so it is the weakest evidence available, not
+    the strongest. Letting it win would make `ErrPackageNotFound` unreachable whenever an RSF
+    is in the composition, leaving a caller unable to tell a typo'd name from "nobody serves
+    files".
+  - Each method tolerates sentinels the interface does not list for it, since a source may
+    itself be a `FilteredIndex`. `Versions` skips `ErrFilesUnavailable`; `Metadata` treats it
+    as "this source supplied no metadata"; `Files` tolerates all four. One source's choice of
+    error does not abort the whole lookup.
+
+  ⚠️ Source A knowing the package but not the version, while source B knows neither, is
+  `ErrMetadataUnavailable` — **not** `ErrPackageNotFound`. The package was found; a caller
+  branching on not-found there reports a missing package for a present one.
+
+  Versions are deduped by PEP 440 equality across sources, collapsing a class to the
+  **earliest** source's spelling so the representative resolves to the record `MultiIndex`
+  treated as authoritative. A cross-source spelling difference is not bridged when the
+  earliest source can list a version but not supply its metadata; that limitation is
+  documented on the type and pinned by a test.
+
+  ⚠️ Under a file-level `FilteredIndex` that limitation is larger than a metadata miss: the
+  file lookup takes the same string-keyed path, so a version whose file evidence lives in
+  another source under another spelling is **dropped from the version list**, and the package
+  can appear to have no usable versions at all.
+
 - The tests that read **producer output** now run on every pull request, against a committed
   ~988 KB excerpt of a real production snapshot at `index/testdata/pypi-trimmed.rsf`.
   `TestRSFIndexAgainstRealFile` was gated behind `PYPIRSF_TEST_FILE`, which CI does not set,

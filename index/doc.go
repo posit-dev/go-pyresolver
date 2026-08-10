@@ -17,9 +17,11 @@
 //     file via the pypirsf package. This is the standalone path: one file on
 //     disk, no network, no database, and therefore reproducible — the file is a
 //     dated artifact, so the same file resolves the same way forever.
-//   - FilteredIndex (prerelease and yanked policy) and MultiIndex (ordered
-//     sources) are generic and belong here. Not yet built; tracked as
-//     rstudio/package-manager#18648.
+//   - FilteredIndex (pre-release, yanked, and snapshot-date policy) and
+//     MultiIndex (ordered sources) — implemented. Both are generic wrappers, so
+//     they belong here rather than in any one consumer. See "A file-level policy
+//     needs a file-serving index" below for the constraint that shapes how they
+//     compose.
 //   - Package Manager implements its own index against this interface, over its
 //     resident RSF and its own caching. That is a different access path to the
 //     same data rather than a duplicate of RSFIndex, and it stays in PPM.
@@ -47,4 +49,24 @@
 // ask another"; ErrMetadataUnavailable means "this version is unusable, choose
 // another". Returning an empty slice instead would assert something false —
 // that the version ships no files.
+//
+// # A file-level policy needs a file-serving index
+//
+// Of FilterPolicy's three axes, only pre-release exclusion is decidable from a
+// version alone. Yanking is per-file per PEP 592 and an upload time belongs to a
+// file, so those two are evaluated through Files — which means a file-level
+// policy is not expressible over an index that serves none.
+//
+// ⚠️ Such a policy then admits NOTHING, and does so by returning empty version
+// lists rather than by failing. Every package looks like it has no acceptable
+// version. FilteredIndex deliberately does not guard against this, because it
+// cannot: "no file evidence" is the same observation whether the operator wired
+// up a fileless index or the package is merely absent from the file source, and
+// the second is a supported configuration. Checking the composition is the
+// caller's job — see FilteredIndex and hasAdmissibleFile, which record the three
+// ways an earlier hard-error version of this got it wrong.
+//
+// The composition that works is a FilteredIndex over a MultiIndex pairing an RSF
+// with a file-serving source, which is also the arrangement RFD 0001 Section 6
+// describes.
 package index
