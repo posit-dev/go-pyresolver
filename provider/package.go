@@ -55,6 +55,10 @@ type Package struct {
 
 	// Extra is the PEP 685-normalized extra this node activates, or "" for the
 	// base package. Only meaningful for KindProject.
+	//
+	// Build it with WithExtra. An un-normalized extra assigned directly makes
+	// two solver nodes for one extra, and it will not match the normalized
+	// names PackageMetadata.ProvidesExtra carries.
 	Extra string
 }
 

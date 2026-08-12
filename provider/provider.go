@@ -145,6 +145,13 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 		if !p.opts.Prereleases.Admits(pkg.Name, v) {
 			continue
 		}
+		ok, err := p.usable(pkg, v)
+		if err != nil {
+			return pep440set.Empty(), 0, err
+		}
+		if !ok {
+			continue
+		}
 		admissible = append(admissible, v)
 	}
 	if len(admissible) == 0 {
@@ -162,4 +169,20 @@ func singleVersion(v version.Version, allowed pep440set.Set) (pep440set.Set, int
 		return pep440set.Empty(), 0, nil
 	}
 	return pep440set.Exactly(v), 1, nil
+}
+
+// usable reports whether pkg at v can be offered to the solver.
+//
+// It answers by doing exactly the work Dependencies would do and discarding the
+// result. That is deliberate: every version this admits is one Dependencies
+// must then succeed on, and computing usability a second, cheaper way is how
+// the two drift apart -- leaving the solver holding a decision whose
+// dependencies then fail, which surfaces as an aborted resolve rather than as
+// the conflict it really is.
+func (p *Provider) usable(pkg Package, v version.Version) (bool, error) {
+	_, reason, err := p.projectDependencies(pkg, v)
+	if err != nil {
+		return false, err
+	}
+	return reason == "", nil
 }

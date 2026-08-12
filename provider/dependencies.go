@@ -5,6 +5,7 @@ package provider
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/posit-dev/go-pubgrub/solver"
 	"github.com/posit-dev/go-pyresolver/index"
@@ -107,17 +108,48 @@ func (p *Provider) projectDependencies(pkg Package, v version.Version) ([]depend
 		return nil, "", fmt.Errorf("provider: metadata for %s %s: %w", pkg, v, err)
 	}
 
-	var deps []dependency
+	var (
+		deps   []dependency
+		active []string
+		reason string
+	)
+	reqs := meta.RequiresDist
 
-	pyDep, skip, reason := interpreterDependency(meta)
-	if reason != "" {
-		return nil, reason, nil
-	}
-	if !skip {
-		deps = append(deps, pyDep)
+	if pkg.Extra == "" {
+		var (
+			pyDep dependency
+			skip  bool
+		)
+		// The interpreter constraint belongs to the base package. An extra
+		// reaches it through the same-version link below, so emitting it there
+		// too would only duplicate an incompatibility.
+		pyDep, skip, reason = interpreterDependency(meta)
+		if reason != "" {
+			return nil, reason, nil
+		}
+		if !skip {
+			deps = append(deps, pyDep)
+		}
+	} else {
+		// An extra nobody declared must fail loudly. Without this check
+		// pkg[tests], where the extra is spelled test, resolves happily and
+		// installs nothing extra -- which looks like success. Reporting it as
+		// "no candidate version" is what lets the solver explain it through
+		// the derivation graph for free.
+		if !slices.Contains(meta.ProvidesExtra, pkg.Extra) {
+			return nil, fmt.Sprintf("it does not provide the extra %q", pkg.Extra), nil
+		}
+		active = []string{pkg.Extra}
+
+		// The same-version link. Without it the extra could resolve to a
+		// version other than the base package it is an extra OF, and the
+		// installed set would be incoherent.
+		deps = append(deps, dependency{Package: Project(pkg.Name), Allowed: pep440set.Exactly(v)})
+
+		reqs = extraOnly(meta.RequiresDist, p.opts.Environment, active)
 	}
 
-	expanded, reason, err := expandRequirements(meta.RequiresDist, p.opts.Environment, nil)
+	expanded, reason, err := expandRequirements(reqs, p.opts.Environment, active)
 	if err != nil {
 		return nil, "", err
 	}
@@ -163,6 +195,33 @@ func interpreterDependency(meta index.PackageMetadata) (dep dependency, skip boo
 	return dependency{Package: Python(), Allowed: set}, false, ""
 }
 
+// extraOnly keeps the requirements an extra ADDS: those whose marker holds with
+// the extra active and does not hold without it.
+//
+// # Why the base package's own requirements are not repeated here
+//
+// A virtual extra package depends on its base at exactly the same version, so
+// everything the base requires is already in the graph by the time the extra is
+// decided. Restating it under the extra's name would double the dependency
+// edges for every extra, and -- the reason that actually matters -- it would
+// make the failure report say "flask[async] depends on werkzeug>=3.0" about a
+// requirement flask has whether or not the extra is active, naming a package
+// the user never wrote.
+//
+// This is a deliberate narrowing of the design's "every requires_dist entry
+// whose marker evaluates true with the extra active", which would include the
+// unconditional ones. Both are correct; this one attributes the requirement to
+// the package that actually declares it.
+func extraOnly(reqs []requirement.Requirement, env marker.Environment, active []string) []requirement.Requirement {
+	out := make([]requirement.Requirement, 0, len(reqs))
+	for _, r := range reqs {
+		if r.Marker.Evaluate(env, active) && !r.Marker.Evaluate(env, nil) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // expandRequirements turns PEP 508 requirements into solver dependencies,
 // evaluating each marker with the given extras active.
 //
@@ -199,8 +258,17 @@ func expandRequirements(reqs []requirement.Requirement, env marker.Environment, 
 		// Requirement.Name is documented as "exactly as parsed"; gpp does not
 		// canonicalize it. Requirement.Extras, by contrast, ARE normalized at
 		// parse time -- the asymmetry is real, so neither half is assumed from
-		// the other.
-		deps = append(deps, dependency{Package: Project(index.NewPackageName(r.Name)), Allowed: allowed})
+		// the other. WithExtra normalizes again anyway, which is idempotent.
+		name := index.NewPackageName(r.Name)
+
+		// flask[async,dotenv]>=2.0 becomes THREE dependencies over the same
+		// allowed set. Depending on the base package as well as on each extra
+		// is what keeps the base package's own requirements in the graph: an
+		// extra ADDS requirements, it does not replace them.
+		deps = append(deps, dependency{Package: Project(name), Allowed: allowed})
+		for _, extra := range r.Extras {
+			deps = append(deps, dependency{Package: WithExtra(name, extra), Allowed: allowed})
+		}
 	}
 
 	return deps, "", nil
