@@ -3,7 +3,6 @@
 package pep440set
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/posit-dev/go-python-packaging/version"
@@ -61,35 +60,90 @@ func (b bound) tier() int {
 	}
 }
 
+// isDigits reports whether s is a non-empty run of ASCII digits.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// canonDigits strips leading zeros from a digit run, keeping one digit for an
+// all-zero segment, so "007" and "7" produce the same key component.
+func canonDigits(s string) string {
+	i := 0
+	for i < len(s)-1 && s[i] == '0' {
+		i++
+	}
+	return s[i:]
+}
+
 // releaseKey returns the (epoch, release) of b's version, with trailing zeros
 // stripped so 1.0 and 1.0.0.0 share a key. BaseVersion renders "1!3.4.5" for
 // an epoch, so the epoch is split off here.
-func releaseKey(v version.Version) (epoch int, release []int) {
+//
+// ⚠️ THE KEY COMPONENTS ARE DECIMAL STRINGS, NOT ints. DO NOT "SIMPLIFY" THIS
+// BACK TO strconv.Atoi.
+//
+// PEP 440 puts no ceiling on an epoch or a release segment -- the grammar is
+// `[0-9]+` -- and gpp stores both as arbitrary-precision part.BigInt, so it
+// orders 1.99999999999999999999 above 1.5 correctly. The earlier key parsed
+// each segment with strconv.Atoi and BROKE out of the loop on error, so a
+// segment at or above 2^63 was dropped along with every segment AFTER it: the
+// key became a PREFIX of the real release, and 99999999999999999999.0 keyed as
+// the empty release, sorting below every version in existence. That made
+// `>99999999999999999999.0` admit everything while Check admitted nothing, and
+// `<1.5` admit 1.99999999999999999999. Comparing the digit runs directly
+// (length first, then byte-wise) is exact at every magnitude and needs no
+// math/big.
+func releaseKey(v version.Version) (epoch string, release []string) {
 	base := v.BaseVersion()
+	epoch = "0"
 	if i := strings.Index(base, "!"); i >= 0 {
-		epoch, _ = strconv.Atoi(base[:i])
+		// A non-numeric epoch cannot come out of BaseVersion; if one ever did,
+		// treating it as 0 keeps this a total order rather than a panic.
+		if isDigits(base[:i]) {
+			epoch = canonDigits(base[:i])
+		}
 		base = base[i+1:]
 	}
 	for _, part := range strings.Split(base, ".") {
-		n, err := strconv.Atoi(part)
-		if err != nil {
+		if !isDigits(part) {
 			break
 		}
-		release = append(release, n)
+		release = append(release, canonDigits(part))
 	}
-	for len(release) > 0 && release[len(release)-1] == 0 {
+	for len(release) > 0 && release[len(release)-1] == "0" {
 		release = release[:len(release)-1]
 	}
 	return epoch, release
 }
 
-func cmpInts(a, b []int) int {
+// cmpDigits orders two canonical (leading-zero-free) digit runs by value. The
+// shorter run is the smaller number, and equal-length runs compare byte-wise,
+// which for ASCII digits is the same as comparing values.
+func cmpDigits(a, b string) int {
+	switch {
+	case len(a) < len(b):
+		return -1
+	case len(a) > len(b):
+		return 1
+	}
+	return strings.Compare(a, b)
+}
+
+// cmpSegments orders two release keys segment by segment, the shorter being
+// smaller when it is a prefix of the longer. releaseKey has already stripped
+// trailing zeros, so a shorter key means a genuinely shorter release.
+func cmpSegments(a, b []string) int {
 	for i := 0; i < len(a) && i < len(b); i++ {
-		switch {
-		case a[i] < b[i]:
-			return -1
-		case a[i] > b[i]:
-			return 1
+		if c := cmpDigits(a[i], b[i]); c != 0 {
+			return c
 		}
 	}
 	switch {
@@ -115,13 +169,10 @@ func cmpBound(a, b bound) int {
 
 	aEpoch, aRel := releaseKey(a.v)
 	bEpoch, bRel := releaseKey(b.v)
-	switch {
-	case aEpoch < bEpoch:
-		return -1
-	case aEpoch > bEpoch:
-		return 1
+	if c := cmpDigits(aEpoch, bEpoch); c != 0 {
+		return c
 	}
-	if c := cmpInts(aRel, bRel); c != 0 {
+	if c := cmpSegments(aRel, bRel); c != 0 {
 		return c
 	}
 
