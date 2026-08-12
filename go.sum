@@ -4,6 +4,8 @@ github.com/klauspost/compress v1.19.2 h1:hMRETovs/pu/dVWN7zIT1PGG8t509MwT6bO7XSi
 github.com/klauspost/compress v1.19.2/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/posit-dev/go-pubgrub v0.1.0 h1:GlGyFVjDMs0Qoo0fMcEIoHsInKKuKt4WXTlnM10Bw+0=
+github.com/posit-dev/go-pubgrub v0.1.0/go.mod h1:5ks/krPJaOu6GmbBqaeOiFR+cBa4lh5lkYIxun6cWW4=
 github.com/posit-dev/go-python-packaging v0.5.0 h1:9hozlTpf3a3u5rX0A0j/aH92nh/8Nfei+odBnfTA2jI=
 github.com/posit-dev/go-python-packaging v0.5.0/go.mod h1:NkELXOh/eRDT7c+LKFxJd+HkyGpKFsUIxpTYaq5xdkU=
 github.com/rstudio/go-version v0.0.2 h1:ihU0xaF+Yuya0p2J6C8dfyB4gu/YehM1d6cTpabf/7A=

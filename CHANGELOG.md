@@ -13,6 +13,31 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `pep440set`, a canonical PEP 440 version-set algebra (intersection, union,
+  complement) satisfying go-pubgrub's `versionset.Set`. `FromSpecifiers` maps a
+  specifier set to spans, operator-level pre- and post-release guards included,
+  and is held to `version.Specifiers.Check` by **differential testing rather
+  than by construction**: a generated operator/operand/version grid, a walk over
+  a production PyPI snapshot, and a fuzzer over arbitrary specifier text. All
+  three currently agree everywhere they look.
+
+  Agreement on input none of them has looked at is **not** claimed. The grid
+  contained only canonical operand spellings and only release segments that fit
+  in an `int64`, and both gaps hid real mapping bugs — the alias spellings of
+  `~=` (`~=1.0c1`, `~=1.0.pre1`, `~=1.0.r1`, `~=0.0.posT`, …), where the prefix
+  is derived from the raw operand text and the seven spellings are **not**
+  interchangeable, and release segments at or above 2<sup>63</sup>, which the
+  ordering key silently truncated. Both are fixed and both are now in the grids.
+
+  Arbitrary-equality (`===`) specifiers report `ErrUnrepresentable` rather than
+  being approximated, as does the `||` OR-of-ANDs form, whose groups no exported
+  accessor exposes. `Equal` and `IsEmpty` are exact on **positions**, not on
+  versions: two sets admitting exactly the same versions can compare unequal
+  when they differ only across a gap that no version occupies.
+  ([#18657](https://github.com/rstudio/package-manager/issues/18657))
+
 ## [0.4.0] - 2026-08-10
 
 ### Breaking
