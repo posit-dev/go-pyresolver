@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 
 	"github.com/posit-dev/go-pubgrub/solver"
 	"github.com/posit-dev/go-pyresolver/index"
@@ -120,6 +121,15 @@ func (p *Provider) projectDependencies(pkg Package, v version.Version) ([]depend
 			pyDep dependency
 			skip  bool
 		)
+		if meta.RequiresPythonUnreadable {
+			// The version is KEPT: the decoder treats an unparseable
+			// interpreter constraint as unconstrained on purpose, because
+			// over-admitting a candidate surfaces later as an install-time
+			// failure while under-constraining would silently change the
+			// resolution. That is only defensible if it is visible.
+			p.record(pkg, v, "its Requires-Python "+strconv.Quote(meta.RequiresPythonRaw)+
+				" could not be parsed, so the interpreter is left unconstrained", true)
+		}
 		// The interpreter constraint belongs to the base package. An extra
 		// reaches it through the same-version link below, so emitting it there
 		// too would only duplicate an incompatibility.

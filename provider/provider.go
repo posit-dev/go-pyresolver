@@ -83,6 +83,11 @@ type Provider struct {
 
 	index index.MetadataIndex
 	opts  Options
+
+	// unusable holds the reasons versions could not be used, in first-seen
+	// order, and recorded is the dedupe key set behind it. See Provider.record.
+	unusable []Unusable
+	recorded map[string]bool
 }
 
 // New returns a Provider for one resolution.
@@ -93,7 +98,7 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 	if opts.RootVersion.String() == "" {
 		opts.RootVersion = version.MustParse("0")
 	}
-	return &Provider{ctx: ctx, index: idx, opts: opts}
+	return &Provider{ctx: ctx, index: idx, opts: opts, recorded: make(map[string]bool)}
 }
 
 // Candidates implements solver.Provider.
@@ -182,7 +187,14 @@ func singleVersion(v version.Version, allowed pep440set.Set) (pep440set.Set, int
 func (p *Provider) usable(pkg Package, v version.Version) (bool, error) {
 	_, reason, err := p.projectDependencies(pkg, v)
 	if err != nil {
+		// An index that could not answer is NOT a version that cannot be used.
+		// Recording it here would put an outage in the failure report as
+		// though it were a fact about the package.
 		return false, err
 	}
-	return reason == "", nil
+	if reason != "" {
+		p.record(pkg, v, reason, false)
+		return false, nil
+	}
+	return true, nil
 }
