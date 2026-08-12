@@ -17,14 +17,17 @@ import (
 	"github.com/posit-dev/go-python-packaging/version"
 )
 
-// DefaultMaxRounds bounds the solver's main loop when Options.MaxRounds is zero.
+// defaultMaxRounds bounds the solver's main loop when Options.MaxRounds is zero.
 //
 // It is a safety valve rather than a tuning knob. go-pubgrub documents that
 // termination of the OUTER loop is asserted rather than derived, and offers
 // MaxRounds as the place to put a bound when the input cannot be trusted.
 // requires_dist is exactly that: arbitrary text published by third parties.
 // A resolution that hits this bound fails loudly instead of hanging.
-const DefaultMaxRounds = 10_000
+//
+// Unexported: this package's supported surface is Resolve, Options, Resolution
+// and ResolutionError, and a consumer that wants a specific bound sets one.
+const defaultMaxRounds = 10_000
 
 // Options configures one resolution.
 type Options struct {
@@ -64,7 +67,12 @@ type Options struct {
 	// enabled without being listed here.
 	AllowPrerelease []index.PackageName
 
-	// MaxRounds bounds the solver's main loop. Zero means DefaultMaxRounds.
+	// MaxRounds bounds the solver's main loop. Zero means 10,000.
+	//
+	// It is a safety valve, not a tuning knob: go-pubgrub documents that
+	// termination of the OUTER loop is asserted rather than derived, and
+	// requires_dist is arbitrary text published by third parties. A resolution
+	// that hits the bound fails loudly instead of hanging.
 	MaxRounds int
 }
 
@@ -131,7 +139,7 @@ func Resolve(
 	s := solver.New(provider.Root(), pep440set.Exactly(rootVersion), p)
 	s.MaxRounds = opts.MaxRounds
 	if s.MaxRounds == 0 {
-		s.MaxRounds = DefaultMaxRounds
+		s.MaxRounds = defaultMaxRounds
 	}
 
 	sol, err := s.Solve()
