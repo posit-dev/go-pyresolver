@@ -45,6 +45,33 @@ served it.
   caller's preference can never make a version look nonexistent to the solver.
   ([#18657](https://github.com/rstudio/package-manager/issues/18657))
 
+- `provider`, the translation layer between Python packaging semantics and
+  go-pubgrub's generic solver. It answers the solver's two questions -- which
+  versions of a package exist within a range, and what one version requires --
+  by reading a `MetadataIndex`, evaluating PEP 508 markers against one concrete
+  target environment, and converting version specifiers through `pep440set`.
+
+  Extras are modeled as virtual packages: `flask[async]` is a distinct solver
+  node that depends on `flask` at exactly the same version plus whatever the
+  extra adds, so a solver with no notion of extras resolves them correctly and
+  the two cannot drift apart. An extra no version declares has no candidates at
+  all rather than resolving happily and installing nothing.
+
+  The interpreter is modeled as a package too, rather than as a filter applied
+  behind the solver's back. A `Requires-Python` mismatch therefore appears in
+  the derivation graph as an ordinary version conflict that names `python`,
+  instead of a version silently vanishing and the report saying a package has
+  no versions.
+
+  A version that cannot be used -- an sdist-only release with no published
+  metadata, a specifier with no version-set equivalent, a direct-reference URL
+  requirement -- is excluded from the candidate count and the reason is recorded
+  for the eventual failure report. An index that cannot ANSWER is a different
+  thing and propagates as an error: a transport failure read as "no such
+  version" would let a resolution quietly settle on an older release, or blame
+  the user's constraints for an outage.
+  ([#18657](https://github.com/rstudio/package-manager/issues/18657))
+
 ## [0.4.0] - 2026-08-10
 
 ### Breaking
