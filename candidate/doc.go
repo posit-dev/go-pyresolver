@@ -1,20 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-// Package candidate selects which version of a package the resolver should try
-// next, and which distribution file represents it.
+// Package candidate decides which versions of a package may be offered to the
+// solver, and in what order it should try them.
 //
-// This is where Python-specific policy lives, kept out of both the generic
-// solver and the storage layer: preferring wheels over sdists, honoring
-// requires_python against the target interpreter, applying prerelease and
-// yanked rules, and ordering versions so the solver tries the most preferred
-// one first.
+// Two separable things live here, and keeping them separate is the point:
 //
-// Two policies deliberately do NOT live here:
+//   - Admission is a yes/no about a single version, decided once before
+//     solving so it cannot move while the solver backtracks. Today that is the
+//     pre-release rule: see PrereleaseSet.
+//   - Ranking is a total order over the admissible versions, supplied by the
+//     caller through Policy so that an embedder -- Package Manager, say -- can
+//     demote versions it would rather not install without making them
+//     unavailable. Newest is the default.
 //
-//   - Platform filtering of wheels. Per RFD 0001 Section 6, Files() returns
-//     all wheels and the resolver decides, so compatibility-tag matching
-//     happens on this side rather than in the index.
-//   - Snapshot-date, prerelease, and yanked filtering when it can be applied
-//     uniformly. That is FilteredIndex's job in the index package; this
-//     package handles the part that depends on the resolution state.
+// # Ranking must never remove a version
+//
+// Provider.Candidates reports a count the solver reads as "no version
+// satisfies this", so a policy that dropped a version would make it
+// indistinguishable from one that does not exist, and the resulting failure
+// report would describe a conflict that is not the real one. Filtering belongs
+// to the index; admission here is limited to facts about the version itself.
+//
+// # Two policies deliberately do NOT live here
+//
+// Wheel-versus-sdist preference and compatibility-tag matching are deferred to
+// a later issue, not absent by oversight. The PyPI RSF serves no file records
+// -- RSFIndex returns index.ErrFilesUnavailable -- so on the primary
+// standalone path there is nothing to select between, and a file-selection
+// policy written now could not be exercised against real data.
+//
+// requires_python filtering moved to package provider, which models the target
+// interpreter as an ordinary package. An incompatible release is then excluded
+// by a derivation the failure report can explain, rather than by silently
+// vanishing from the candidate list.
 package candidate

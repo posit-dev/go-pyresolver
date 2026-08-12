@@ -14,7 +14,7 @@ Phase 3.
 |---|---|
 | `pypirsf/` | PyPI RSF record layout + dependency-blob decoder |
 | `index/` | `MetadataIndex` interface + implementations |
-| `candidate/` | Version and distribution-file selection policy |
+| `candidate/` | Version admission (pre-releases) and ranking policy |
 | `provider/` | Python-to-generic-solver adaptation, incl. extras |
 | `resolver/` | Public entry point |
 
