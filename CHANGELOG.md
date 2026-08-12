@@ -38,6 +38,13 @@ served it.
   when they differ only across a gap that no version occupies.
   ([#18657](https://github.com/rstudio/package-manager/issues/18657))
 
+- `candidate`, the policy layer the resolver consults when choosing which
+  version of a package to try next: a `Policy` ranking interface with a
+  newest-first default, and pre-release admission derived once from the
+  requirements a resolution starts with. Ranking cannot remove a version, so a
+  caller's preference can never make a version look nonexistent to the solver.
+  ([#18657](https://github.com/rstudio/package-manager/issues/18657))
+
 ## [0.4.0] - 2026-08-10
 
 ### Breaking
