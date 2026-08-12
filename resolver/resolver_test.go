@@ -268,6 +268,76 @@ func TestResolveOrderCoversEachPinnedPackageOnce(t *testing.T) {
 	}
 }
 
+// oldestFirst is the opposite of the default policy, so a test can tell that
+// Options.Policy reached the solver rather than being dropped on the way.
+type oldestFirst struct{}
+
+func (oldestFirst) Less(_ index.PackageName, a, b version.Version) bool { return a.LessThan(b) }
+
+// ⚠️ Every other test in this file passes whether or not Options.Policy is
+// wired up, because they all want the default. The three tests below exist
+// because an option that is accepted and then ignored is invisible: the
+// resolution succeeds and quietly answers a different question.
+func TestResolveHonoursThePolicy(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("flask", "1.0").
+		AddVersion("flask", "2.0")
+
+	opts := testOptions(t)
+	opts.Policy = oldestFirst{}
+	res, err := resolver.Resolve(context.Background(), mustRequirements(t, "flask"), idx, opts)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got := pins(t, res)["flask"]; got != "1.0" {
+		t.Errorf("flask = %s, want 1.0 -- the default policy would have chosen 2.0, so the "+
+			"Policy option was ignored", got)
+	}
+}
+
+func TestResolveHonoursAllowPrerelease(t *testing.T) {
+	idx := index.NewMockIndex("test").AddVersion("flask", "2.0rc1")
+
+	// A pre-release nobody asked for is not offered, so this cannot resolve.
+	if _, err := resolve(t, idx, "flask"); err == nil {
+		t.Fatal("a pre-release was offered without being asked for")
+	}
+
+	opts := testOptions(t)
+	opts.AllowPrerelease = []index.PackageName{index.NewPackageName("flask")}
+	res, err := resolver.Resolve(context.Background(), mustRequirements(t, "flask"), idx, opts)
+	if err != nil {
+		t.Fatalf("Resolve with AllowPrerelease: %v", err)
+	}
+	if got := pins(t, res)["flask"]; got != "2.0rc1" {
+		t.Errorf("flask = %q, want 2.0rc1", got)
+	}
+}
+
+// MaxRounds is a safety valve, not a tuning knob: go-pubgrub documents that
+// termination of the outer loop is asserted rather than derived, and
+// requires_dist is untrusted third-party text. Hitting the bound must fail
+// loudly, and must NOT be reported as a conflict between the user's
+// requirements -- it is not one.
+func TestResolveHonoursMaxRounds(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("flask", "3.0", "werkzeug>=3.0", "jinja2>=3.1").
+		AddVersion("werkzeug", "3.0.1", "markupsafe>=2.0").
+		AddVersion("jinja2", "3.1.2", "markupsafe>=2.0").
+		AddVersion("markupsafe", "2.1")
+
+	opts := testOptions(t)
+	opts.MaxRounds = 1
+	_, err := resolver.Resolve(context.Background(), mustRequirements(t, "flask"), idx, opts)
+	if err == nil {
+		t.Fatal("Resolve completed a multi-package solve in one round, so MaxRounds was ignored")
+	}
+	var re *resolver.ResolutionError
+	if errors.As(err, &re) {
+		t.Errorf("hitting the round bound was reported as a conflict between requirements:\n%s", re.Error())
+	}
+}
+
 // refusingIndex fails every call and counts how many it got. Two sources of
 // truth for the interpreter is how a resolution silently targets one Python
 // while evaluating markers for another, so the disagreement must be caught
