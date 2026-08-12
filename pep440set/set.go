@@ -80,3 +80,50 @@ func (s Set) containsBound(b bound) bool {
 	}
 	return false
 }
+
+// Union implements versionset.Set. Canonicalization does the merging.
+func (s Set) Union(other Set) Set {
+	all := make([]span, 0, len(s.spans)+len(other.spans))
+	all = append(all, s.spans...)
+	all = append(all, other.spans...)
+	return newSet(all...)
+}
+
+// Intersect implements versionset.Set.
+func (s Set) Intersect(other Set) Set {
+	var out []span
+	for _, a := range s.spans {
+		for _, b := range other.spans {
+			lo, hi := a.lo, a.hi
+			if cmpBound(b.lo, lo) > 0 {
+				lo = b.lo
+			}
+			if cmpBound(b.hi, hi) < 0 {
+				hi = b.hi
+			}
+			if cmpBound(lo, hi) < 0 {
+				out = append(out, span{lo, hi})
+			}
+		}
+	}
+	return newSet(out...)
+}
+
+// Complement implements versionset.Set.
+func (s Set) Complement() Set {
+	if len(s.spans) == 0 {
+		return All()
+	}
+	var out []span
+	cursor := negInf()
+	for _, sp := range s.spans {
+		if cmpBound(cursor, sp.lo) < 0 {
+			out = append(out, span{cursor, sp.lo})
+		}
+		cursor = sp.hi
+	}
+	if cmpBound(cursor, posInf()) < 0 {
+		out = append(out, span{cursor, posInf()})
+	}
+	return newSet(out...)
+}

@@ -56,3 +56,70 @@ func TestAllAndEmpty(t *testing.T) {
 		t.Error("All() must not Equal Empty()")
 	}
 }
+
+// sampleSets returns a spread of sets to quantify the algebra laws over,
+// including empty, universal, multi-span, and exotic-boundary cases.
+func sampleSets(t *testing.T) []Set {
+	t.Helper()
+	at := func(s string) bound { return atBound(mustV(t, s)) }
+	rel := func(s string, e edge) bound { return bound{v: mustV(t, s), edge: e} }
+
+	return []Set{
+		Empty(),
+		All(),
+		newSet(span{at("1.0"), at("2.0")}),
+		newSet(span{negInf(), at("1.0")}),
+		newSet(span{at("2.0"), posInf()}),
+		newSet(span{at("1.0"), at("2.0")}, span{at("3.0"), at("4.0")}),
+		newSet(span{at("1.0"), rel("1.0", edgeAboveLocals)}), // ==1.0
+		newSet(span{rel("1.0", edgeAboveRelease), posInf()}), // >1.0
+		newSet(span{rel("1.0", edgeBelowRelease), rel("2.0", edgeBelowRelease)}),
+		newSet(span{at("1.0rc1"), at("1.0")}),
+		newSet(span{at("1!0.1"), posInf()}),
+	}
+}
+
+func TestAlgebraLaws(t *testing.T) {
+	sets := sampleSets(t)
+
+	for i, a := range sets {
+		// Complement is an involution.
+		if !a.Complement().Complement().Equal(a) {
+			t.Errorf("set %d: complement is not an involution", i)
+		}
+		// a n a' is empty; a u a' is everything.
+		if !a.Intersect(a.Complement()).IsEmpty() {
+			t.Errorf("set %d: a n a' is not empty", i)
+		}
+		if !a.Union(a.Complement()).Equal(All()) {
+			t.Errorf("set %d: a u a' is not All", i)
+		}
+
+		for j, b := range sets {
+			// Commutativity.
+			if !a.Intersect(b).Equal(b.Intersect(a)) {
+				t.Errorf("sets %d,%d: Intersect not commutative", i, j)
+			}
+			if !a.Union(b).Equal(b.Union(a)) {
+				t.Errorf("sets %d,%d: Union not commutative", i, j)
+			}
+			// De Morgan, both directions.
+			if !a.Union(b).Complement().Equal(a.Complement().Intersect(b.Complement())) {
+				t.Errorf("sets %d,%d: (a u b)' != a' n b'", i, j)
+			}
+			if !a.Intersect(b).Complement().Equal(a.Complement().Union(b.Complement())) {
+				t.Errorf("sets %d,%d: (a n b)' != a' u b'", i, j)
+			}
+
+			for k, c := range sets {
+				// Associativity.
+				if !a.Intersect(b).Intersect(c).Equal(a.Intersect(b.Intersect(c))) {
+					t.Errorf("sets %d,%d,%d: Intersect not associative", i, j, k)
+				}
+				if !a.Union(b).Union(c).Equal(a.Union(b.Union(c))) {
+					t.Errorf("sets %d,%d,%d: Union not associative", i, j, k)
+				}
+			}
+		}
+	}
+}
