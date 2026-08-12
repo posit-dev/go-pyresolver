@@ -63,6 +63,15 @@ func mustRequirements(t *testing.T, ss ...string) []requirement.Requirement {
 	return out
 }
 
+func mustSpecifiers(t *testing.T, s string) version.Specifiers {
+	t.Helper()
+	specs, err := version.NewSpecifiers(s)
+	if err != nil {
+		t.Fatalf("parse specifiers %q: %v", s, err)
+	}
+	return specs
+}
+
 // resolve runs a resolution with the default test options.
 func resolve(t *testing.T, idx index.MetadataIndex, reqs ...string) (*resolver.Resolution, error) {
 	t.Helper()

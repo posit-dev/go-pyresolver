@@ -72,6 +72,43 @@ served it.
   the user's constraints for an outage.
   ([#18657](https://github.com/rstudio/package-manager/issues/18657))
 
+- `resolver`, the public entry point, which completes the adapter. A consumer
+  can now hand `Resolve` a list of PEP 508 requirements, an `index.MetadataIndex`
+  and a target environment, and get back one pinned version per package the
+  requirements transitively reach — extras included, markers evaluated, and
+  transitive multi-version conflicts backtracked rather than hard-failed.
+
+  Virtual extra packages collapse into their base project, so a `Resolution`
+  reads as `flask 3.0` with `[async]` noted alongside rather than as two
+  entries; the interpreter and the synthetic root do not appear at all. `Order`
+  is the solver's decision order and every extras list is sorted, so two runs
+  over the same inputs produce byte-identical output.
+
+  A conflict comes back as a `*ResolutionError` whose `Report` explains the
+  chain of reasoning step by step, rendered in Python terms — `flask[async]`,
+  `>=1.0,<2.0`, and `Python 3.11.4` for the interpreter. An sdist-only release
+  relevant to the failure gets a note of its own, because a report that says
+  "no version of flask matches >=3.0" about a release visible on PyPI is true
+  in a way nobody can act on. An index that could not answer is passed through
+  as itself rather than dressed up as a conflict between requirements.
+
+  **Not included, deliberately:** no distribution-file or wheel selection —
+  a `Resolution` is versions only, and the PyPI RSF carries no file records to
+  select between; one concrete marker environment per resolution, not universal
+  resolution; and no sdist building to discover metadata.
+  ([#18657](https://github.com/rstudio/package-manager/issues/18657))
+
+- `pep440set.Set.String`, which renders a version set as PEP 440 specifier text
+  (`>=1.0,<2.0`, `==1.*`, `!=1.0`). Without it nothing outside the package could
+  describe a set at all — spans and bounds are unexported — and go-pubgrub's
+  failure report fell back to `%v` on the raw struct.
+  ([#18657](https://github.com/rstudio/package-manager/issues/18657))
+
+- `provider.ReasonMetadataUnavailable`, the `Unusable.Reason` recorded for an
+  sdist-only or dynamic-metadata release, so a consumer can pick those records
+  out by name rather than by matching a sentence.
+  ([#18657](https://github.com/rstudio/package-manager/issues/18657))
+
 ## [0.4.0] - 2026-08-10
 
 ### Breaking

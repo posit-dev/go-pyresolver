@@ -4,9 +4,10 @@ The Python-aware adapter that drives a generic PubGrub solver with PyPI
 metadata. Part of [RFD 0001 — Native Go PyPI Dependency Resolution](https://github.com/rstudio/package-manager/blob/main/docs/rfds/0001-pypi-native-resolver/README.md),
 Phase 3.
 
-> **Status: skeleton.** Every package is a `doc.go` describing intended scope.
-> `index/` is filled in by rstudio/package-manager#18646 (interface, types,
-> MockIndex) and #18647 (RSFIndex, CachedJSONIndex).
+> **Status: implemented end to end.** `pypirsf/`, `index/`, `pep440set/`,
+> `candidate/`, `provider/` and `resolver/` all carry code. `resolver.Resolve`
+> is the entry point and the only package Package Manager imports; keep its
+> exported surface to `Resolve`, `Options`, `Resolution` and `ResolutionError`.
 
 ## Module layout
 
