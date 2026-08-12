@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/posit-dev/go-python-packaging/version"
@@ -68,12 +67,20 @@ var ErrUnrepresentable = errors.New("pep440set: specifier has no version-set equ
 
 // FromSpecifiers converts a PEP 440 specifier set into a version set.
 //
-// The result is the intersection of one span set per specifier, and it agrees
-// with version.Specifiers.Check on every version: Check is pure MATCHING, and
-// so is this. Pre-release exclusion is deliberately NOT applied on top of it,
-// because that is a selection rule -- which candidates an installer offers --
-// and applying it here would make Complement unsound. The resolver's candidate
-// layer decides what to offer.
+// The result is the intersection of one span set per specifier. Where a set
+// comes back, Contains and version.Specifiers.Check are built to answer alike
+// for every version: Check is pure MATCHING, and so is this. Pre-release
+// exclusion is deliberately NOT applied on top of it, because that is a
+// selection rule -- which candidates an installer offers -- and applying it
+// here would make Complement unsound. The resolver's candidate layer decides
+// what to offer.
+//
+// ⚠️ AGREEMENT IS A TESTED PROPERTY, NOT A THEOREM. Nothing derives these
+// spans from Check; construct.go reimplements each operator, so the two can
+// only be held together by measurement. They are, over a generated grid, a
+// production PyPI snapshot and a fuzzer, and each of those has already caught a
+// case the others missed. Treat a disagreement as a bug here until Check has
+// been checked against pypa/packaging, which is the reference for both.
 //
 // ⚠️ The operator-level pre-release and post-release guards ARE applied,
 // because those are matching: `<1.0` does not match `1.0rc1` and `>1.0` does
@@ -158,12 +165,16 @@ func fromSpecifier(sp version.Specifier) (Set, error) {
 	case "!=":
 		return Exactly(v).Complement(), nil
 	case "~=":
-		// ~=X.Y is >=X.Y combined with ==X.*: drop the last RELEASE segment of
-		// the operand and increment what remains. Only the release segments
-		// take part, so ~=1.0.post1 is >=1.0.post1 with ==1.*, not ==1.0.*.
-		hi, err := compatibleUpperBound(v)
+		// ~=X.Y is >=X.Y combined with ==X.*, and the prefix comes from the RAW
+		// operand text -- see compatibleUpperBound.
+		hi, ok, err := compatibleUpperBound(operand)
 		if err != nil {
 			return Set{}, err
+		}
+		if !ok {
+			// The `==prefix.*` half matches nothing, so the conjunction is
+			// empty however permissive the `>=` half is.
+			return Empty(), nil
 		}
 		return newSet(span{bound{v: v, edge: edgeAt}, hi}), nil
 	default:
@@ -225,12 +236,9 @@ func greaterThanBound(v version.Version) (bound, error) {
 			// A dev release: no post-release of it can exist.
 			return bound{v: v, edge: edgeAboveLocals}, nil
 		}
-		n, err := strconv.Atoi(m[3])
-		if err != nil {
-			return bound{}, fmt.Errorf(
-				"pep440set: pre-release number %q: %w", m[3], err)
-		}
-		next, err := version.Parse(m[1] + m[2] + strconv.Itoa(n+1) + ".dev0")
+		// String arithmetic for the same reason incrementLastSegment uses it: a
+		// pre-release number is `[0-9]*` with no ceiling.
+		next, err := version.Parse(m[1] + m[2] + incDigits(m[3]) + ".dev0")
 		if err != nil {
 			return bound{}, fmt.Errorf(
 				"pep440set: next pre-release after %q: %w", v.Public(), err)
@@ -260,30 +268,149 @@ func releasePrefixSpan(prefix string) (lo, hi bound, err error) {
 		bound{v: nextV, edge: edgeBelowRelease}, nil
 }
 
-// compatibleUpperBound implements ~=: drop the final RELEASE segment and
-// increment the one before it. ~=2.2 -> below release 3; ~=2.2.3 -> below 2.3;
-// ~=1.0.post1 -> below release 2, because post1 is not a release segment.
-func compatibleUpperBound(v version.Version) (hi bound, err error) {
-	base := v.BaseVersion()
-	epochPrefix := ""
-	rest := base
-	if i := strings.Index(base, "!"); i >= 0 {
-		epochPrefix, rest = base[:i+1], base[i+1:]
+// compatSplitRegexp mirrors pypa/packaging 26.2's `_prefix_regex`, which
+// version.versionSplit also uses: it puts an implicit dot between a release
+// segment and a pre-release marker written without a separator, so "0rc1"
+// splits into "0" and "rc1".
+//
+// ⚠️ It lists `c` while compatIsReleaseSegment below does NOT. That gap is
+// upstream's, it is what makes `~=1.0c1` narrower than `~=1.0rc1`, and it is
+// reproduced here on purpose.
+var compatSplitRegexp = regexp.MustCompile(`^([0-9]+)((?:a|b|c|rc)[0-9]+)$`)
+
+// compatVersionSplit reproduces pypa/packaging 26.2's `_version_split`, which
+// gpp ports as versionSplit: the epoch (or "0") first, then the dot-separated
+// pieces of the rest, with compatSplitRegexp applied to each.
+//
+// ⚠️ IT OPERATES ON RAW OPERAND TEXT, NOT ON A PARSED VERSION. That is the
+// whole point -- see compatibleUpperBound.
+func compatVersionSplit(s string) []string {
+	epoch, rest := "0", s
+	if i := strings.LastIndex(s, "!"); i >= 0 {
+		if s[:i] != "" {
+			epoch = s[:i]
+		}
+		rest = s[i+1:]
 	}
-	parts := strings.Split(rest, ".")
-	if len(parts) < 2 {
-		return hi, fmt.Errorf(
-			"pep440set: ~=%s needs at least two release segments", v.String())
+	out := []string{epoch}
+	for _, item := range strings.Split(rest, ".") {
+		if m := compatSplitRegexp.FindStringSubmatch(item); m != nil {
+			out = append(out, m[1:]...)
+		} else {
+			out = append(out, item)
+		}
 	}
-	nextV, err := incrementLastSegment(
-		epochPrefix + strings.Join(parts[:len(parts)-1], "."))
-	if err != nil {
-		return hi, err
+	return out
+}
+
+// compatIsReleaseSegment reproduces pypa/packaging 26.2's `_is_not_suffix`: a
+// piece counts as part of the release unless it STARTS WITH one of five
+// literal, lower-case markers.
+//
+// ⚠️ THE LIST IS EXACTLY THESE FIVE AND THE TEST IS CASE-SENSITIVE. Do not
+// "complete" it with the PEP 440 aliases and do not fold case. `c`, `pre`,
+// `preview`, `r` and `rev` are all legal spellings of a pre- or post-release,
+// and every one of them is treated as RELEASE here, which is why `~=1.0.pre1`
+// derives the prefix 1.0.* while `~=1.0rc1` derives 1.*. Case-sensitivity is
+// why `~=0.0.posT` -- accepted by the case-insensitive specifier grammar, and
+// parsed as 0.0.post0 -- derives 0.0.* while `~=0.0.post0` derives 0.*.
+//
+// Those look like defects, and adding the aliases or folding case looks like
+// the fix. It is not: pypa/packaging 26.2 and version.Specifiers.Check both
+// answer exactly as this list dictates, measured on every case above. Matching
+// the reference is the requirement; "more consistent than the reference" is a
+// different, wrong answer.
+func compatIsReleaseSegment(seg string) bool {
+	for _, marker := range []string{"dev", "a", "b", "rc", "post"} {
+		if strings.HasPrefix(seg, marker) {
+			return false
+		}
 	}
-	return bound{v: nextV, edge: edgeBelowRelease}, nil
+	return true
+}
+
+// compatibleUpperBound derives the exclusive upper bound of `~=operand`.
+//
+// `~=X` is `>=X` conjoined with `==P.*`, where P is the operand's leading run
+// of release pieces MINUS its last one. This function returns the top of the
+// `==P.*` region; fromSpecifier supplies the `>=X` bottom.
+//
+// ⚠️ P COMES FROM THE RAW OPERAND TEXT, NOT FROM THE PARSED VERSION.
+//
+// Deriving it from v.BaseVersion() -- the obvious, structural reading of PEP
+// 440, and what this function used to do -- is measurably wrong. Upstream
+// splits the operand as written, keeps pieces while compatIsReleaseSegment
+// holds, and drops the last one kept; normalization happens only afterwards,
+// when the derived `==P.*` is evaluated. Because the suffix test misses the
+// alias spellings, a pre-release written `1.0c1`, `1.0.c1`, `1.0.pre1`,
+// `1.0.preview1`, `1.0.r1` or `1.0.rev1` stays INSIDE the release run and
+// consumes the segment that would otherwise have been dropped: `~=1.0c1` is
+// `>=1.0c1,==1.0.*` and rejects 1.1, while `~=1.0rc1` is `>=1.0rc1,==1.*` and
+// accepts it. The structural reading accepted 1.1 for all seven spellings.
+//
+// ok=false means the derived P does not parse as a version, so `==P.*` matches
+// nothing at all and the whole specifier is empty. Upstream reaches the same
+// answer by a different route (its equality comparison returns false when the
+// operand will not parse), and `~=v1.0` is the reachable case: P is "0!v1",
+// which is not a version, because PEP 440 puts the optional `v` before the
+// epoch and not after it.
+func compatibleUpperBound(operand string) (hi bound, ok bool, err error) {
+	var kept []string
+	for _, seg := range compatVersionSplit(operand) {
+		if !compatIsReleaseSegment(seg) {
+			break
+		}
+		kept = append(kept, seg)
+	}
+	// kept[0] is the epoch, so fewer than two pieces leaves nothing to drop.
+	if len(kept) < 2 {
+		return hi, false, nil
+	}
+	prefix := kept[0] + "!" + strings.Join(kept[1:len(kept)-1], ".")
+
+	prefixV, perr := version.Parse(prefix)
+	if perr != nil {
+		return hi, false, nil
+	}
+
+	switch {
+	case !prefixV.IsPreRelease() && !prefixV.IsPostRelease() && prefixV.Local() == "":
+		// The ordinary case: P is a plain release, so `==P.*` is the run of
+		// release groups starting at P.
+		nextV, err := incrementLastSegment(prefixV.BaseVersion())
+		if err != nil {
+			return hi, false, err
+		}
+		return bound{v: nextV, edge: edgeBelowRelease}, true, nil
+
+	case preSuffixRegexp.MatchString(prefixV.Public()) && prefixV.Local() == "":
+		// P is a pre-release, reachable when the operand spells BOTH its pre-
+		// and its post-release with an alias the suffix test misses, as in
+		// `~=1.0.pre1.r1` (>=1.0rc1.post1, ==1.0rc1.*). `==P.*` is then every
+		// version carrying that exact pre-release marker, with any post, dev or
+		// local part -- a contiguous band whose top is the first version of the
+		// NEXT pre-release, which is exactly the bound `>P` needs.
+		b, err := greaterThanBound(prefixV)
+		if err != nil {
+			return hi, false, err
+		}
+		return b, true, nil
+
+	default:
+		// P carries a post, dev or local part. The specifier grammar admits no
+		// such operand (nothing may follow a post but a dev, and a dev ends the
+		// release run), so this is unreachable rather than approximated.
+		return hi, false, fmt.Errorf(
+			"%w: ~=%s derives the prefix %q", ErrUnrepresentable, operand, prefix)
+	}
 }
 
 // incrementLastSegment turns "1.2" into version 1.3, preserving any epoch.
+//
+// ⚠️ The arithmetic is done on the DIGIT STRING, not through strconv. A
+// release segment has no upper bound in PEP 440 and gpp holds it as a
+// part.BigInt, so `==99999999999999999999.*` is a specifier a real index can
+// carry; strconv.Atoi refused it and turned a representable set into an error.
 func incrementLastSegment(s string) (version.Version, error) {
 	epochPrefix := ""
 	rest := s
@@ -292,11 +419,23 @@ func incrementLastSegment(s string) (version.Version, error) {
 	}
 	parts := strings.Split(rest, ".")
 	last := parts[len(parts)-1]
-	n, err := strconv.Atoi(last)
-	if err != nil {
+	if !isDigits(last) {
 		return version.Version{}, fmt.Errorf(
-			"pep440set: release segment %q is not numeric: %w", last, err)
+			"pep440set: release segment %q is not numeric", last)
 	}
-	parts[len(parts)-1] = strconv.Itoa(n + 1)
+	parts[len(parts)-1] = incDigits(last)
 	return version.Parse(epochPrefix + strings.Join(parts, "."))
+}
+
+// incDigits adds one to a decimal digit string of any length.
+func incDigits(s string) string {
+	b := []byte(s)
+	for i := len(b) - 1; i >= 0; i-- {
+		if b[i] < '9' {
+			b[i]++
+			return string(b)
+		}
+		b[i] = '0'
+	}
+	return "1" + string(b)
 }
