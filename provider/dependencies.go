@@ -116,6 +116,10 @@ func (p *Provider) projectDependencies(pkg Package, v version.Version) ([]depend
 	)
 	reqs := meta.RequiresDist
 
+	// pendingUnreadable holds a record that is only true if this version turns
+	// out to be offered. See where it is set, below.
+	var pendingUnreadable string
+
 	if pkg.Extra == "" {
 		var (
 			pyDep dependency
@@ -127,8 +131,15 @@ func (p *Provider) projectDependencies(pkg Package, v version.Version) ([]depend
 			// over-admitting a candidate surfaces later as an install-time
 			// failure while under-constraining would silently change the
 			// resolution. That is only defensible if it is visible.
-			p.record(pkg, v, "its Requires-Python "+strconv.Quote(meta.RequiresPythonRaw)+
-				" could not be parsed, so the interpreter is left unconstrained", true)
+			//
+			// ⚠️ Held until the success return rather than recorded here.
+			// Anything below can still exclude this version, and an
+			// Offered:true written before that decision is a lie the record's
+			// own Offered field exists to prevent -- a consumer would report
+			// that the version resolved with an unconstrained interpreter when
+			// it was never a candidate.
+			pendingUnreadable = "its Requires-Python " + strconv.Quote(meta.RequiresPythonRaw) +
+				" could not be parsed, so the interpreter is left unconstrained"
 		}
 		// The interpreter constraint belongs to the base package. An extra
 		// reaches it through the same-version link below, so emitting it there
@@ -166,6 +177,11 @@ func (p *Provider) projectDependencies(pkg Package, v version.Version) ([]depend
 	if reason != "" {
 		return nil, reason, nil
 	}
+
+	// Only now is the version definitely offered, so only now is an
+	// Offered:true record truthful.
+	p.record(pkg, v, pendingUnreadable, true)
+
 	return append(deps, expanded...), "", nil
 }
 

@@ -172,9 +172,50 @@ func TestSolveActivatesAnExtra(t *testing.T) {
 	})
 }
 
+// Asking for ONE extra of a package that declares several must activate only
+// that one.
+//
+// ⚠️ This is the only test that distinguishes "activate the requested extra"
+// from "activate every extra this package declares". Every other extras test
+// uses a package with exactly one extra, where the two are indistinguishable;
+// replacing the active list with meta.ProvidesExtra passes all of them. A
+// package that declared [async, dotenv] would then install python-dotenv for
+// anyone who asked only for [async].
+func TestSolveOneExtraDoesNotActivateTheOthers(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		SetMetadata("flask", "3.0", index.PackageMetadata{
+			RequiresDist: mustRequirements(t,
+				"werkzeug>=3.0",
+				`asgiref>=3.2; extra == "async"`,
+				`python-dotenv>=1.0; extra == "dotenv"`,
+			),
+			ProvidesExtra: []string{"async", "dotenv"},
+		}).
+		AddVersion("werkzeug", "3.0.1").
+		AddVersion("asgiref", "3.7").
+		AddVersion("python-dotenv", "1.0.1")
+
+	got, _, err := solve(t, idx, "flask[async]")
+	if err != nil {
+		t.Fatalf("Solve: %v", err)
+	}
+	if _, ok := got["asgiref"]; !ok {
+		t.Errorf("the requested extra's requirement is missing: %v", got)
+	}
+	if _, ok := got["python-dotenv"]; ok {
+		t.Errorf("an extra that was NOT requested pulled its requirement in: %v", got)
+	}
+	if _, ok := got["flask[dotenv]"]; ok {
+		t.Errorf("an extra that was NOT requested is in the solution: %v", got)
+	}
+}
+
 // Without the extra, its requirement must stay out of the solution -- the
-// symmetric half of the test above, and the one that would catch an
-// implementation that activated every extra a package declares.
+// symmetric half of TestSolveActivatesAnExtra.
+//
+// Note this does NOT catch an implementation that activates every declared
+// extra: it resolves plain "flask", so the extra-activation path is never
+// reached at all. TestSolveOneExtraDoesNotActivateTheOthers covers that.
 func TestSolveWithoutTheExtraLeavesItsRequirementOut(t *testing.T) {
 	idx := index.NewMockIndex("test").
 		SetMetadata("flask", "3.0", index.PackageMetadata{
@@ -207,6 +248,16 @@ func TestSolveMisspelledExtraFails(t *testing.T) {
 	var unsolvable *solver.Unsolvable[provider.Package, pep440set.Set]
 	if !errors.As(err, &unsolvable) {
 		t.Fatalf("err = %v, want *solver.Unsolvable", err)
+	}
+
+	// Asserting only the error TYPE would keep this test green if flask became
+	// unresolvable for some unrelated reason, which is precisely the failure it
+	// exists to distinguish. Pin the derivation to the misspelled extra.
+	if !causeMentions(unsolvable.RootCause, func(pkg provider.Package) bool {
+		return pkg == provider.WithExtra("flask", "asynk")
+	}) {
+		t.Errorf("root cause does not mention flask[asynk]; the resolve failed for some other reason: %v",
+			unsolvable.RootCause)
 	}
 }
 

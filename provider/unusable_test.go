@@ -227,6 +227,41 @@ func TestUnreadableRequiresPythonKeepsTheVersionAndRecordsWhy(t *testing.T) {
 	}
 }
 
+// A version that is later EXCLUDED must never carry an Offered:true record.
+//
+// The unreadable-Requires-Python record is written early, before the rest of
+// the requirements have been examined, so a version can be recorded as offered
+// and then excluded by something further down. Offered exists so a consumer
+// need not infer the distinction from the reason text; a stale true makes it
+// report that a version resolved with an unconstrained interpreter when that
+// version was never a candidate at all.
+func TestExcludedVersionIsNeverRecordedAsOffered(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		SetMetadata("flask", "3.0", index.PackageMetadata{
+			RequiresPythonRaw:        ">= 3.8, !!bogus",
+			RequiresPythonUnreadable: true,
+			// Arbitrary equality has no version-set equivalent, so this
+			// version cannot be offered -- decided AFTER the record above.
+			RequiresDist: mustRequirements(t, "foo ===lolwat"),
+		})
+
+	p := provider.New(context.Background(), idx, testOptions(t))
+
+	_, count, err := p.Candidates(provider.Project("flask"), pep440set.All())
+	if err != nil {
+		t.Fatalf("Candidates: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0: the version cannot be used", count)
+	}
+
+	for _, rec := range p.Unusable() {
+		if rec.Offered {
+			t.Errorf("flask 3.0 was excluded (count 0) but is recorded as Offered: %+v", rec)
+		}
+	}
+}
+
 // An unknown package is not an unusable VERSION -- there is no version to name.
 func TestUnknownPackageRecordsNothing(t *testing.T) {
 	p := provider.New(context.Background(), index.NewMockIndex("test"), testOptions(t))
