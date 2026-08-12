@@ -23,6 +23,11 @@ const (
 	edgeBelowRelease edge = iota
 	// edgeAt is exactly this version's position in the total order.
 	edgeAt
+	// edgeAboveExact is immediately above this version and nothing else: above
+	// 1.0+a but below 1.0+b. `==1.0+a` needs it, because that specifier matches
+	// the one local it names and no other (version.Specifiers keeps the local
+	// segment when the operand carries one).
+	edgeAboveExact
 	// edgeAboveLocals is above this version and every local variant of it,
 	// and below the next public version (e.g. below 1.0.post0.dev0).
 	edgeAboveLocals
@@ -140,17 +145,31 @@ func cmpBound(a, b bound) int {
 		}
 	}
 
-	// ... and the edge second, so that aboveLocals(1.0) lands above every
-	// at(1.0+local) no matter how the label sorts.
+	// ... edgeAboveLocals second, so that it lands above every at(1.0+local) no
+	// matter how the label sorts. It is the only edge that ignores the local
+	// segment of the version it is anchored to: it is a property of the public
+	// version alone.
+	aTop, bTop := a.edge == edgeAboveLocals, b.edge == edgeAboveLocals
+	switch {
+	case aTop && bTop:
+		return 0
+	case aTop:
+		return 1
+	case bTop:
+		return -1
+	}
+
+	// ... and, among the two edges that name one local variant, the label
+	// before the edge: aboveExact(1.0+a) sits below at(1.0+b), which is what
+	// makes `==1.0+a` exclude 1.0+b while `<=1.0` still admits both.
+	if c := strings.Compare(a.v.Local(), b.v.Local()); c != 0 {
+		return c
+	}
 	switch {
 	case a.edge < b.edge:
 		return -1
 	case a.edge > b.edge:
 		return 1
-	}
-
-	if a.edge == edgeAt {
-		return strings.Compare(a.v.Local(), b.v.Local())
 	}
 	return 0
 }
