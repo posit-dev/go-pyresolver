@@ -116,9 +116,20 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 //
 // The solver rejects a decision outside the accumulated term rather than
 // trusting it, because such a decision corrupts the partial solution in a way
-// that no later error points back to. Intersecting with allowed first is what
-// guarantees best lies inside it; reordering those two steps reintroduces the
-// bug.
+// that no later error points back to. Discarding the versions outside allowed
+// BEFORE ranking is what guarantees best lies inside it; reordering those two
+// steps reintroduces the bug.
+//
+// # Cost
+//
+// Deciding usability reads each candidate version's metadata, and the solver
+// asks about the same package repeatedly as it backtracks. That is affordable
+// because dependency metadata is resident in the PyPI RSF and read in-process
+// -- no network call, per RFD Rev 15 -- and because correctness here is not
+// negotiable: a cheaper usability test that disagreed with Dependencies would
+// hand the solver a decision whose dependencies then fail. A memo keyed by
+// (package, version) is the obvious next step if this ever shows up in a
+// profile.
 func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set, int, error) {
 	switch pkg.Kind {
 	case KindRoot:
