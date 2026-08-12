@@ -149,6 +149,40 @@ func TestResolutionErrorOmitsRecordsForVersionsThatWereOffered(t *testing.T) {
 	}
 }
 
+// An extra is a separate SOLVER package for the same project, and the
+// provider's dedupe key is the solver package -- so flask and flask[async] each
+// record flask 3.0 as sdist-only. The paragraph reads only the project name and
+// the version, so both records render byte-identically, and a report that says
+// the same thing twice reads like two problems rather than one.
+func TestResolutionErrorExplainsAnSdistOnlyReleaseOnlyOnce(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		SetMetadata("flask", "2.0", index.PackageMetadata{
+			ProvidesExtra: []string{"async"},
+		}).
+		SetUnavailable("flask", "3.0")
+
+	re := resolutionError(t, idx, "flask[async]", "flask>=3.0")
+
+	// The premise: two records, one project, one version. Without both this
+	// test would pass for the wrong reason.
+	var records int
+	for _, u := range re.Unusable {
+		if u.Package.Name == "flask" && u.Version.Equal(version.MustParse("3.0")) &&
+			u.Reason == provider.ReasonMetadataUnavailable {
+			records++
+		}
+	}
+	if records < 2 {
+		t.Fatalf("the provider made %d records for flask 3.0, want 2 (one per solver "+
+			"package); this test proves nothing", records)
+	}
+
+	msg := re.Error()
+	if got := strings.Count(msg, "Note: flask 3.0 exists"); got != 1 {
+		t.Errorf("the message carries the sdist-only note %d times, want 1:\n%s", got, msg)
+	}
+}
+
 // An index that cannot answer is not a conflict between requirements. Dressing
 // an outage up as one sends the caller looking for a problem in their own
 // requirements.

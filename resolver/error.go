@@ -86,7 +86,7 @@ func sdistOnlyExplanation(u provider.Unusable) string {
 // relevantSdistOnly selects the records worth putting in front of a user for
 // THIS failure.
 //
-// Two filters, and both matter:
+// Three filters, and all three matter:
 //
 //   - Offered == false. An offered version was a candidate; its record is a
 //     note about how it was treated, not a reason it could not be used, and
@@ -95,16 +95,30 @@ func sdistOnlyExplanation(u provider.Unusable) string {
 //     range the report names. A release excluded from a package that resolved
 //     perfectly well is noise, and noise in a failure report is what makes
 //     people stop reading them.
+//   - One paragraph per (project, version). The provider's own dedupe key is
+//     the SOLVER package, and an extra is a separate solver package for the
+//     same project: flask and flask[async] each get a record for flask 3.0
+//     being sdist-only. sdistOnlyExplanation reads only the project name and
+//     the version, so those two records produce byte-identical paragraphs, and
+//     a report that says the same thing twice reads like two problems.
 func (e *ResolutionError) relevantSdistOnly() []provider.Unusable {
 	if e.Report == nil {
 		return nil
 	}
 	var out []provider.Unusable
+	// version.Version holds slices and cannot key a map, which is why the
+	// provider builds its key from strings too.
+	seen := map[string]bool{}
 	for _, u := range e.Unusable {
 		if u.Offered || u.Reason != provider.ReasonMetadataUnavailable {
 			continue
 		}
+		key := string(u.Package.Name) + "\x00" + u.Version.String()
+		if seen[key] {
+			continue
+		}
 		if e.reportNames(u) {
+			seen[key] = true
 			out = append(out, u)
 		}
 	}
