@@ -183,6 +183,46 @@ func TestResolutionErrorExplainsAnSdistOnlyReleaseOnlyOnce(t *testing.T) {
 	}
 }
 
+// Offered == true is checked FIRST, before the record is matched against the
+// report, and the two filters are not interchangeable: an offered version can
+// be named by the report at a version inside a range it mentions -- that is
+// what being a candidate MEANS -- so reportNames alone lets it through.
+//
+// The record is built by hand because the provider does not currently record
+// ReasonMetadataUnavailable with Offered true. It is the guard that keeps that
+// true from the report's side, and a guard no test exercises is a guard that
+// gets deleted.
+func TestResolutionErrorOmitsAnOfferedSdistOnlyRecord(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("flask", "2.0").
+		SetUnavailable("flask", "3.0")
+
+	re := resolutionError(t, idx, "flask>=3.0")
+	if !strings.Contains(re.Error(), "Note: flask 3.0 exists") {
+		t.Fatalf("the unmodified error does not carry the note, so flipping Offered "+
+			"proves nothing:\n%s", re.Error())
+	}
+
+	var offered []provider.Unusable
+	for _, u := range re.Unusable {
+		if u.Reason != provider.ReasonMetadataUnavailable {
+			continue
+		}
+		u.Offered = true
+		offered = append(offered, u)
+	}
+	if len(offered) == 0 {
+		t.Fatal("no sdist-only record was made, so this test proves nothing")
+	}
+
+	// Same report, same records, one field flipped.
+	reoffered := &resolver.ResolutionError{Report: re.Report, Unusable: offered}
+	if strings.Contains(reoffered.Error(), "Note: flask 3.0 exists") {
+		t.Errorf("the message reports a version that WAS offered as one that could not "+
+			"be used:\n%s", reoffered.Error())
+	}
+}
+
 // An index that cannot answer is not a conflict between requirements. Dressing
 // an outage up as one sends the caller looking for a problem in their own
 // requirements.
