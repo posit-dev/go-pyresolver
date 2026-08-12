@@ -13,6 +13,16 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `pep440set`, a canonical PEP 440 version-set algebra (intersection, union,
+  complement) satisfying go-pubgrub's `versionset.Set`. `FromSpecifiers` agrees
+  with `version.Specifiers.Check` on every version, guards included, verified by
+  a differential test over a generated grid. Arbitrary-equality (`===`)
+  specifiers report `ErrUnrepresentable` rather than being approximated, as does
+  the `||` OR-of-ANDs form, whose groups no exported accessor exposes.
+  ([#18657](https://github.com/rstudio/package-manager/issues/18657))
+
 ## [0.4.0] - 2026-08-10
 
 ### Breaking

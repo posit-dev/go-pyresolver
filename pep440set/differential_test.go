@@ -43,12 +43,13 @@ func operatorGrid() []string {
 
 // TestDifferentialAgainstCheck is the acceptance criterion for this package.
 //
-// It runs the whole grid twice: once with default options and once with
-// version.WithPreRelease(true), comparing each pass against that Specifiers'
-// own Check. Check is pure matching and ignores the pre-release policy, so the
-// two passes must agree with each other as well as with the set -- and that is
-// the point of the second pass, since a mapping that quietly folded
-// pre-release SELECTION into the spans would diverge here.
+// It runs the whole grid under all three pre-release policies, comparing each
+// pass against that Specifiers' own Check. Check is pure matching and ignores
+// the policy, so the three passes must agree with each other as well as with
+// the set -- and that is the point of the extra passes, since a mapping that
+// quietly folded pre-release SELECTION into the spans would diverge here.
+//
+// PreReleasesInclude is what the deprecated WithPreRelease(true) maps to.
 func TestDifferentialAgainstCheck(t *testing.T) {
 	versions := make([]version.Version, 0, len(versionGrid()))
 	for _, s := range versionGrid() {
@@ -63,8 +64,11 @@ func TestDifferentialAgainstCheck(t *testing.T) {
 		name string
 		opts []version.SpecifierOption
 	}{
-		{name: "default"},
-		{name: "prereleases", opts: []version.SpecifierOption{version.WithPreRelease(true)}},
+		{name: "auto"},
+		{name: "include", opts: []version.SpecifierOption{
+			version.WithPreReleases(version.PreReleasesInclude)}},
+		{name: "exclude", opts: []version.SpecifierOption{
+			version.WithPreReleases(version.PreReleasesExclude)}},
 	}
 
 	var compared, skipped int
