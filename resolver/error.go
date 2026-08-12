@@ -44,9 +44,19 @@ type ResolutionError struct {
 
 // Error renders the explanation, followed by a note for each release that was
 // set aside for a reason this failure makes relevant.
+//
+// A nil Report yields a bare sentence rather than a panic, following
+// report.Explain's own reasoning about a nil root cause: an error message is
+// what someone sees when something has already gone wrong, so it is the last
+// place that should introduce a second failure.
 func (e *ResolutionError) Error() string {
 	var b strings.Builder
-	b.WriteString(e.Report.String())
+	if e.Report == nil {
+		b.WriteString("resolver: the requirements cannot be satisfied, " +
+			"and no explanation was recorded")
+	} else {
+		b.WriteString(e.Report.String())
+	}
 	for _, u := range e.relevantSdistOnly() {
 		b.WriteString("\n\n")
 		b.WriteString(sdistOnlyExplanation(u))

@@ -167,6 +167,20 @@ func TestResolveReturnsAnIndexFailureAsItself(t *testing.T) {
 	}
 }
 
+// An error message is what someone sees when something has already gone wrong,
+// so it is the last place that should introduce a second failure. A caller can
+// build one of these by hand -- both fields are exported -- and Error must not
+// panic on it.
+func TestResolutionErrorWithNoReportStillHasAMessage(t *testing.T) {
+	re := &resolver.ResolutionError{}
+	if msg := re.Error(); msg == "" {
+		t.Error("Error() is empty, which will read as a missing message")
+	}
+	if err := re.Unwrap(); err != nil {
+		t.Errorf("Unwrap() = %v, want nil", err)
+	}
+}
+
 func hasSdistRecord(records []provider.Unusable, name index.PackageName, ver string) bool {
 	want := version.MustParse(ver)
 	for _, u := range records {
