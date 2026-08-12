@@ -11,6 +11,7 @@ import (
 	"github.com/posit-dev/go-pyresolver/index"
 	"github.com/posit-dev/go-pyresolver/pep440set"
 	"github.com/posit-dev/go-python-packaging/marker"
+	"github.com/posit-dev/go-python-packaging/requirement"
 	"github.com/posit-dev/go-python-packaging/version"
 )
 
@@ -49,6 +50,12 @@ type Options struct {
 	// solving: the solver caches derivations on the assumption that the facts
 	// behind them do not move.
 	Prereleases candidate.PrereleaseSet
+
+	// Requirements are the caller's own requirements: what the resolution is
+	// being asked for. They become the root package's dependencies.
+	//
+	// Names may be passed exactly as parsed; they are canonicalized here.
+	Requirements []requirement.Requirement
 
 	// RootVersion is the synthetic version of the root package. The zero value
 	// means version 0.
