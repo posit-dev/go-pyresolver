@@ -100,7 +100,7 @@ func (p *Provider) projectDependencies(pkg Package, v version.Version) ([]depend
 	if err != nil {
 		switch {
 		case errors.Is(err, index.ErrMetadataUnavailable):
-			return nil, "no dependency metadata is published for it (an sdist-only or dynamic-metadata release)", nil
+			return nil, ReasonMetadataUnavailable, nil
 		case errors.Is(err, index.ErrMetadataUnusable):
 			return nil, fmt.Sprintf("its metadata cannot be used: %v", err), nil
 		case errors.Is(err, index.ErrPackageNotFound):

@@ -102,6 +102,13 @@ type Resolution struct {
 var rootVersion = version.MustParse("0")
 
 // Resolve chooses one version of every package reqs transitively requires.
+//
+// A failure that is a genuine conflict between requirements comes back as a
+// *ResolutionError carrying an explanation built from the solver's derivation
+// graph. Any other error -- an index that could not answer, a cancelled
+// context, options that do not describe a single interpreter -- comes back as
+// itself, because presenting an outage as "your requirements conflict" sends
+// the caller looking for a problem that is not there.
 func Resolve(
 	ctx context.Context,
 	reqs []requirement.Requirement,
@@ -129,7 +136,7 @@ func Resolve(
 
 	sol, err := s.Solve()
 	if err != nil {
-		return nil, err
+		return nil, explain(err, p.Unusable())
 	}
 	return collapse(sol)
 }
