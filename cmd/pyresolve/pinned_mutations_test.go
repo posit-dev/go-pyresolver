@@ -292,7 +292,14 @@ func TestJSONFlagIsABoolFlag(t *testing.T) {
 	fs, _ := newFlagSet("versions")
 	fl := fs.Lookup("json")
 	if fl == nil {
+		// The return is redundant after t.Fatal, and is here because CI's
+		// staticcheck does not always resolve Fatal as terminating and then
+		// reports SA5011 on the dereference below. Reproduces only on the
+		// GitHub runner, not under golangci-lint v2.11.2 locally on either
+		// Go 1.25 or 1.26, so this removes the ambiguity rather than
+		// suppressing the check.
 		t.Fatal("--json is not registered")
+		return
 	}
 	bf, ok := fl.Value.(interface{ IsBoolFlag() bool })
 	if !ok || !bf.IsBoolFlag() {
