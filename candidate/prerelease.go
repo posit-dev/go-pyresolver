@@ -49,7 +49,12 @@ func EnabledPrereleases(reqs []requirement.Requirement, allow []index.PackageNam
 		}
 	}
 	for _, p := range allow {
-		set[p] = true
+		// Re-normalize rather than trusting the caller. index.PackageName is a
+		// plain string type, so index.PackageName("Flask_Login") is
+		// constructible without ever passing through NewPackageName, and an
+		// unnormalized entry here would simply never match a lookup -- the
+		// caller would have asked for pre-releases and silently not got them.
+		set[index.NewPackageName(string(p))] = true
 	}
 	return set
 }

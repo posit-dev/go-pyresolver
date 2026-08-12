@@ -45,6 +45,24 @@ func TestEnabledPrereleasesExplicitAllow(t *testing.T) {
 	}
 }
 
+// PackageName is a plain string type, so a caller can construct an
+// unnormalized one without going through index.NewPackageName. An entry like
+// that must still work: silently not enabling pre-releases for a package the
+// caller explicitly named is a wrong answer with no error attached.
+func TestEnabledPrereleasesCanonicalizesTheAllowList(t *testing.T) {
+	r, err := requirement.Parse("flask-login>=1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := EnabledPrereleases(
+		[]requirement.Requirement{r},
+		[]index.PackageName{index.PackageName("Flask_Login")},
+	)
+	if !got["flask-login"] {
+		t.Errorf("an unnormalized allow-list entry was not canonicalized: %v", got)
+	}
+}
+
 func TestEnabledPrereleasesCanonicalizesNames(t *testing.T) {
 	r, err := requirement.Parse("Flask_Login>=1.0rc1")
 	if err != nil {
