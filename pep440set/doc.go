@@ -22,14 +22,38 @@
 // Every operation returns through newSet for that reason. Note that 1.0 and
 // 1.0.0 are the same version, so merging compares positions, not spellings.
 //
+// # Equal and IsEmpty answer about positions
+//
+// Because a set is an interval over positions, both predicates are exact about
+// POSITIONS and only approximate about versions, always in the safe direction:
+//
+//   - Equal can report false for two sets that admit the same versions, when
+//     they differ across a gap no version occupies. `<=1.0` unioned with
+//     `>=1.0.post0.dev0` admits every version and is still two spans, not
+//     All(), because the boundary between them is the position above every
+//     1.0+local and the position at 1.0.post0.dev0, with nothing in between.
+//   - IsEmpty can report false for a set that holds no version, for the same
+//     reason: `>=1.0,!=1.0,<1.0.post0.dev0` is exactly that gap.
+//
+// Neither is a defect to fix. go-pubgrub compares incompatibilities for
+// identity, so Equal must not merge representations it can tell apart, and a
+// term that looks satisfiable but yields no candidate costs the solver a
+// wasted branch rather than a wrong answer.
+//
 // # Matching, not selection
 //
-// FromSpecifiers agrees with version.Specifiers.Check on every version, and
-// Check is pure matching. PEP 440's pre-release POLICY -- the rule that an
+// FromSpecifiers reproduces version.Specifiers.Check, and Check is pure
+// matching. PEP 440's pre-release POLICY -- the rule that an
 // installer should not offer 2.0rc1 for `>=1.0` unless asked -- governs which
 // candidates to offer, not which versions a specifier matches, so it is not
 // applied here; the resolver's candidate layer decides what to offer, and
 // applying it in the algebra would make Complement unsound.
+//
+// Check, not PEP 440's prose, is the specification. Where the two differ this
+// package follows Check, which follows pypa/packaging 26.2 -- measured, not
+// assumed. `~=` is the operator where it matters: its prefix comes from the raw
+// operand TEXT, so `~=1.0c1` and `~=1.0rc1` mean different things despite
+// naming the same version. See compatibleUpperBound.
 //
 // The operator-level pre-release and post-release GUARDS are a different rule
 // and are applied, because they are matching: `<1.0` does not match 1.0rc1 and

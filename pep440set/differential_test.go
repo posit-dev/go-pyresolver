@@ -26,6 +26,14 @@ func versionGrid() []string {
 		// A pre-release of a post-release: `<1.0.post1` rejects it, which is
 		// the post arm of the same guard.
 		"1.0.post1.dev0",
+		// ⚠️ Release segments ABOVE 2^63. bound.go's key used to parse each
+		// segment with strconv.Atoi and stop at the first failure, so these
+		// keyed as a PREFIX of their real release and sorted below everything:
+		// `<1.5` admitted 1.99999999999999999999 and `>=1.5` rejected it. PEP
+		// 440 caps neither a segment nor an epoch, and gpp holds both as
+		// arbitrary-precision integers, so the grid has to reach past int64.
+		"1.99999999999999999999", "99999999999999999999.1",
+		"9223372036854775808",
 	}
 }
 
@@ -34,11 +42,50 @@ func operandGrid() []string {
 	return []string{
 		"1.0", "1.0.0", "1.0rc1", "1.0.post1", "1.0+a", "1.0.1",
 		"2.0", "2.2", "2.2.3", "1!1.0", "1.*", "2.*", "1.0.*",
+		// ⚠️ ALIAS SPELLINGS OF A PRE- OR POST-RELEASE. Under `~=` these are
+		// NOT interchangeable with the canonical spellings, because the prefix
+		// comes from the raw operand text and upstream's suffix test misses
+		// them: `~=1.0c1` is `==1.0.*` where `~=1.0rc1` is `==1.*`, and the
+		// case-sensitive test makes `~=0.0.posT` differ from `~=0.0.post0`.
+		// The grid held only canonical spellings, so a mapping derived from the
+		// PARSED operand -- which cannot see the difference -- passed it while
+		// disagreeing with Check on all seven.
+		"1.0c1", "1.0.c1", "1.0.pre1", "1.0.preview1", "1.0.r1", "1.0.rev1",
+		"0.0.posT",
+		// An alias pre AND an alias post, the one operand shape whose derived
+		// ~= prefix is itself a pre-release rather than a plain release.
+		"1.0.pre1.r1",
+		// Past int64, on both sides of the dot, plus 2^63 exactly.
+		"99999999999999999999.0", "1.0.99999999999999999999",
+		"9223372036854775808", "99999999999999999999.*",
 	}
 }
 
 func operatorGrid() []string {
 	return []string{"", "==", "!=", "<", "<=", ">", ">=", "~="}
+}
+
+// checkPerOperatorFloor fails when any one operator stopped being exercised.
+//
+// ⚠️ A SINGLE GLOBAL FLOOR CANNOT DO THIS, which is why there no longer is
+// one. The grids compare tens of thousands of pairs, so an operator that
+// starts returning ErrUnrepresentable for every operand -- the cheapest way to
+// make a differential failure disappear -- removes a few percent of the total
+// and leaves the run green. Per-operator floors put every operator's own
+// coverage on the record.
+func checkPerOperatorFloor(t *testing.T, comparedBy map[string]int, floor int) {
+	t.Helper()
+	for _, op := range operatorGrid() {
+		name := op
+		if name == "" {
+			name = "<empty>"
+		}
+		t.Logf("operator %-7s compared %d pairs", name, comparedBy[op])
+		if comparedBy[op] < floor {
+			t.Errorf("operator %s compared only %d pairs, want at least %d: "+
+				"it is no longer being exercised", name, comparedBy[op], floor)
+		}
+	}
 }
 
 // TestDifferentialAgainstCheck is the acceptance criterion for this package.
@@ -72,6 +119,7 @@ func TestDifferentialAgainstCheck(t *testing.T) {
 	}
 
 	var compared, skipped int
+	comparedBy := map[string]int{}
 	for _, pass := range passes {
 		for _, op := range operatorGrid() {
 			for _, operand := range operandGrid() {
@@ -101,6 +149,7 @@ func TestDifferentialAgainstCheck(t *testing.T) {
 							pass.name, spec, v.Original(), got, want)
 					}
 					compared++
+					comparedBy[op]++
 				}
 			}
 		}
@@ -108,10 +157,9 @@ func TestDifferentialAgainstCheck(t *testing.T) {
 
 	t.Logf("compared %d (specifier, version) pairs; skipped %d specifiers",
 		compared, skipped)
-	if compared < 1000 {
-		t.Errorf("only %d comparisons ran; the grid is not exercising the mapping",
-			compared)
-	}
+	// `~=` is the floor-setting operator: it refuses every wildcard operand and
+	// every local one, so it always compares the fewest pairs.
+	checkPerOperatorFloor(t, comparedBy, 1500)
 }
 
 // TestDifferentialWideGrid widens both axes well past the hand-picked grid
@@ -129,6 +177,15 @@ func TestDifferentialWideGrid(t *testing.T) {
 		"1.0+a", "1.0+zzz", "1.0.1", "2.0", "2.2", "2.2.3", "0.9",
 		"1!1.0", "1!1.0rc1", "1!1.0.post1", "1.*", "2.*", "1.0.*", "1.0.0.*",
 		"1!1.*", "10.2.*", "1.0.10", "1.00.1", "1.0.1.2.3",
+		// Alias spellings, which `~=` does not treat as equivalent to the
+		// canonical ones, plus the `v` prefix, whose derived ~= prefix ("0!v1")
+		// is not a version at all.
+		"1.0c1", "1.0.c1", "1.0.pre1", "1.0.preview1", "1.0.r1", "1.0.rev1",
+		"1.0.pre1.r1", "1.0c1.rev1", "0.0.posT", "1.0.POST1", "v1.0",
+		// Past int64.
+		"99999999999999999999.0", "1.0.99999999999999999999",
+		"9223372036854775808", "99999999999999999999.*",
+		"1.0rc99999999999999999999",
 	}
 	versions := []string{
 		"0.9", "0.9.9", "1.0.dev0", "1.0.dev1", "1.0a1", "1.0a2", "1.0a2.dev0",
@@ -141,6 +198,11 @@ func TestDifferentialWideGrid(t *testing.T) {
 		"2.0.dev0", "2.0rc1", "2.0", "2.0+local", "2.0.post1", "2.2", "2.2.3",
 		"2.2.3.1", "2.9", "3.0", "10.2.1", "1!0.1", "1!1.0", "1!1.0rc1",
 		"1!1.0.post1", "1!2.0",
+		// Past int64, on both sides of the dot and in the epoch.
+		"1.99999999999999999999", "99999999999999999999.0",
+		"99999999999999999999.1", "9223372036854775808",
+		"9223372036854775807", "99999999999999999999!1.0",
+		"1.0rc99999999999999999999",
 	}
 
 	vs := make([]version.Version, 0, len(versions))
@@ -149,6 +211,7 @@ func TestDifferentialWideGrid(t *testing.T) {
 	}
 
 	var compared, skipped int
+	comparedBy := map[string]int{}
 	for _, op := range operatorGrid() {
 		for _, operand := range operands {
 			spec := op + operand
@@ -174,15 +237,14 @@ func TestDifferentialWideGrid(t *testing.T) {
 						spec, v.Original(), got, want)
 				}
 				compared++
+				comparedBy[op]++
 			}
 		}
 	}
 
 	t.Logf("compared %d (specifier, version) pairs; skipped %d specifiers",
 		compared, skipped)
-	if compared < 10000 {
-		t.Errorf("only %d comparisons ran; the wide grid shrank", compared)
-	}
+	checkPerOperatorFloor(t, comparedBy, 1500)
 }
 
 // TestDifferentialConjunctions covers multi-specifier sets, where an

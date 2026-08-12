@@ -30,6 +30,14 @@ func fuzzSeeds() []string {
 		">=1.0||<0.5", "==1.0 || ==2.0",
 		"==00.1", "==1.00.1", "==1.0.1.2.3.4.5",
 		"==0", "==0.0.0", ">99999999999999999999.0", "~=1.0.99999999999999999999",
+		"==99999999999999999999.*", "<1.5", ">=1.5", "==9223372036854775808",
+		">1.0rc99999999999999999999",
+		// The alias spellings `~=` does not treat as equivalent to the
+		// canonical ones, and the `v` prefix, whose derived ~= prefix is not a
+		// version at all.
+		"~=1.0c1", "~=1.0.c1", "~=1.0.pre1", "~=1.0.preview1", "~=1.0.r1",
+		"~=1.0.rev1", "~=0.0.posT", "~=0.0.post0", "~=1.0.pre1.r1", "~=v1.0",
+		"~=1.0.POST1",
 		"==*", "==.*", "==1..*", "== .*", "==a.*", "==1.0.*.*",
 		">=1.0.dev", "==1.0-1", "==1.0_1", "==1.0.post", "==1.0-post1",
 	}
@@ -43,6 +51,9 @@ func fuzzVersions() []string {
 		"0.9", "1.0.dev0", "1.0a1", "1.0rc1", "1.0rc1+l", "1.0",
 		"1.0+local", "1.0.post1", "1.0.post1.dev0", "1.0.0", "1.0.1",
 		"1.1", "2.0", "2.2.3", "1!1.0",
+		// Two probes past int64, one on each side of the dot: an ordering key
+		// that truncates oversized segments misplaces both.
+		"1.99999999999999999999", "99999999999999999999.0",
 	}
 }
 
@@ -66,41 +77,48 @@ func fuzzVersions() []string {
 //     failure: ErrUnrepresentable is deliberate, and an operand gpp's grammar
 //     admits but version.Parse rejects is a refusal, which is a safe answer.
 //
-// # ⚠️ THREE INPUTS FAIL, and that is the finding
+// # What this found, and how one of the findings was misread
 //
-// Two seeds, from an overflow in THIS package:
+// Three inputs failed when the fuzzer was first run, and all three were bugs in
+// THIS package. Two seeds:
 //
 //	>99999999999999999999.0
 //	~=1.0.99999999999999999999
 //
-// bound.go's releaseKey builds its comparison key with strconv.Atoi and BREAKS
+// bound.go's releaseKey built its comparison key with strconv.Atoi and BROKE
 // out of the loop on error, so a release segment at or above 2^63
-// (9223372036854775808) is dropped along with every segment after it. The
-// version's key becomes a PREFIX of its real release -- for the first seed, the
-// empty key -- so it sorts below everything, and `>` that operand admits every
-// version in existence while Check admits none. gpp orders the same pair
-// correctly, so this divergence is this package's.
+// (9223372036854775808) was dropped along with every segment after it. The
+// key became a PREFIX of the real release -- for the first seed, the empty key
+// -- so the operand sorted below everything and `>` it admitted every version
+// in existence while Check admitted none. gpp holds release segments as
+// arbitrary-precision integers and ordered the same pair correctly.
 //
-// One corpus entry the fuzzer found in 13 seconds, from a bug in the ORACLE:
+// And one corpus entry the fuzzer found in 13 seconds:
 //
 //	~=0.0.posT     (testdata/fuzz/FuzzFromSpecifiers/8da712f769546bb9)
 //
-// `~=0.0.posT` and `~=0.0.post0` are the same specifier -- PEP 440 case-folds
-// the suffix, and version.Parse renders both as 0.0.post0 -- but gpp's Check
-// answers differently for them: it computes the ~= prefix from the RAW operand
-// text, and its suffix test misses "posT", so it drops the last segment of
-// "0.0.posT" instead of the post part and checks ==0.0.* where PEP 440 says
-// ==0.*. Check(0.9) is then false for `~=0.0.posT` and true for `~=0.0.post0`.
-// This package normalizes through version.Parse first, so Contains is right and
-// Check is wrong here. Not a construct.go defect; an upstream one.
+// ⚠️ THIS ONE WAS FIRST WRITTEN UP AS A BUG IN THE ORACLE. IT WAS NOT.
 //
-// All three are left failing deliberately. The seeds are not weakened, the
-// corpus entry is committed rather than deleted, and neither bound.go nor
-// construct.go is touched: a red test naming the exact inputs is the report.
+// The reasoning was that `~=0.0.posT` and `~=0.0.post0` are the same specifier,
+// since PEP 440 case-folds the suffix and version.Parse renders both as
+// 0.0.post0 -- so Check answering differently for them had to be Check's fault,
+// and this package, which normalized through version.Parse first, had to be
+// right. Every step of that is true except the conclusion. Running
+// pypa/packaging 26.2 directly settles it: it agrees with Check on `~=0.0.posT`
+// and on all six alias spellings of `~=1.0c1`. `~=` derives its prefix from the
+// RAW OPERAND TEXT, by a deliberately incomplete and case-SENSITIVE suffix
+// test, and two spellings of one version are therefore two different
+// specifiers. construct.go now reproduces that rule; see compatibleUpperBound.
 //
-// A supplementary 90-second sweep with the differential assertion reduced to
-// "must not panic" (so the known disagreements did not end the run early) did
-// 26.9M executions and found no panic.
+// The lesson is cheap to state and was expensive to learn: a differential
+// disagreement is evidence about a PAIR. Deciding which side is wrong from the
+// standard rather than from the reference implementation picks the more
+// elegant answer, not the correct one. The corpus entry stays committed as a
+// regression seed.
+//
+// With all three fixed, a 90-second sweep did 15.5M executions against the FULL
+// differential assertion -- not a weakened must-not-panic one -- and found
+// nothing.
 func FuzzFromSpecifiers(f *testing.F) {
 	for _, seed := range fuzzSeeds() {
 		f.Add(seed)

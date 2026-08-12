@@ -54,11 +54,36 @@ func All() Set { return Set{spans: []span{{negInf(), posInf()}}} }
 // Empty is no versions.
 func Empty() Set { return Set{} }
 
-// IsEmpty implements versionset.Set.
+// IsEmpty implements versionset.Set: it reports whether the set holds no
+// POSITIONS.
+//
+// ⚠️ IT CAN REPORT false FOR A SET THAT HOLDS NO VERSION. A span between two
+// positions with no version between them is a real, non-empty span, and
+// Contains is false for every version in it. `>=1.0,!=1.0,<1.0.post0.dev0`
+// builds one: it is the region above every local variant of 1.0 and below the
+// first post-release of 1.0, which no version can occupy.
+//
+// That is the intended contract. go-pubgrub uses IsEmpty to decide whether a
+// term is satisfiable, and the direction of the imprecision is safe: the
+// solver explores a term it will find no candidate for, rather than pruning
+// one it should have explored.
 func (s Set) IsEmpty() bool { return len(s.spans) == 0 }
 
 // Equal implements versionset.Set. Both sides are canonical, so this is a
 // structural comparison.
+//
+// ⚠️ EQUAL IS EXACT ON POSITIONS, NOT ON VERSIONS. Two sets that admit exactly
+// the same versions can compare unequal when they differ only across a gap that
+// holds no version. `<=1.0` unioned with `>=1.0.post0.dev0` is such a pair
+// against All(): the two spans meet at "above every 1.0+local" versus "at
+// 1.0.post0.dev0", between which no version exists, so the union admits every
+// version there is and still canonicalizes to TWO spans rather than one.
+//
+// Position equality is what go-pubgrub needs -- it compares incompatibilities
+// for identity, and an Equal that merged distinguishable representations would
+// make derivations collide. The cost is that a set can be un-mergeable without
+// being distinguishable by Contains, which is the same imprecision IsEmpty
+// carries and is safe in the same direction.
 func (s Set) Equal(other Set) bool {
 	if len(s.spans) != len(other.spans) {
 		return false

@@ -76,6 +76,15 @@ func sampleSets(t *testing.T) []Set {
 		newSet(span{rel("1.0", edgeBelowRelease), rel("2.0", edgeBelowRelease)}),
 		newSet(span{at("1.0rc1"), at("1.0")}),
 		newSet(span{at("1!0.1"), posInf()}),
+		// ⚠️ The one span whose boundary is edgeAboveExact -- `==1.0+a`, the
+		// only set that names a single local variant. Without it the sample
+		// exercised four of the five edges, so the laws never saw the position
+		// that sits between at(1.0+a) and at(1.0+b) and nothing pinned
+		// Complement across it.
+		newSet(span{at("1.0+a"), rel("1.0+a", edgeAboveExact)}),
+		// A release segment past int64, so the laws run over a key the old
+		// Atoi-based one truncated to nothing.
+		newSet(span{at("1.0"), at("1.99999999999999999999")}),
 	}
 }
 

@@ -66,6 +66,65 @@ func TestBoundOrdering(t *testing.T) {
 	}
 }
 
+// TestBoundOrderingPastInt64 pins the ordering of release segments and epochs
+// that do not fit in an int64.
+//
+// ⚠️ These are the positions the old strconv.Atoi key silently collapsed. It
+// broke out of its parse loop on the first oversized segment, so
+// 99999999999999999999.0 keyed as the EMPTY release and 1.99999999999999999999
+// keyed as 1 -- both sorting below 1.0. The order is deliberately checked at
+// three magnitudes around 2^63, because a key that is merely wider (int64 ->
+// some larger fixed width) still fails somewhere.
+func TestBoundOrderingPastInt64(t *testing.T) {
+	v := func(s string) version.Version { return mustV(t, s) }
+
+	ascending := []string{
+		"1.0",
+		"1.5",
+		"1.9223372036854775807",
+		"1.9223372036854775808",
+		"1.99999999999999999999",
+		"2.0",
+		"9223372036854775807",
+		"9223372036854775808",
+		"99999999999999999999.0",
+		"99999999999999999999.1",
+		"1!1.0",
+		"9223372036854775808!1.0",
+	}
+
+	for i := range ascending {
+		for j := range ascending {
+			a := bound{v: v(ascending[i]), edge: edgeAt}
+			b := bound{v: v(ascending[j]), edge: edgeAt}
+			want := 0
+			switch {
+			case i < j:
+				want = -1
+			case i > j:
+				want = 1
+			}
+			if got := cmpBound(a, b); got != want {
+				t.Errorf("cmpBound(at(%s), at(%s)) = %d, want %d",
+					ascending[i], ascending[j], got, want)
+			}
+		}
+	}
+
+	// Leading zeros are not significant, at any width: the key compares digit
+	// runs by LENGTH first, so a padded segment would otherwise look larger.
+	if cmpBound(
+		bound{v: v("1.099999999999999999990"), edge: edgeAt},
+		bound{v: v("1.0099999999999999999990"), edge: edgeAt}) != 0 {
+		t.Error("leading zeros must not change a release segment's value")
+	}
+	if cmpBound(
+		bound{v: v("1.00000000000000000001"), edge: edgeAt},
+		bound{v: v("1.1"), edge: edgeAt}) != 0 {
+		t.Error("a segment of leading zeros followed by 1 is the segment 1")
+	}
+}
+
 // TestBoundEqualSpellings: 1.0 and 1.0.0 are the same version, so bounds
 // built from them must compare equal. Canonicalization depends on this.
 func TestBoundEqualSpellings(t *testing.T) {
