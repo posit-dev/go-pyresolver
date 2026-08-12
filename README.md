@@ -6,11 +6,16 @@ metadata.
 
 Part of [RFD 0001 — Native Go PyPI Dependency Resolution](https://github.com/rstudio/package-manager/blob/main/docs/rfds/0001-pypi-native-resolver/README.md).
 
-> **Status: partial.** `pypirsf/`, `index/`, and `cmd/pyresolve` are implemented
-> and released in `v0.1.0`. `candidate/`, `provider/`, and `resolver/` are still
-> documentation-only stubs with no declarations — **version solving is not
-> implemented yet**, and importing those three gives you nothing. They are
-> populated per RFD 0001's later phases. See [`CHANGELOG.md`](CHANGELOG.md).
+> **Status: version solving is implemented.** `resolver.Resolve` takes PEP 508
+> requirements and an `index.MetadataIndex` and returns one pinned version per
+> package the requirements transitively reach, or a failure explained in Python
+> terms. Extras and `Requires-Python` are modeled as packages, so both are
+> resolved and both are explainable.
+>
+> Deliberately **not** included: distribution-file (wheel/sdist) selection — a
+> resolution returns versions only — resolution across more than one marker
+> environment at a time, and building sdists to discover their metadata. See
+> [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Where this sits
 
@@ -28,7 +33,7 @@ Three Posit-owned Go modules divide the work:
 |---|---|
 | `pypirsf/` | PyPI record layout and dependency-blob decoder for Repository Snapshot Format files |
 | `index/` | `MetadataIndex` — the seam between resolver and storage — and its implementations |
-| `candidate/` | Which version to try next, and which distribution file represents it |
+| `candidate/` | Which versions may be offered (pre-release admission) and in what order to try them |
 | `provider/` | Adapts Python semantics (notably extras) to the generic solver |
 | `resolver/` | The public entry point |
 

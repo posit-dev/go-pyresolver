@@ -8,6 +8,19 @@ import (
 	"github.com/posit-dev/go-python-packaging/version"
 )
 
+// ReasonMetadataUnavailable is the Unusable.Reason recorded for a release whose
+// dependency metadata cannot be read without building it -- an sdist-only or
+// dynamic-metadata release.
+//
+// It is a named constant rather than a literal because a consumer has to be
+// able to pick these records out of the rest: this is the one reason with a
+// remedy a user can act on ("pin to a version that ships a wheel"), and the
+// resolver's failure explanation says so. Matching the sentence by hand from
+// another package would silently stop matching the first time the wording is
+// improved.
+const ReasonMetadataUnavailable = "no dependency metadata is published for it " +
+	"(an sdist-only or dynamic-metadata release)"
+
 // Unusable records something the resolution could not use about one version of
 // one package, so a failure report can say "flask 3.0 exists but ships only an
 // sdist" instead of "no versions available" -- which is the single worst thing
