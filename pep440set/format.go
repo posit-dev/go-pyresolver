@@ -99,7 +99,7 @@ func (s Set) excluded() (string, bool) {
 	if hi.lo.edge != edgeAboveLocals && hi.lo.edge != edgeAboveExact {
 		return "", false
 	}
-	if cmpBound(bound{v: lo.hi.v, edge: hi.lo.edge}, hi.lo) != 0 {
+	if cmpBound(lo.hi.withEdge(hi.lo.edge), hi.lo) != 0 {
 		return "", false
 	}
 	return lo.hi.v.String(), true
@@ -136,7 +136,7 @@ func (sp span) exact() (string, bool) {
 	if sp.hi.edge != edgeAboveLocals && sp.hi.edge != edgeAboveExact {
 		return "", false
 	}
-	if cmpBound(bound{v: sp.lo.v, edge: sp.hi.edge}, sp.hi) != 0 {
+	if cmpBound(sp.lo.withEdge(sp.hi.edge), sp.hi) != 0 {
 		return "", false
 	}
 	return sp.lo.v.String(), true
@@ -156,7 +156,7 @@ func (sp span) releasePrefix() (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if cmpBound(bound{v: next, edge: edgeBelowRelease}, sp.hi) != 0 {
+	if cmpBound(newBound(next, edgeBelowRelease), sp.hi) != 0 {
 		return "", false
 	}
 	return sp.lo.v.BaseVersion(), true
