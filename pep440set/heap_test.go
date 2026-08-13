@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
+package pep440set
+
+import (
+	"runtime"
+	"testing"
+
+	"github.com/posit-dev/go-python-packaging/version"
+)
+
+// TestRetainedHeapPerSet measures the LIVE heap a population of Sets holds
+// after GC, as distinct from the churn FromSpecifiers allocates building them.
+// The resolver holds one Set per term for the life of a solve, so retained
+// size matters independently of allocation volume. It asserts nothing; the
+// number is read from -v output.
+func TestRetainedHeapPerSet(t *testing.T) {
+	shapes := []string{
+		">=1.2.3",
+		">=1.0,<2.0",
+		"==1.2.3",
+		"~=2.31.0",
+		"!=1.5.*,>=1.2,<3",
+		">=1.21.0,!=2.0.0,!=2.0.1,<3",
+	}
+	const n = 30000
+
+	specs := make([]version.Specifiers, len(shapes))
+	for i, s := range shapes {
+		ss, err := version.NewSpecifiers(s)
+		if err != nil {
+			t.Fatalf("NewSpecifiers(%q): %v", s, err)
+		}
+		specs[i] = ss
+	}
+
+	keep := make([]Set, 0, n)
+	runtime.GC()
+	runtime.GC()
+	var m0 runtime.MemStats
+	runtime.ReadMemStats(&m0)
+
+	for i := 0; i < n; i++ {
+		s, err := FromSpecifiers(specs[i%len(specs)])
+		if err != nil {
+			t.Fatal(err)
+		}
+		keep = append(keep, s)
+	}
+
+	runtime.GC()
+	runtime.GC()
+	var m1 runtime.MemStats
+	runtime.ReadMemStats(&m1)
+	t.Logf("live heap for %d Sets: %d bytes (%.1f B/Set)",
+		n, m1.HeapAlloc-m0.HeapAlloc, float64(m1.HeapAlloc-m0.HeapAlloc)/n)
+	runtime.KeepAlive(keep)
+	runtime.KeepAlive(specs)
+}

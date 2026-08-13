@@ -27,8 +27,26 @@ func Exactly(v version.Version) Set {
 }
 
 // Contains reports whether v is in the set.
+//
+// It probes the spans with a stack-held verPos rather than materializing
+// atBound(v): a bound's posKey costs a public-spelling render (and a re-parse
+// when v carries a local label) plus a heap allocation, purely to test the
+// membership of a version the caller already holds. The resolver calls this
+// once per candidate version per Candidates call, which made that derivation a
+// measurable slice of resolution time. containsBound remains the reference
+// path, and TestContainsAgreesWithContainsBound holds the two together.
 func (s Set) Contains(v version.Version) bool {
-	return s.containsBound(atBound(v))
+	if len(s.spans) == 0 {
+		return false
+	}
+	var p verPos
+	p.init(v)
+	for _, sp := range s.spans {
+		if cmpVerBound(&p, sp.lo) >= 0 && cmpVerBound(&p, sp.hi) < 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Singleton returns the one version in the set, when it holds exactly one.
