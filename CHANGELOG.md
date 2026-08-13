@@ -50,6 +50,31 @@ served it.
   metadata it compares `found`, `best` and `rank` with an exact-count reference that
   calls the *same* usability function, so the two cannot drift.
 
+- ⚠️ An index failure on a **lower-ranked** version is no longer always seen. `usable`
+  returns an error rather than `false` when the index cannot answer, and that error
+  aborts the resolve deliberately — an outage must not be reported as "no such
+  version". That is unchanged for every version the walk reaches, but the walk stops
+  at the first usable version, so a broken *older* release is not examined unless
+  backtracking narrows the range to it.
+
+  So a resolve can now succeed against an index that is broken for one old version
+  where it previously aborted, and whether such a failure surfaces became
+  path-dependent. This is not a weakening of the rule the error path exists for —
+  nothing is reported as unavailable on the strength of an outage; it is simply not
+  looked at — and it is arguably better, since an unreadable release nobody would
+  have chosen is a poor reason to fail. But it is a real change and it is not
+  something the differential can police, because the short-circuit walk examines
+  strictly fewer versions than an exhaustive one; that test compares errors in one
+  direction only, and says so.
+
+- `candidate.Policy.Less` must now be documented-and-actually **transitive**. It was
+  already required to be a "strict weak ordering" but only irreflexivity and
+  asymmetry were spelled out. Transitivity is what makes ranking the in-range
+  versions and stopping at the first usable one pick the same version as ranking the
+  usable ones alone; without it, which version is chosen starts to depend on which
+  others happened to be in range. No existing `Policy` in this module is affected —
+  `Newest` compares versions — but `Policy` is an interface embedders implement.
+
 - `provider.Unusable()` now reports what was **encountered** rather than an audit of
   every published version: a version older than the one chosen is never examined, so
   never recorded. The records that matter survive, because a package with nothing

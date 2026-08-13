@@ -108,9 +108,10 @@ func TestUnknownExtraHasNoCandidates(t *testing.T) {
 // ⚠️ Note what rank does and does not say here. Three versions are in range and
 // only two provide the extra, and rank reports 3 — it counts what is in range
 // before usability is tested, deliberately, because testing usability is the cost
-// this provider exists to avoid. rank is documented as an upper bound on the
-// usable count and this is that gap in action. What must still be exact is
-// best (the newest version actually providing the extra) and found.
+// this provider exists to avoid. Over-counting is what this provider chooses --
+// go-pubgrub requires no bound either way -- and this is that gap in action. What
+// must still be exact is best (the newest version actually providing the extra)
+// and found.
 func TestCandidatesForAnExtraSelectOnlyVersionsThatProvideIt(t *testing.T) {
 	idx := index.NewMockIndex("test").
 		SetMetadata("flask", "2.0", index.PackageMetadata{}).

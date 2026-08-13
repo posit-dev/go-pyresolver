@@ -119,10 +119,17 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 //
 // # rank is the in-range count, taken BEFORE usability is tested
 //
-// rank only orders which package the solver works on next, and go-pubgrub
-// documents it as a hint that may be any upper bound. The count of versions in
-// range before usability filtering is exactly that: it is >= the number of usable
-// ones, and it is free, because that list has to be built anyway to walk it.
+// rank only orders which package the solver works on next. go-pubgrub documents it
+// as a hint it only ever COMPARES, and is explicit that nothing requires it to be a
+// count, an upper bound, or non-negative.
+//
+// ⚠️ Being an upper bound is therefore THIS provider's own choice, not an upstream
+// obligation, and the difference matters when reading the differential: the
+// under-count check there enforces a rule we impose on ourselves. We choose it
+// because under-counting is the one direction with a cost — it would make the
+// solver prefer this package over one that genuinely has fewer candidates, and the
+// heuristic exists to do the opposite. The in-range count before usability
+// filtering satisfies it for free, because that list has to be built anyway.
 //
 // Do not be tempted to make it exact. An exact rank means testing every version
 // in range, which is the entire cost this design exists to avoid, in service of a
@@ -194,6 +201,20 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 		inRange = append(inRange, v)
 	}
 
+	// ⚠️ An index failure on a LOWER-ranked version is no longer always seen.
+	//
+	// usable returns an error rather than false when the index cannot answer, and
+	// that error aborts the resolve on purpose -- an outage must not be reported as
+	// "no such version". That is unchanged for every version this walk reaches. But
+	// the walk stops at the first usable version, so a broken older release is not
+	// examined unless backtracking narrows the range down to it.
+	//
+	// So an index that is broken for one old version now resolves successfully where
+	// it used to abort, and whether the failure surfaces became path-dependent. That
+	// is arguably the better behaviour -- an unreadable release nobody would have
+	// chosen is a poor reason to fail a resolve -- but it IS a change, and it is not
+	// a weakening of the rule the error path exists for: nothing is being reported as
+	// unavailable on the strength of an outage. It is simply not being looked at.
 	for _, v := range candidate.Rank(pkg.Name, inRange, p.opts.Policy) {
 		ok, err := p.usable(pkg, v)
 		if err != nil {

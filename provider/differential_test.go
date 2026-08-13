@@ -104,11 +104,21 @@ func TestCandidatesAgreeWithAnExactCountOnTheRealIndex(t *testing.T) {
 		gotBest, gotFound, gotRank, gotErr := p.Candidates(pkg, pep440set.All())
 		wantBest, wantFound, wantCount, wantErr := ref.ExactCandidates(pkg, pep440set.All())
 
-		if (gotErr == nil) != (wantErr == nil) {
-			t.Errorf("%s: err = %v, exact err = %v", name, gotErr, wantErr)
+		// ⚠️ Errors are compared in ONE direction only, deliberately.
+		//
+		// p.usable returns an error when the index cannot answer, and the short-circuit
+		// walk examines a SUBSET of the versions the exhaustive one does. So the
+		// exhaustive reference can hit an unreadable older version that the real path
+		// never reaches, and reporting that as a disagreement would be asserting the
+		// exact property this design gives up. The other direction still holds and is
+		// worth pinning: anything the short-circuit walk errors on, the exhaustive walk
+		// must also have errored on, because it looked at strictly more.
+		if gotErr != nil && wantErr == nil {
+			t.Errorf("%s: the short-circuit walk errored (%v) where the exhaustive one did "+
+				"not, but it examines strictly fewer versions", name, gotErr)
 			continue
 		}
-		if gotErr != nil {
+		if gotErr != nil || wantErr != nil {
 			continue
 		}
 		compared++

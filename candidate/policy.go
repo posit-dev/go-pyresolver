@@ -21,9 +21,19 @@ type Policy interface {
 	// versions of pkg.
 	//
 	// It must be a strict weak ordering: irreflexive (Less(p, v, v) is
-	// false) and consistent under swapping (Less(p, a, b) and Less(p, b, a)
-	// are never both true). Rank sorts with it, and an inconsistent
-	// ordering yields an arbitrary result rather than an error.
+	// false), consistent under swapping (Less(p, a, b) and Less(p, b, a)
+	// are never both true), and TRANSITIVE — if a sorts before b and b
+	// before c, then a must sort before c. Rank sorts with it, and an
+	// inconsistent ordering yields an arbitrary result rather than an error.
+	//
+	// ⚠️ Transitivity is not decoration, and it is the property a hand-written
+	// Less is most likely to break. Provider.Candidates ranks the in-range
+	// versions and then stops at the first USABLE one, which yields the same
+	// version as ranking the usable ones alone only because a stable sort with a
+	// transitive comparator orders a subset consistently with the superset it
+	// came from. Break transitivity and which version gets chosen starts to
+	// depend on which other versions happened to be in range — still a legal
+	// version, so nothing fails loudly, but no longer reproducible.
 	Less(pkg index.PackageName, a, b version.Version) bool
 }
 
@@ -47,11 +57,13 @@ func (Newest) Less(_ index.PackageName, a, b version.Version) bool {
 // reproducible when the policy expresses no preference.
 //
 // Rank returns exactly as many versions as it is given. It is a reordering and
-// never a filter: Provider.Candidates reports a count the solver reads as
-// whether anything satisfies a requirement at all, so a dropped version would
-// be indistinguishable from a version that does not exist, and the failure
-// report would then describe a conflict that is not the real one. A caller who
-// wants a version gone must keep it out of the index, not out of the ranking.
+// never a filter, and the reason is now stronger than it was: Provider.Candidates
+// walks this ranking and stops at the first usable version, so a version a Policy
+// dropped is not merely uncounted — it is UNREACHABLE. A package whose only usable
+// version the Policy disliked would report found == false, indistinguishable from
+// a package with nothing published, and the failure report would then describe a
+// conflict that is not the real one. A caller who wants a version gone must keep
+// it out of the index, not out of the ranking.
 func Rank(pkg index.PackageName, versions []version.Version, p Policy) []version.Version {
 	if p == nil {
 		p = Newest{}
