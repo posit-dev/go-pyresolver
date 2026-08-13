@@ -66,37 +66,89 @@
 //     life of the resolution; see provider.rankedVersions. The distinct counts
 //     are measured, not estimated: after the memo, versions/op below IS the
 //     number of distinct package names.
+//
+//     ⚠️ Equivalence for this one is not an argument. 4,007 resolutions against
+//     the production snapshot -- the seven corpus entries plus 4,000 sampled
+//     package names -- produce byte-identical transcripts before and after:
+//     identical pins, identical decision ORDER, identical activated extras, and
+//     identical failure report text on the 1,605 that fail. 48 cases where either
+//     side hit an 8-second deadline are excluded, because the deadline is wall
+//     clock and the two builds do not share one.
+//
 //   - index.RSFIndex returns versions ASCENDING and the default Newest policy
 //     wants them descending, so sort.SliceStable was handed its worst case on
 //     essentially every call: about 7 Policy.Less calls per element, 43,709 of
 //     them to order app-set's 6,040 candidate versions. candidate.Rank now
 //     classifies the input in one linear pass and reverses it when it can.
 //
-// Warm, ten iterations, full snapshot, both sides measured in one session:
+// Warm, ten iterations, full snapshot. MEDIAN OF THREE RUNS per side, both sides
+// measured back to back in one session on an otherwise idle machine; the three
+// runs of each agreed within 3% everywhere except small-tree (8%):
 //
 //	entry            warm ms            candvers      Metadata
 //	                 before   after     before after  before after
-//	single-no-deps      1.63    0.33      130    65      3     3    5.0x faster
-//	small-tree          4.28    1.59      984   254     30    30    2.7x
-//	extras              9.76    2.32     1658   321     43    43    4.2x
-//	app-set            68.98    7.22     6040   943    105   105    9.6x
-//	wide-versions      81.17   16.54     7206  4647     24    24    4.9x
-//	backtracking        6.36    1.36      769   264     13    13    4.7x
-//	unsatisfiable       0.70    0.52      124   124      3     3    1.3x
+//	single-no-deps      1.64    0.30      130    65      3     3    5.5x faster
+//	small-tree          4.29    1.42      984   254     30    30    3.0x
+//	extras              9.74    2.31     1658   321     43    43    4.2x
+//	app-set            68.49    7.19     6040   943    105   105    9.5x
+//	wide-versions      82.50   16.38     7206  4647     24    24    5.0x
+//	backtracking        6.67    1.29      769   264     13    13    5.2x
+//	unsatisfiable       0.77    0.51      124   124      3     3    1.5x
 //
 // candvers is the metric the found/rank change did not move AT ALL, and this is
 // what moves it: it sums len(Versions()) over calls, so it falls exactly when a
-// package stops being asked twice. Metadata calls are unchanged, which is the
+// package stops being asked twice. Metadata calls are UNCHANGED, which is the
 // point -- this change reads no less data, it just stops re-sorting it.
 //
-// Warm allocations fell with it: app-set 70.7 MB / 1,496,571 allocs to 12.2 MB /
-// 176,127, wide-versions 85.1 MB / 1,714,389 to 24.1 MB / 414,554.
+// Warm allocations fell with the time, and by more:
+//
+//	entry            warm B/op          warm allocs/op
+//	                 before    after    before      after
+//	single-no-deps     1.6 MB   0.5 MB      41,412      6,879
+//	small-tree         6.0 MB   2.9 MB      94,126     34,323
+//	extras            11.5 MB   4.2 MB     210,647     52,046
+//	app-set           70.7 MB  12.2 MB   1,496,570    176,133
+//	wide-versions     85.0 MB  24.1 MB   1,714,384    414,544
+//	backtracking       6.9 MB   2.6 MB     145,158     32,075
+//	unsatisfiable      1.2 MB   1.1 MB      16,532     11,222
 //
 // ⚠️ The <1 ms warm gate is now met by TWO entries rather than one --
-// single-no-deps at 0.33 ms joins unsatisfiable at 0.52 ms, and small-tree at
-// 1.59 ms is within reach. The other four still miss, by 2.3x (extras), 1.4x
-// (backtracking), 7.2x (app-set) and 16.5x (wide-versions), against 9.8x, 6.4x,
-// 69x and 81x before.
+// single-no-deps at 0.30 ms joins unsatisfiable at 0.51 ms, and small-tree at
+// 1.42 ms is close. The other four still miss, by 2.3x (extras), 1.3x
+// (backtracking), 7.2x (app-set) and 16.4x (wide-versions), against 9.7x, 6.7x,
+// 68x and 83x before. The gate is still not met, and what stands between is no
+// longer this package -- see "Where the cost is now".
+//
+// # The mechanism, isolated
+//
+// From BenchmarkPolicyLessCalls and BenchmarkSelectFirst in candidate/, which
+// count Policy.Less calls rather than timing a whole resolution.
+//
+// On an ASCENDING input -- what index.RSFIndex actually returns -- the detection
+// pass replaces about 9.8 comparisons per element with exactly one:
+//
+//	n        detect   sort     ratio
+//	    64       63      604    9.6x
+//	 4,096    4,095   40,188    9.8x
+//	14,000   13,999  137,387    9.8x
+//
+// ⚠️ And on a SHUFFLED input, where detection fails and the sort has to run
+// anyway, it costs 2 or 3 extra comparisons TOTAL -- 243,629 against 243,626 at
+// n=14,000 -- because the pass breaks at the first pair that rules both shapes
+// out. The regression case is not a tradeoff; it is free.
+//
+// BenchmarkSelectFirst answers the other obvious idea, partial selection, by
+// measuring it: one linear max-scan finds the top-ranked version in n-1
+// comparisons, 9.8x to 10.0x faster than sorting and allocating nothing. Real,
+// and strictly dominated. The memo answers the same question in 2.7 to 3.8 ns
+// with no comparisons at all, because after the first call the list is already
+// ranked -- and the solver asks 2.4 to 4.8 times per package per resolution.
+// A per-call algorithm cannot beat not running.
+//
+// ⚠️ The scan number is a LOWER bound on a real partial-selection implementation,
+// not an estimate of one: it finds only the single best element and cannot
+// produce the second-best, which Candidates needs whenever the best version turns
+// out to be unusable.
 //
 // # Where the cost is now
 //
