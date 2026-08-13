@@ -35,6 +35,23 @@ served it.
   its newest version, the benchmark **fails** rather than reporting a comfortable
   number. Verified by putting the stale bound back and watching it fail.
 
+- `pep440set.Set.Contains` probes a set's spans with a stack-held position
+  instead of materializing a bound. Building the bound cost a public-spelling
+  render, a possible re-parse, and a heap-allocated sort key per membership
+  test, and the resolver tests membership once per candidate version per
+  `Candidates` call. The public spelling is now derived lazily, only when a
+  comparison descends into a release group — cross-group probes, the common
+  case, never pay it.
+
+  Measured on this code (Apple M4 Max, go1.26.4, production snapshot of
+  932,861 packages): `Contains` itself 567 → 287 ns/op, 800 → 232 B/op,
+  16 → 8 allocs/op; warm resolution 2–6% faster by entry (interleaved A/B,
+  medians of 3) with 3–8% fewer allocations per resolve. Answers are
+  unchanged: the fast path is held to the reference path by two agreement
+  tests, a 33.9-million-pair differential against
+  `version.Specifiers.Check` over 20,000 production packages, and 8.6M
+  fuzz executions.
+
 ### Added
 
 - `TestEveryReasonIsRecordedWhenNOTHINGIsUsable`, pinning the claim the whole
