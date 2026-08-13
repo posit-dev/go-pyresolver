@@ -172,12 +172,22 @@
 //
 // # What no amount of caching will fix
 //
-// The COUNT: solver.Provider requires Candidates to return a count that is zero
-// exactly when nothing satisfies, so an exact count means testing every version
-// in the allowed range, and usable tests by computing the version's full
+// The COUNT: this provider returns an EXACT count, so it calls usable on every
+// version in the allowed range, and usable computes the version's full
 // dependencies. That is what makes index calls scale with candidate versions
 // rather than with the closure -- certifi has no dependencies at all and still
-// costs 131 Metadata calls, one per released version.
+// costs 131 Metadata calls, one per released version. Caching cannot remove it,
+// because it is a call count rather than a constant.
+//
+// ⚠️ What forces the exact count is NOT the zero-exactness rule, and an earlier
+// version of this comment said it was ("a count that is zero exactly when
+// nothing satisfies, SO an exact count means testing every version"). That does
+// not follow. Zero-exactness is an EXISTENCE requirement, and existence is
+// settled by finding one usable version and stopping. It is the MAGNITUDE that
+// requires testing everything -- and go-pubgrub consumes the magnitude only in
+// its version-choice heuristic, which its own documentation and the prose sources
+// agree is tunable rather than correctness-bearing. So the expensive half of this
+// contract is the half that is explicitly not correctness-bearing.
 //
 // This is what the warm target turns on. At app-set's 4,837 index calls, a 1 ms
 // warm resolution allows 207 ns per call end to end; the memo brought the cost
