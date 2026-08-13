@@ -134,12 +134,17 @@ func TestDumpResolutions(t *testing.T) {
 		deadline = d
 	}
 
+	// A bufio.Writer defers every error to Flush, so the per-call returns carry
+	// no information worth branching on. Swallowed through one helper rather
+	// than at five call sites, and Flush is what actually reports.
+	pf := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
+
 	for _, reqStrings := range cases {
-		fmt.Fprintf(w, "=== %s\n", strings.Join(reqStrings, " "))
+		pf("=== %s\n", strings.Join(reqStrings, " "))
 
 		reqs, err := requirementsOrNil(reqStrings)
 		if err != nil {
-			fmt.Fprintf(w, "unparseable: %v\n", err)
+			pf("unparseable: %v\n", err)
 			continue
 		}
 
@@ -148,7 +153,7 @@ func TestDumpResolutions(t *testing.T) {
 		timedOut := caseCtx.Err() != nil
 		cancel()
 		if timedOut {
-			fmt.Fprintln(w, "TIMEOUT")
+			pf("TIMEOUT\n")
 			continue
 		}
 
@@ -158,21 +163,29 @@ func TestDumpResolutions(t *testing.T) {
 			// The full report text, which is the user-facing artifact of a
 			// failed resolve and the thing most likely to shift if search order
 			// changed.
-			fmt.Fprintf(w, "FAILED\n%s\n", re.Error())
+			pf("FAILED\n%s\n", re.Error())
 		case err != nil:
-			fmt.Fprintf(w, "ERROR %v\n", err)
+			pf("ERROR %v\n", err)
 		default:
 			// Order is printed as the solver produced it, NOT sorted. Sorting it
 			// would hide exactly the kind of change this is looking for: a
 			// different search order that happens to reach the same pins.
 			for _, name := range res.Order {
-				fmt.Fprintf(w, "  %s %s", name, res.Pinned[name])
+				pf("  %s %s", name, res.Pinned[name])
 				if extras := res.Extras[name]; len(extras) > 0 {
-					fmt.Fprintf(w, " [%s]", strings.Join(extras, ","))
+					pf(" [%s]", strings.Join(extras, ","))
 				}
-				fmt.Fprintln(w)
+				pf("\n")
 			}
 		}
+	}
+
+	// ⚠️ Flush explicitly and FAIL on its error. The deferred Flush above cannot
+	// report one, and a transcript truncated by a write error would diff clean
+	// against nothing or diff dirty for a reason that has nothing to do with the
+	// resolver.
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush %s: %v", out, err)
 	}
 }
 
