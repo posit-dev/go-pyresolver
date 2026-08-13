@@ -36,16 +36,90 @@ const (
 )
 
 // bound is a position in the version order. inf is -1, 0 or +1.
+//
+// key is the part of the position that depends on v alone, derived once when
+// the bound is built. See posKey: deriving it per comparison instead is what
+// made a failing resolution allocate tens of gigabytes
+// (rstudio/package-manager#19713).
 type bound struct {
 	inf  int8
 	v    version.Version
 	edge edge
+	key  *posKey
+}
+
+// posKey is everything cmpBound needs from a bound's version.
+//
+// ⚠️ DERIVE IT AT CONSTRUCTION, NOT PER COMPARISON. Every field here costs at
+// least one string render: version.Version holds its release as big.Ints and
+// its public spelling only as something String() builds, and Public() then
+// needs a re-parse to be comparable. cmpBound runs in the innermost loop of the
+// set algebra, which is itself in the solver's hot loop, so it is called orders
+// of magnitude more often than a bound is built. One resolution against a
+// curated-shaped index -- packages present, transitive dependencies absent --
+// took 17.5 s and allocated 25 GB CUMULATIVELY with this work on the comparison
+// side. Cumulatively, not concurrently: peak heap stayed under 120 MB, so what
+// the churn bought was garbage collection. The cost is latency, not footprint.
+type posKey struct {
+	// epoch and release are the canonical (leading-zero-free, trailing-zero-
+	// stripped) decimal digit runs releaseKey produces.
+	epoch   string
+	release []string
+	// public is v.Public(), and pub is that spelling parsed, which is v with
+	// any local label removed. pubOK is false when the spelling does not parse,
+	// which leaves the public comparison out entirely, exactly as it was when
+	// the parse happened inline.
+	public string
+	pub    version.Version
+	pubOK  bool
+}
+
+// newPosKey derives the key for v.
+func newPosKey(v version.Version) *posKey {
+	epoch, release := releaseKey(v)
+	k := &posKey{epoch: epoch, release: release, public: v.Public()}
+	if k.public == "" {
+		// An uninitialized Version. Parsing its (empty) public spelling failed
+		// when cmpBound did it inline, so it stays out of the comparison.
+		return k
+	}
+	if v.Local() == "" {
+		// Public is v's whole spelling, so v already IS its public version and
+		// re-parsing it would only rebuild the same fields.
+		k.pub, k.pubOK = v, true
+		return k
+	}
+	if pub, err := version.Parse(k.public); err == nil {
+		k.pub, k.pubOK = pub, true
+	}
+	return k
+}
+
+// pos returns b's key, deriving it on demand for a bound built as a literal
+// rather than through newBound. Correct either way; the derived-on-demand path
+// is the slow one, and TestBoundKeyAgreesWithLiteral holds the two together.
+func (b bound) pos() *posKey {
+	if b.key != nil {
+		return b.key
+	}
+	return newPosKey(b.v)
+}
+
+// newBound is the constructor every bound with a version goes through.
+func newBound(v version.Version, e edge) bound {
+	return bound{v: v, edge: e, key: newPosKey(v)}
+}
+
+// withEdge is b's version at a different edge. The key depends on the version
+// alone, so it carries over.
+func (b bound) withEdge(e edge) bound {
+	return bound{inf: b.inf, v: b.v, edge: e, key: b.key}
 }
 
 func negInf() bound { return bound{inf: -1} }
 func posInf() bound { return bound{inf: 1} }
 
-func atBound(v version.Version) bound { return bound{v: v, edge: edgeAt} }
+func atBound(v version.Version) bound { return newBound(v, edgeAt) }
 
 // tier collapses edge into the three-way grouping cmpBound sorts on after the
 // release group: below the group, inside it, above it.
@@ -167,12 +241,11 @@ func cmpBound(a, b bound) int {
 		return 0
 	}
 
-	aEpoch, aRel := releaseKey(a.v)
-	bEpoch, bRel := releaseKey(b.v)
-	if c := cmpDigits(aEpoch, bEpoch); c != 0 {
+	ak, bk := a.pos(), b.pos()
+	if c := cmpDigits(ak.epoch, bk.epoch); c != 0 {
 		return c
 	}
-	if c := cmpSegments(aRel, bRel); c != 0 {
+	if c := cmpSegments(ak.release, bk.release); c != 0 {
 		return c
 	}
 
@@ -188,10 +261,16 @@ func cmpBound(a, b bound) int {
 
 	// Both inside the group. Compare the public version first, so that
 	// aboveLocals(1.0) lands below at(1.0.post0.dev0) ...
-	aPub, aErr := version.Parse(a.v.Public())
-	bPub, bErr := version.Parse(b.v.Public())
-	if aErr == nil && bErr == nil {
-		if c := aPub.Compare(bPub); c != 0 {
+	//
+	// Identical public spellings are identical PUBLIC versions -- both are the
+	// normalized rendering -- so the compare is skipped rather than run to
+	// reach 0. It says nothing about the bounds' own versions, which can still
+	// differ in the local label the public spelling drops; the two blocks below
+	// are what order those. Skipping is the common case here: the edges around
+	// one version all share its public spelling, and Version.Compare's own fast
+	// path renders both sides to a string before it can say so.
+	if ak.public != bk.public && ak.pubOK && bk.pubOK {
+		if c := ak.pub.Compare(bk.pub); c != 0 {
 			return c
 		}
 	}

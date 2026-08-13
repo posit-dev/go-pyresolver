@@ -93,13 +93,20 @@ func (s Set) excluded() (string, bool) {
 	if lo.lo.inf >= 0 || hi.hi.inf <= 0 {
 		return "", false
 	}
+	// ⚠️ THIS CHECK ALSO ESTABLISHES lo.hi.inf == 0, WHICH withEdge BELOW
+	// DEPENDS ON. An infinite bound carries no version and leaves edge at its
+	// zero value, edgeBelowRelease, so it can never be edgeAt; requiring edgeAt
+	// here is what makes lo.hi finite. withEdge carries inf across, so relaxing
+	// this to admit an infinite bound would hand cmpBound a bound that is both
+	// infinite and edged -- a position that does not exist. Keep the edgeAt
+	// requirement, or make the finiteness check explicit before withEdge.
 	if lo.hi.edge != edgeAt {
 		return "", false
 	}
 	if hi.lo.edge != edgeAboveLocals && hi.lo.edge != edgeAboveExact {
 		return "", false
 	}
-	if cmpBound(bound{v: lo.hi.v, edge: hi.lo.edge}, hi.lo) != 0 {
+	if cmpBound(lo.hi.withEdge(hi.lo.edge), hi.lo) != 0 {
 		return "", false
 	}
 	return lo.hi.v.String(), true
@@ -136,7 +143,7 @@ func (sp span) exact() (string, bool) {
 	if sp.hi.edge != edgeAboveLocals && sp.hi.edge != edgeAboveExact {
 		return "", false
 	}
-	if cmpBound(bound{v: sp.lo.v, edge: sp.hi.edge}, sp.hi) != 0 {
+	if cmpBound(sp.lo.withEdge(sp.hi.edge), sp.hi) != 0 {
 		return "", false
 	}
 	return sp.lo.v.String(), true
@@ -156,7 +163,7 @@ func (sp span) releasePrefix() (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if cmpBound(bound{v: next, edge: edgeBelowRelease}, sp.hi) != 0 {
+	if cmpBound(newBound(next, edgeBelowRelease), sp.hi) != 0 {
 		return "", false
 	}
 	return sp.lo.v.BaseVersion(), true

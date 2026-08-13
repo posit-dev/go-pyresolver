@@ -22,10 +22,8 @@ func Exactly(v version.Version) Set {
 	if v.Local() != "" {
 		hi = edgeAboveExact
 	}
-	return newSet(span{
-		lo: bound{v: v, edge: edgeAt},
-		hi: bound{v: v, edge: hi},
-	})
+	lo := newBound(v, edgeAt)
+	return newSet(span{lo: lo, hi: lo.withEdge(hi)})
 }
 
 // Contains reports whether v is in the set.
@@ -51,7 +49,7 @@ func (s Set) Singleton() (version.Version, bool) {
 	if sp.hi.edge != edgeAboveLocals && sp.hi.edge != edgeAboveExact {
 		return version.Version{}, false
 	}
-	if cmpBound(bound{v: sp.lo.v, edge: sp.hi.edge}, sp.hi) != 0 {
+	if cmpBound(sp.lo.withEdge(sp.hi.edge), sp.hi) != 0 {
 		return version.Version{}, false
 	}
 	return sp.lo.v, true
@@ -143,7 +141,7 @@ func fromSpecifier(sp version.Specifier) (Set, error) {
 		// The operand cannot carry a local label here (the grammar rejects it),
 		// and the prospective version's label is ignored, so the lowest
 		// matching position is the operand itself.
-		return newSet(span{bound{v: v, edge: edgeAt}, posInf()}), nil
+		return newSet(span{newBound(v, edgeAt), posInf()}), nil
 	case ">":
 		lo, err := greaterThanBound(v)
 		if err != nil {
@@ -153,7 +151,7 @@ func fromSpecifier(sp version.Specifier) (Set, error) {
 	case "<=":
 		// A local label on the prospective version is ignored, so every local
 		// variant of the operand still matches.
-		return newSet(span{negInf(), bound{v: v, edge: edgeAboveLocals}}), nil
+		return newSet(span{negInf(), newBound(v, edgeAboveLocals)}), nil
 	case "<":
 		hi, err := lessThanBound(v)
 		if err != nil {
@@ -176,7 +174,7 @@ func fromSpecifier(sp version.Specifier) (Set, error) {
 			// empty however permissive the `>=` half is.
 			return Empty(), nil
 		}
-		return newSet(span{bound{v: v, edge: edgeAt}, hi}), nil
+		return newSet(span{newBound(v, edgeAt), hi}), nil
 	default:
 		return Set{}, fmt.Errorf("%w: unknown operator %q", ErrUnrepresentable, op)
 	}
@@ -197,7 +195,7 @@ var preSuffixRegexp = regexp.MustCompile(`^(.*)(a|b|rc)([0-9]+)$`)
 // the bound is the operand's own position.
 func lessThanBound(v version.Version) (bound, error) {
 	if v.IsPreRelease() {
-		return bound{v: v, edge: edgeAt}, nil
+		return newBound(v, edgeAt), nil
 	}
 	// The earliest pre-release of v: the same version with dev set to 0. The
 	// operand cannot carry a local label, so Public is its whole spelling.
@@ -206,7 +204,7 @@ func lessThanBound(v version.Version) (bound, error) {
 		return bound{}, fmt.Errorf(
 			"pep440set: earliest pre-release of %q: %w", v.Public(), err)
 	}
-	return bound{v: earliest, edge: edgeAt}, nil
+	return newBound(earliest, edgeAt), nil
 }
 
 // greaterThanBound is the lower bound of `>v`.
@@ -229,12 +227,12 @@ func lessThanBound(v version.Version) (bound, error) {
 func greaterThanBound(v version.Version) (bound, error) {
 	switch {
 	case v.IsPostRelease():
-		return bound{v: v, edge: edgeAboveLocals}, nil
+		return newBound(v, edgeAboveLocals), nil
 	case v.IsPreRelease():
 		m := preSuffixRegexp.FindStringSubmatch(v.Public())
 		if m == nil {
 			// A dev release: no post-release of it can exist.
-			return bound{v: v, edge: edgeAboveLocals}, nil
+			return newBound(v, edgeAboveLocals), nil
 		}
 		// String arithmetic for the same reason incrementLastSegment uses it: a
 		// pre-release number is `[0-9]*` with no ceiling.
@@ -243,9 +241,9 @@ func greaterThanBound(v version.Version) (bound, error) {
 			return bound{}, fmt.Errorf(
 				"pep440set: next pre-release after %q: %w", v.Public(), err)
 		}
-		return bound{v: next, edge: edgeAt}, nil
+		return newBound(next, edgeAt), nil
 	default:
-		return bound{v: v, edge: edgeAboveRelease}, nil
+		return newBound(v, edgeAboveRelease), nil
 	}
 }
 
@@ -264,8 +262,8 @@ func releasePrefixSpan(prefix string) (lo, hi bound, err error) {
 	if err != nil {
 		return lo, hi, err
 	}
-	return bound{v: loV, edge: edgeBelowRelease},
-		bound{v: nextV, edge: edgeBelowRelease}, nil
+	return newBound(loV, edgeBelowRelease),
+		newBound(nextV, edgeBelowRelease), nil
 }
 
 // compatSplitRegexp mirrors pypa/packaging 26.2's `_prefix_regex`, which
@@ -381,7 +379,7 @@ func compatibleUpperBound(operand string) (hi bound, ok bool, err error) {
 		if err != nil {
 			return hi, false, err
 		}
-		return bound{v: nextV, edge: edgeBelowRelease}, true, nil
+		return newBound(nextV, edgeBelowRelease), true, nil
 
 	case preSuffixRegexp.MatchString(prefixV.Public()) && prefixV.Local() == "":
 		// P is a pre-release, reachable when the operand spells BOTH its pre-
