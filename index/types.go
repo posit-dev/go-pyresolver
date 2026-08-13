@@ -121,6 +121,36 @@ type PackageMetadata struct {
 //
 // So the leniency the parser intends is only actually lenient if callers come
 // through here.
+//
+// # ⚠️ DO NOT SHARE ONE PARSED target BETWEEN GOROUTINES
+//
+// Parse the interpreter version once and fan the work out across goroutines and
+// this is a DATA RACE, in go-version rather than here. version.Version.Compare
+// pads the shorter operand's release segment with append, and cmpkey builds that
+// segment by reslicing trailing zeros away -- so "3.11.0" carries spare capacity
+// that a by-value copy shares, and two goroutines comparing two copies write to
+// the same backing array. Give each goroutine its own version.Parse.
+//
+// It is narrow, which is what makes it dangerous: the target has to carry a
+// trailing zero, and the operator has to be one that compares the prospective
+// version DIRECTLY. Verified with 8 goroutines under -race against
+// go-python-packaging v0.5.0:
+//
+//	target   constraint                                     result
+//	3.11     >=3.8, >=3.8/<4.0, >3.9.1, <3.12.1, !=3.9.1    clean
+//	3.11.0   >=3.9.1, ==3.11.0                              clean
+//	3.11.0   >3.9.1                                         DATA RACE
+//	3.11.0   <3.12.1                                        DATA RACE
+//
+// `>` and `<` use the prospective version directly; `>=`, `<=`, `==` and `!=`
+// re-parse it through Public() first and are immune. So a target of "3.11" or a
+// corpus that happens to use `>=` hides it completely, and it appears the day
+// someone passes "3.11.0" to a package pinned with `<`.
+//
+// A fix is being filed upstream. Until it lands there is nothing this method can
+// do about it -- the padding happens inside a value it does not own -- so the
+// warning is the mitigation. The same reasoning is why RSFIndex memoizes version
+// KEYS rather than parsed values.
 func (m PackageMetadata) SupportsPython(target version.Version) bool {
 	if m.RequiresPython.String() == "" {
 		return true

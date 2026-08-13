@@ -42,7 +42,17 @@ type MockIndex struct {
 type mockPackage struct {
 	// order preserves insertion order so Versions can return a deterministic
 	// but deliberately unsorted result. See MockIndex.Versions.
-	order []version.Version
+	//
+	// ⚠️ NORMALIZED VERSION STRINGS, NOT PARSED VALUES, for the same reason
+	// RSFIndex.Versions memoizes keys: a version.Version MUST NOT BE SHARED
+	// BETWEEN GOROUTINES. Version.Compare pads the shorter operand's release
+	// segment with append, into spare capacity that a by-value copy shares, so
+	// handing every caller a copy of one stored Version means two goroutines
+	// ranking candidates write to the same backing array. Holding these as
+	// parsed values made eight concurrent resolutions against one shared
+	// MockIndex fail `go test -race` inside candidate.Rank -- see
+	// resolver/concurrency_test.go, which is what found it.
+	order []string
 
 	// versions holds per-version state, keyed by normalized version string.
 	versions map[string]*mockVersion
@@ -89,7 +99,7 @@ func (m *MockIndex) versionLocked(pkg PackageName, v version.Version) *mockVersi
 	if !ok {
 		mv = &mockVersion{}
 		p.versions[key] = mv
-		p.order = append(p.order, v)
+		p.order = append(p.order, key)
 	}
 	return mv
 }
@@ -249,6 +259,16 @@ func (m *MockIndex) lookup(pkg PackageName, ver version.Version) (*mockVersion, 
 // returned sorted versions would let an ordering assumption in a consumer pass
 // here and then fail against a real index. Reverse insertion order breaks that
 // assumption without the flakiness a shuffle would introduce.
+//
+// ⚠️ Each version is RE-PARSED per call, so no two callers ever hold copies of
+// one version.Version. See mockPackage.order for the data race that costs, and
+// note that RSFIndex re-parses here for exactly the same reason -- the two
+// implementations agreeing is the point of the mock.
+//
+// A parse failure is impossible: every string in order was produced by
+// Version.String() on a value Parse accepted. Reported rather than swallowed
+// anyway, because dropping a version silently would make the mock disagree with
+// its own setup.
 func (m *MockIndex) Versions(ctx context.Context, pkg PackageName) ([]version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -264,7 +284,12 @@ func (m *MockIndex) Versions(ctx context.Context, pkg PackageName) ([]version.Ve
 
 	out := make([]version.Version, 0, len(p.order))
 	for i := len(p.order) - 1; i >= 0; i-- {
-		out = append(out, p.order[i])
+		v, err := version.Parse(p.order[i])
+		if err != nil {
+			return nil, fmt.Errorf("mock index %q: %q: stored version key %q no longer parses: %w",
+				m.origin, pkg, p.order[i], err)
+		}
+		out = append(out, v)
 	}
 
 	return out, nil
@@ -290,8 +315,25 @@ func (m *MockIndex) Metadata(ctx context.Context, pkg PackageName, ver version.V
 	// Copy the slices so a caller cannot mutate the mock's state through the
 	// value it was handed. A resolver that sorted RequiresDist in place would
 	// otherwise silently change what later assertions see.
+	//
+	// ⚠️ Kept field-for-field in step with RSFIndex's cloneMetadata, which sets
+	// out the copy policy in full. The whole value of copying HERE is that a
+	// test against a mock detects a mutating caller before it reaches a real
+	// index -- and it detects only what it copies. Requirement.Extras was
+	// missing from both for exactly as long as it was missing from either, so a
+	// caller mutating it was invisible to the mock as well.
+	//
+	// ⚠️ Version comes from the CALLER'S OWN value, not from the stored
+	// metadata, and that is the same concurrency requirement RSFIndex's
+	// cloneMetadata documents: a stored version.Version handed to every caller
+	// is one shared between goroutines. Not observable, because lookup matched
+	// on ver.String() and the setup methods force the stored Version to the key.
 	out := *mv.metadata
+	out.Version = ver
 	out.RequiresDist = append([]requirement.Requirement(nil), mv.metadata.RequiresDist...)
+	for i := range out.RequiresDist {
+		out.RequiresDist[i].Extras = append([]string(nil), out.RequiresDist[i].Extras...)
+	}
 	out.ProvidesExtra = append([]string(nil), mv.metadata.ProvidesExtra...)
 
 	return out, nil

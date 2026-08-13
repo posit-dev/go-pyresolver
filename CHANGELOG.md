@@ -139,6 +139,97 @@ served it.
 
 ### Fixed
 
+- `index.RSFIndex` re-parsed everything it had already parsed. Its only cache
+  held the RAW record -- `pypirsf.VersionDeps` is unparsed strings throughout --
+  so a warm index skipped the file seek, the zstd decode and the varint
+  unmarshal, and none of those was where the time went. `Metadata` re-parsed its
+  PEP 508 requirements on every call and `Versions` re-parsed and re-sorted the
+  package's whole version list on every call, which is why a warm resolution
+  measured within 3% of a cold one on all seven corpus entries.
+
+  Two memos now sit above the blob cache: a parsed `PackageMetadata` per
+  (package, **stored version key**), and the sorted, deduped version ORDER per
+  package. Measured on the Phase 3 corpus against a 932,861-package production
+  snapshot, **warm resolution is 2.3x to 4.3x faster, and makes 2.3x to 3.8x
+  fewer allocations** (`app-set` 678 to 261 ms, `wide-versions` 532 to 183 ms,
+  `backtracking` 44.4 to 10.2 ms). Cold improves nearly as much -- 1.1x to
+  2.3x -- because a backtracking resolution asks about the same version many
+  times within one resolve. `index.Metadata` falls from 47.3% of resolution CPU
+  to 4.0%, and `requirement.Parse` leaves the profile entirely. Retained heap
+  attributable to one resolve rises from 0.40 MB to 2.54 MB (`app-set`) against
+  a ~64 MB post-open baseline: allocation churn and retained heap move in
+  opposite directions here, so both are reported.
+
+  Index call counts are unchanged, deliberately: `Provider.Candidates` must
+  return a count that is zero exactly when nothing satisfies, so it establishes
+  usability by doing each version's full dependency work. This makes each call
+  cheaper and removes no call.
+
+  **Both memos are bounded by the corpus, not by what callers ask for.** The
+  metadata memo is keyed by the stored version key the request resolves to, so
+  its key set is a subset of the keys the blob cache already holds. Keying it by
+  the request's own rendering -- which is what "keyed by (package, version)"
+  would naturally mean -- is unbounded: a version can be spelled PEP 440-equal
+  to a stored one in unlimited ways, and a version that does not exist can be
+  requested endlessly, so each distinct spelling would mint a permanent entry.
+  A "not captured" outcome is therefore not memoized at all; `Metadata` resolves
+  it with a binary search over the version order instead, in `O(log n)` parses
+  rather than the `O(n)` scan that made caching it look worthwhile. This is
+  immaterial for a CLI, which builds an index per resolve, and material for a
+  long-lived server accepting arbitrary requests.
+
+  Nothing REQUEST-SCOPED is memoized under that shared key, which the error path
+  has to respect too: `ErrMetadataUnusable` is memoized as the facts (which
+  requirement string, and why it would not parse) and re-rendered per call
+  against the version the caller actually asked for. Memoizing the finished
+  message would tell a caller asking about `1.0` that its request for `1.0.0`
+  had failed, since both spellings share one entry.
+
+  ⚠️ The version memo holds KEYS and re-parses them rather than holding parsed
+  values, because **a `version.Version` cannot be shared between goroutines**.
+  `Version.Compare` pads the shorter operand's release segment with `append`,
+  and `cmpkey` builds that segment by reslicing away trailing zeros, so "3.0.0"
+  carries a `Parts` of len 1 and cap 3 and padding it back writes into spare
+  capacity in a backing array that a by-value copy shares. Eight concurrent
+  `Resolve` calls against one shared index now assert this under `-race`
+  (`resolver/concurrency_test.go`), over fixture versions chosen to end in ".0"
+  because versions without a trailing zero cannot expose it. The defect is
+  upstream, in `rstudio/go-version` v0.0.2 as reached through
+  `go-python-packaging` v0.5.0, and cannot be worked around here because
+  `key.release` is unexported.
+  ([#18651](https://github.com/rstudio/package-manager/issues/18651))
+
+- `index.MockIndex` handed every caller a copy of one stored `version.Version`
+  from `Versions`, and one stored `PackageMetadata.Version` from `Metadata`. It
+  documents itself as safe for concurrent use, and it was not: under the hazard
+  above, eight concurrent resolutions against one shared `MockIndex` fail
+  `go test -race` inside `candidate.Rank`. It now stores normalized version
+  strings and re-parses per call, as `RSFIndex` does, and takes `Metadata`'s
+  `Version` from the caller's own value.
+  ([#18651](https://github.com/rstudio/package-manager/issues/18651))
+
+- `index.Metadata` copied `RequiresDist` and `ProvidesExtra` but not
+  `Requirement.Extras`, which is an exported `[]string` reachable THROUGH the
+  copied `RequiresDist`. A caller assigning to it corrupted the metadata memo
+  permanently, for every later caller: a second lookup of `apache-airflow` 3.3.0
+  came back with `apache-airflow-core[CLOBBERED]` where the record says
+  `[all]`, with nothing at the mutation site to suggest it. `Extras` is the only
+  such slice below the copy -- a requirement's specifiers and marker are
+  unexported all the way down -- so the copy policy is now complete rather than
+  narrower. `index.MockIndex` had the identical gap and has the identical fix;
+  the point of the mock copying at all is that a mock-backed test catches a
+  mutating caller first, and it caught only what it copied.
+  ([#18651](https://github.com/rstudio/package-manager/issues/18651))
+
+- `PackageMetadata.SupportsPython` now documents that a parsed `target` must not
+  be shared between goroutines. Parsing one interpreter version and fanning work
+  out across goroutines is the natural way to use it and is a data race for
+  targets carrying a trailing zero against `<` or `>` constraints ("3.11.0" with
+  `>3.9.1` or `<3.12.1`); `>=`, `<=`, `==` and `!=` re-parse through `Public()`
+  first and are immune, as is a target like "3.11". Same upstream cause, being
+  filed upstream. Documentation only -- no behaviour change.
+  ([#18651](https://github.com/rstudio/package-manager/issues/18651))
+
 - `pep440set` derived a bound's sort key on every comparison rather than once
   per bound. `cmpBound` sits in the innermost loop of the set algebra, which is
   itself in the solver's hot loop, and each call rendered both versions' release
