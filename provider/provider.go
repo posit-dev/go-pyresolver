@@ -90,6 +90,11 @@ type Provider struct {
 	// order, and recorded is the dedupe key set behind it. See Provider.record.
 	unusable []Unusable
 	recorded map[string]bool
+
+	// ranked memoizes candidate.Rank over a package's FULL version list, so the
+	// sort is paid once per package per resolution rather than once per
+	// Candidates call. See rankedVersions.
+	ranked map[index.PackageName][]version.Version
 }
 
 // New returns a Provider for one resolution.
@@ -100,7 +105,13 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 	if opts.RootVersion.String() == "" {
 		opts.RootVersion = version.MustParse("0")
 	}
-	return &Provider{ctx: ctx, index: idx, opts: opts, recorded: make(map[string]bool)}
+	return &Provider{
+		ctx:      ctx,
+		index:    idx,
+		opts:     opts,
+		recorded: make(map[string]bool),
+		ranked:   make(map[index.PackageName][]version.Version),
+	}
 }
 
 // Candidates implements solver.Provider.
@@ -151,24 +162,39 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 // have chosen -- the highest-ranked USABLE version -- and the order of these two
 // steps is what makes that true. candidate.Rank is a stable sort over a pairwise
 // Less, so it orders a subset consistently with the superset it came from;
-// therefore the first usable version in ranked-in-range order is the same version
-// as Rank(usable-only)[0]. Filter first and rank the survivors and you get the
-// same answer at full enumeration cost; rank first and stop early and you get it
+// therefore the first usable version in ranked order is the same version as
+// Rank(usable-only)[0]. Filter first and rank the survivors and you get the same
+// answer at full enumeration cost; rank first and stop early and you get it
 // cheaply. Test usability first and rank after, and there is nothing left to stop
 // early on.
 //
-// Discarding the versions outside allowed BEFORE ranking is separately what
-// guarantees best lies inside allowed, which the solver refuses to trust.
+// ⚠️ The FULL version list is what gets ranked, not the in-range one, which
+// applies that same identity one level up: the in-range members of Rank(all), in
+// that order, are Rank(in-range). Ranking the superset is what makes the order
+// memoizable across calls at all -- the in-range list is a function of the
+// caller's allowed set and would key a memo on caller-supplied input. See
+// rankedVersions.
+//
+// Discarding the versions outside allowed while walking that order is separately
+// what guarantees best lies inside allowed, which the solver refuses to trust.
 //
 // # Cost
 //
-// Deciding usability reads a version's metadata, and the solver asks about the
-// same package repeatedly as it backtracks, so index.RSFIndex memoizes by exactly
-// (package, version). What dominates now is the work projectDependencies does
-// with the parsed requirements -- evaluating markers and converting specifiers to
-// version sets -- which is a pure function of (requirement, environment) and so is
-// the next thing worth memoizing, keyed by (package, version, extra). See
-// resolver/bench_test.go.
+// Ranking, not metadata, is what this call costs. Measured warm against a
+// production snapshot with the found/rank walk in place, candidate.Rank was 83%
+// of Candidates on the benchmark's app-set entry and 85% on wide-versions, while
+// the usability walk the found/rank change had just optimized was 1.7% and 0.6%.
+// The solver re-asks about a package on every round it reconsiders it -- app-set
+// provokes 87 Versions() calls over 27 distinct packages -- and each of those
+// re-sorted from scratch.
+//
+// Two things fixed that, and they compose: the ranked list is memoized per
+// package for the life of this Provider, and candidate.Rank detects an input
+// already in (or exactly counter to) Policy order in one linear pass instead of
+// sorting it. The second matters because index.RSFIndex returns versions
+// ASCENDING and the default Newest policy wants them descending, which is
+// sort.SliceStable's worst case. Together, warm resolution of the benchmark
+// corpus fell 1.3x to 9.6x. See resolver/bench_test.go.
 func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set, bool, int, error) {
 	switch pkg.Kind {
 	case KindRoot:
@@ -177,41 +203,22 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 		return singleVersion(p.opts.PythonVersion, allowed)
 	}
 
-	all, err := p.index.Versions(p.ctx, pkg.Name)
+	ranked, err := p.rankedVersions(pkg)
 	if err != nil {
-		if errors.Is(err, index.ErrPackageNotFound) {
-			// Not an error: an unknown name is something the solver explains
-			// through the derivation graph, and aborting the resolve over it
-			// would replace a good report with a bad one.
-			return pep440set.Empty(), false, 0, nil
-		}
-		// Anything else -- a transport failure, a corrupt snapshot -- is NOT
-		// "no such version". Reporting it as unavailable would let the resolver
-		// quietly settle on an older version, or blame the user's constraints
-		// for an outage.
-		return pep440set.Empty(), false, 0, fmt.Errorf("provider: versions of %s: %w", pkg, err)
+		return pep440set.Empty(), false, 0, err
 	}
 
-	// The cheap half of admission: range and pre-release policy, no metadata and
-	// no I/O. This list is both what gets ranked and what rank counts.
-	inRange := make([]version.Version, 0, len(all))
-	for _, v := range all {
-		if !allowed.Contains(v) {
-			continue
-		}
-		if !p.opts.Prereleases.Admits(pkg.Name, v) {
-			continue
-		}
-		inRange = append(inRange, v)
-	}
-
+	// ONE walk of the pre-ranked list does both jobs: it counts the in-range
+	// versions (rank) and finds the first usable one (best). Nothing is
+	// materialized and nothing is sorted.
+	//
 	// ⚠️ An index failure on a LOWER-ranked version is no longer always seen.
 	//
 	// usable returns an error rather than false when the index cannot answer, and
 	// that error aborts the resolve on purpose -- an outage must not be reported as
 	// "no such version". That is unchanged for every version this walk reaches. But
-	// the walk stops at the first usable version, so a broken older release is not
-	// examined unless backtracking narrows the range down to it.
+	// the walk stops testing at the first usable version, so a broken older release
+	// is not examined unless backtracking narrows the range down to it.
 	//
 	// So an index that is broken for one old version now resolves successfully where
 	// it used to abort, and whether the failure surfaces became path-dependent. That
@@ -219,22 +226,110 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 	// chosen is a poor reason to fail a resolve -- but it IS a change, and it is not
 	// a weakening of the rule the error path exists for: nothing is being reported as
 	// unavailable on the strength of an outage. It is simply not being looked at.
-	for _, v := range candidate.Rank(pkg.Name, inRange, p.opts.Policy) {
+	var (
+		best    version.Version
+		found   bool
+		inRange int
+	)
+	for _, v := range ranked {
+		// The cheap half of admission: range and pre-release policy, no metadata
+		// and no I/O. What passes both is what rank counts.
+		if !allowed.Contains(v) {
+			continue
+		}
+		if !p.opts.Prereleases.Admits(pkg.Name, v) {
+			continue
+		}
+		inRange++
+		if found {
+			// best is settled; the rest of the walk only counts, which costs no
+			// metadata read.
+			continue
+		}
 		ok, err := p.usable(pkg, v)
 		if err != nil {
 			return pep440set.Empty(), false, 0, err
 		}
 		if ok {
-			return pep440set.Exactly(v), true, len(inRange), nil
+			best, found = v, true
 		}
 	}
+	if !found {
+		// Every in-range version was rejected, so nothing is available. This is the
+		// one case that still costs a full usability walk -- and it is unavoidable,
+		// because "nothing here is usable" cannot be established without checking
+		// everything.
+		return pep440set.Empty(), false, 0, nil
+	}
+	return pep440set.Exactly(best), true, inRange, nil
+}
 
-	// Every in-range version was rejected, so nothing is available. This is the
-	// one case that still costs a full walk -- and it is unavoidable, because
-	// "nothing here is usable" cannot be established without checking everything.
-	// The old behaviour paid this on every package; this pays it only when the
-	// answer really is "nothing".
-	return pep440set.Empty(), false, 0, nil
+// rankedVersions returns pkg's full published version list in Policy order,
+// memoized for the life of this Provider.
+//
+// # Why the memo is here rather than in the index
+//
+// The solver asks about the same package on every round it reconsiders it --
+// app-set provokes 87 Versions() calls across 27 distinct packages -- and every
+// one of those calls used to re-sort. Sorting is where the time went: measured
+// warm against a production snapshot, candidate.Rank was 83% of Candidates on
+// app-set and 85% on wide-versions, against 1.7% and 0.6% for the usability walk
+// the found/rank change had just optimized. See resolver/bench_test.go.
+//
+// Ranking the FULL list rather than the in-range one is what makes it memoizable
+// at all: the in-range list is a function of the caller's allowed set, and a memo
+// keyed by that would be keyed on caller-supplied input and grow without bound.
+// This one is keyed by package name and is bounded by the closure of a single
+// resolution.
+//
+// # ⚠️ Two hazards, and why neither bites here
+//
+// A version.Version MUST NOT BE SHARED BETWEEN GOROUTINES even for reads --
+// Version.Compare pads a release segment with append into spare capacity that a
+// by-value copy still shares, an upstream defect in rstudio/go-version that
+// index.RSFIndex documents at length and declines to memoize parsed versions
+// because of. That is why this memo is on the PROVIDER and not on the index: a
+// Provider serves one resolution and is documented as unsafe for concurrent use,
+// so nothing here is read from two goroutines. Concurrent resolutions get one
+// Provider each and therefore one memo each. Moving this onto a shared index
+// would reintroduce the race in full.
+//
+// Second, the map is unbounded in principle. In practice it holds one entry per
+// package the resolution reaches, which is the same bound the unusable record set
+// already lives under, and the Provider is discarded when the resolve ends.
+func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
+	if r, ok := p.ranked[pkg.Name]; ok {
+		return r, nil
+	}
+
+	all, err := p.index.Versions(p.ctx, pkg.Name)
+	if err != nil {
+		if errors.Is(err, index.ErrPackageNotFound) {
+			// Not an error: an unknown name is something the solver explains
+			// through the derivation graph, and aborting the resolve over it
+			// would replace a good report with a bad one. Memoized as empty so a
+			// name the solver asks about repeatedly is looked up once.
+			p.ranked[pkg.Name] = nil
+			return nil, nil
+		}
+		// Anything else -- a transport failure, a corrupt snapshot -- is NOT
+		// "no such version". Reporting it as unavailable would let the resolver
+		// quietly settle on an older version, or blame the user's constraints
+		// for an outage. NOT memoized: a failure is not an answer.
+		return nil, fmt.Errorf("provider: versions of %s: %w", pkg, err)
+	}
+
+	// ⚠️ Ranking the superset and filtering after is the same identity the walk
+	// already rested on, applied one level up. candidate.Rank is a stable sort over
+	// a pairwise Less, so it orders a subset consistently with the superset it came
+	// from; therefore the in-range members of Rank(all), in that order, are exactly
+	// Rank(in-range). Composed with the existing argument -- the first usable
+	// version of a ranked list is the same version as Rank(usable-only)[0] -- best
+	// is unchanged. provider/differential_test.go checks that against the exact
+	// reference rather than leaving it as an argument.
+	r := candidate.Rank(pkg.Name, all, p.opts.Policy)
+	p.ranked[pkg.Name] = r
+	return r, nil
 }
 
 // singleVersion answers for a package with exactly one version and no index
