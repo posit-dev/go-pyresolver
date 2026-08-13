@@ -59,3 +59,26 @@ func (p *Provider) ExactCandidates(pkg Package, allowed pep440set.Set) (pep440se
 	ranked := candidate.Rank(pkg.Name, admissible, p.opts.Policy)
 	return pep440set.Exactly(ranked[0]), true, len(ranked), nil
 }
+
+// InRangeRanked is the ranked in-range version list Candidates walks, before any
+// usability test. Exposed so the differential can tell whether the walk actually
+// had to SKIP anything to reach best — which is the only case where the two
+// implementations could have disagreed.
+func (p *Provider) InRangeRanked(pkg Package, allowed pep440set.Set) ([]version.Version, error) {
+	all, err := p.index.Versions(p.ctx, pkg.Name)
+	if err != nil {
+		if errors.Is(err, index.ErrPackageNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	inRange := make([]version.Version, 0, len(all))
+	for _, v := range all {
+		if !allowed.Contains(v) || !p.opts.Prereleases.Admits(pkg.Name, v) {
+			continue
+		}
+		inRange = append(inRange, v)
+	}
+	return candidate.Rank(pkg.Name, inRange, p.opts.Policy), nil
+}

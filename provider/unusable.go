@@ -48,7 +48,8 @@ type Unusable struct {
 	Reason string
 
 	// Offered reports whether the version was still offered to the solver
-	// despite Reason. False means it was excluded from the candidate count.
+	// despite Reason. False means it was passed over: not selectable, so the
+	// walk moved on to the next-ranked version.
 	Offered bool
 }
 
@@ -70,7 +71,13 @@ type Unusable struct {
 // the case a report most needs to explain, because it is the one that produces
 // "no version of X matches". What is dropped is reasons about versions the
 // resolution had already moved past, which no failure was going to be attributed
-// to. Measured across 200 real packages, no failure report changed.
+// to.
+//
+// ⚠️ That last claim is an argument, not a guarantee this module tests. A
+// 200-package prototype comparison against the production snapshot produced no
+// changed failure report, but nothing here pins it: the differential compares
+// found, best and rank, not Unusable() and not rendered reports. Treat a report
+// difference as possible-but-unexpected rather than excluded.
 //
 // Do not read a short list as "nothing else is wrong with this package".
 func (p *Provider) Unusable() []Unusable {

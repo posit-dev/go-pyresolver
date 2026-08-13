@@ -15,11 +15,13 @@
 //
 // # Ranking must never remove a version
 //
-// Provider.Candidates reports a count the solver reads as "no version
-// satisfies this", so a policy that dropped a version would make it
-// indistinguishable from one that does not exist, and the resulting failure
-// report would describe a conflict that is not the real one. Filtering belongs
-// to the index; admission here is limited to facts about the version itself.
+// Provider.Candidates walks this ranking and stops at the first USABLE version,
+// so a version a policy dropped is not merely deprioritized -- it is
+// unreachable. A package whose only usable version the policy disliked would be
+// reported as having nothing available, indistinguishable from one that does not
+// exist, and the resulting failure report would describe a conflict that is not
+// the real one. Filtering belongs to the index; admission here is limited to
+// facts about the version itself.
 //
 // # Two policies deliberately do NOT live here
 //

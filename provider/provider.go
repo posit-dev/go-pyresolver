@@ -40,9 +40,11 @@ type Options struct {
 	// Policy orders the admissible versions of a package. Nil means
 	// candidate.Newest.
 	//
-	// It ranks and never filters -- see candidate.Rank. A version a Policy
-	// dislikes is still counted, because a count of zero is what the solver
-	// reads as "nothing here at all".
+	// It ranks and never filters -- see candidate.Rank. Candidates walks the
+	// ranking and stops at the first usable version, so a version a Policy
+	// dropped would be UNREACHABLE rather than merely last, and a package whose
+	// only usable version the Policy disliked would be reported as having
+	// nothing available at all.
 	Policy candidate.Policy
 
 	// Prereleases names the packages whose pre-release versions may be
@@ -114,8 +116,10 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 //
 // Because it is existence and not cardinality, this stops at the FIRST usable
 // version. That is what keeps the cost proportional to the packages actually
-// decided rather than to every version ever published: certifi has 130 releases
-// and no dependencies at all, and answering "is one of them usable" reads one.
+// decided rather than to every version in range: certifi has 65 published
+// versions and no dependencies at all, and an exact count read every one of them
+// on each of the two rounds the solver asked about it, 131 metadata reads in all.
+// Answering existence instead takes 3.
 //
 // # rank is the in-range count, taken BEFORE usability is tested
 //

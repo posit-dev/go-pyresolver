@@ -20,6 +20,19 @@ served it.
   implements the new signature, so any caller that invoked `Candidates` directly —
   which is the solver's job, not a caller's — must be updated.
 
+- `provider.Provider.Unusable()` and `resolver.ResolutionError.Unusable` return
+  **fewer entries**, and their documented meaning changed. They now hold the versions
+  the resolution actually examined rather than every published version it could have
+  set aside: candidate selection stops at the first usable version, so a version
+  ranked below the chosen one is never looked at and never recorded.
+
+  Filed as breaking rather than as a change because it alters what an exported method
+  returns for callers who render it, and `ResolutionError` is part of the surface
+  Package Manager consumes. ⚠️ Anything presenting this as "every version we set
+  aside" is now presenting an incomplete list. The entries that explain a *failure*
+  are still all present — a package with nothing usable is examined exhaustively,
+  because that is what establishing "nothing" requires.
+
 ### Changed
 
 - `provider.Candidates` answers **existence** rather than cardinality. It walks the
@@ -27,10 +40,25 @@ served it.
   testing every version in range and reporting an exact count.
 
   Index calls previously scaled with candidate *versions* rather than with the
-  closure: `certifi` has 130 releases and no dependencies at all, and cost 131
-  `Metadata` calls. Against the production snapshot (932,861 packages) the corpus
-  entries now read **7x to 217x fewer** metadata records, and a 200-package sample
-  read 31.6x fewer overall — with identical pins and identical failure text.
+  closure. `certifi` has 65 published versions and no dependencies at all, and an
+  exact count read every one of them on each of the two rounds the solver asked
+  about it — 131 `Metadata` calls. Answering existence takes 3.
+
+  Measured on this code against the production snapshot (932,861 packages), per
+  corpus entry, `Metadata` calls before → after:
+
+  | entry | before | after | |
+  |---|---:|---:|---:|
+  | `single-no-deps` (certifi) | 131 | 3 | 43.7x |
+  | `small-tree` (flask) | 290 | 30 | 9.7x |
+  | `extras` (flask[async]) | 661 | 43 | 15.4x |
+  | `backtracking` (pandas, numpy<2) | 435 | 13 | 33.5x |
+  | `app-set` (5 packages) | 4,750 | 105 | 45.2x |
+  | `wide-versions` (boto3) | 4,549 | 24 | 189.5x |
+  | `unsatisfiable` | 37 | 3 | 12.3x |
+
+  So **9.7x to 189.5x**, and 5.9x to 111x counting all index calls rather than
+  metadata reads alone. Pin *counts* are unchanged on all seven entries.
 
   `rank`, which only orders which package the solver works on next, is the count of
   versions in range taken *before* usability is tested. That is free, since the list
@@ -74,13 +102,6 @@ served it.
   usable ones alone; without it, which version is chosen starts to depend on which
   others happened to be in range. No existing `Policy` in this module is affected —
   `Newest` compares versions — but `Policy` is an interface embedders implement.
-
-- `provider.Unusable()` now reports what was **encountered** rather than an audit of
-  every published version: a version older than the one chosen is never examined, so
-  never recorded. The records that matter survive, because a package with nothing
-  usable is walked exhaustively by necessity and that is the case a failure report
-  most needs to explain. Measured across 200 real packages, no failure report
-  changed. Do not read a short list as "nothing else is wrong with this package".
 
 ### Added
 

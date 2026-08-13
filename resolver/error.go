@@ -28,13 +28,22 @@ type ResolutionError struct {
 	// is the hard part, and is already done.
 	Report *report.Report[provider.Package, pep440set.Set]
 
-	// Unusable holds every version the resolution set aside and why, in the
-	// order first encountered.
+	// Unusable holds the versions the resolution set aside and why, in the order
+	// first encountered.
 	//
-	// It is the COMPLETE record, not the filtered one. Error mentions only the
-	// entries relevant to this failure, because a version excluded from a
-	// package that resolved fine is noise -- but a consumer building its own
-	// presentation should be able to see everything that happened.
+	// It is UNFILTERED but not exhaustive, and the difference matters if you are
+	// rendering it. Error mentions only the entries relevant to this failure,
+	// because a version set aside from a package that resolved fine is noise;
+	// this field holds all of them. But "all of them" means every version the
+	// resolution actually EXAMINED, which is no longer every version published:
+	// candidate selection stops at the first usable version, so a version ranked
+	// below the one chosen is never looked at and never appears here.
+	//
+	// ⚠️ So do not present this as "everything wrong with these packages". It is
+	// what the resolution encountered on its way to this answer. The entries that
+	// explain a failure are still all present -- a package with nothing usable is
+	// examined exhaustively, because that is what establishing "nothing" requires
+	// -- which is the case a report needs. See provider.Provider.Unusable.
 	Unusable []provider.Unusable
 
 	// cause is the solver error this was built from, so errors.As can reach

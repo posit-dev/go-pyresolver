@@ -92,12 +92,21 @@ func TestCandidatesAgreeWithAnExactCountOnTheRealIndex(t *testing.T) {
 		path, len(names), len(sampled), seed)
 
 	// A Provider per side, so neither sees the other's Unusable records. The index
-	// is shared on purpose: its memo is warm for both, which keeps the comparison
-	// about call SHAPE rather than about who ran first.
+	// is shared so both sides see the same data and the same memo; note that the
+	// short-circuit side runs first and touches only the versions it reaches, so the
+	// exhaustive side pays the cold reads. Nothing here is timed, so that is fine.
 	p := provider.New(context.Background(), idx, testOptions(t))
 	ref := provider.New(context.Background(), idx, testOptions(t))
 
-	var compared, available, overCounted int
+	// discriminating counts the packages where the two implementations could
+	// actually have disagreed about best: those with an UNUSABLE version ranked
+	// above the chosen one. Everywhere else the top-ranked in-range version is
+	// usable, both sides trivially return it, and the comparison proves nothing.
+	//
+	// ⚠️ This is the number that has to be non-zero, and `compared` is not a
+	// substitute: it counts packages where neither side errored, including ones both
+	// sides report as unavailable, which compare nothing but false == false.
+	var compared, available, overCounted, discriminating int
 	for _, name := range sampled {
 		pkg := provider.Project(index.PackageName(name))
 
@@ -144,11 +153,51 @@ func TestCandidatesAgreeWithAnExactCountOnTheRealIndex(t *testing.T) {
 		if gotRank > wantCount {
 			overCounted++
 		}
+
+		// The short-circuit walk only differs from the exhaustive one when it has to
+		// SKIP something. rank counts the in-range versions and wantCount the usable
+		// ones, so rank > count means at least one in-range version was unusable; and
+		// best being lower-ranked than the top of the in-range list is what proves one
+		// of those sat above the chosen version. Approximate that here by the cheap
+		// observable: the two differ in count AND the chosen version is not the newest
+		// in range.
+		if gotRank > wantCount && !gotBest.Equal(topOfRange(t, p, pkg)) {
+			discriminating++
+		}
 	}
 
-	t.Logf("compared %d packages, %d with something available, %d where rank over-counted",
-		compared, available, overCounted)
+	t.Logf("compared %d packages, %d with something available, %d where rank over-counted, "+
+		"%d where an unusable version was skipped to reach best",
+		compared, available, overCounted, discriminating)
+
 	if compared == 0 {
 		t.Fatal("compared nothing, so this would have passed vacuously")
 	}
+	// ⚠️ The assertion that keeps this test honest.
+	//
+	// Without it the suite can report a comfortable "compared 139 packages" while
+	// every one of them had a usable top-ranked version, in which case both
+	// implementations trivially agree and the skip this change is ABOUT is never
+	// exercised. On the committed excerpt only a handful of packages discriminate,
+	// the excerpt is machine-regenerable (index/fixture_gen_test.go), and nothing in
+	// the generator selects for this property -- so a regeneration could take the
+	// real coverage to zero silently. This turns that into a failure.
+	if discriminating == 0 {
+		t.Errorf("not one of the %d compared packages had an unusable version ranked above "+
+			"the chosen one, so the short-circuit walk never skipped anything and this "+
+			"differential compared two implementations doing identical work. Point "+
+			"PYPIRSF_TEST_FILE at a fuller snapshot, or regenerate the excerpt to include "+
+			"a package with an unusable release above a usable one", compared)
+	}
+}
+
+// topOfRange is the newest version of pkg the provider would consider, ignoring
+// usability -- the version the walk starts at.
+func topOfRange(t *testing.T, p *provider.Provider, pkg provider.Package) pep440set.Set {
+	t.Helper()
+	vs, err := p.InRangeRanked(pkg, pep440set.All())
+	if err != nil || len(vs) == 0 {
+		return pep440set.Empty()
+	}
+	return pep440set.Exactly(vs[0])
 }
