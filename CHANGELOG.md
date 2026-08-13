@@ -160,10 +160,12 @@ served it.
   a ~64 MB post-open baseline: allocation churn and retained heap move in
   opposite directions here, so both are reported.
 
-  Index call counts are unchanged, deliberately: `Provider.Candidates` must
-  return a count that is zero exactly when nothing satisfies, so it establishes
-  usability by doing each version's full dependency work. This makes each call
-  cheaper and removes no call.
+  Index call counts are unchanged, deliberately: `Provider.Candidates` returns an
+  exact count, so it establishes usability by doing each in-range version's full
+  dependency work. This makes each call cheaper and removes no call. (Zero-exactness
+  is not what forces that walk — only the *zero* answer needs it. It is the exact
+  magnitude, used solely by go-pubgrub's package-choice heuristic, that requires it
+  in the common case.)
 
   **Both memos are bounded by the corpus, not by what callers ask for.** The
   metadata memo is keyed by the stored version key the request resolves to, so
