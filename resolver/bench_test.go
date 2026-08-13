@@ -15,7 +15,7 @@
 //
 // Cold is not "warm plus I/O". The memos pay off WITHIN one resolution too,
 // because a backtracking solver asks about the same version repeatedly, which
-// is why cold improved 1.3x to 2.3x alongside warm's 2.4x to 4.5x.
+// is why cold improved 1.1x to 2.3x alongside warm's 2.4x to 4.4x.
 //
 // Opening the snapshot is measured separately (BenchmarkOpenSnapshot) and is
 // deliberately NOT part of cold. pypirsf.Open scans every record to build the
@@ -58,32 +58,47 @@
 // Both columns of each pair were measured in the same session on the same
 // machine; two repeat runs of each reproduced every figure within 3%.
 //
+// Every figure below is the mean of TWO full runs; the two agreed within 3%
+// except where noted.
+//
 //	entry            cold ms          warm ms         idx    meta    cand   pins
 //	                 before  after    before  after
-//	single-no-deps     4.31   3.05      4.51   1.89    133     131     130      1
-//	small-tree        24.29  12.51     24.04   6.78    313     290     984      7
-//	extras            47.35  20.59     47.31  13.78    695     661    1658      8
-//	app-set          675.98 299.48    681.62 261.58   4837    4750    6040     18
-//	wide-versions    535.00 399.86    536.81 186.70   4566    4549    7206      7
-//	backtracking      44.64  25.23     45.80  10.10    444     435     769      4
-//	unsatisfiable      3.16   3.25      3.28   0.94     39      37     124      0
+//	single-no-deps     4.14   2.81      4.25   1.79    133     131     130      1
+//	small-tree        23.83  11.48     24.24   6.57    313     290     984      7
+//	extras            46.45  19.91     46.74  13.30    695     661    1658      8
+//	app-set          670.77 292.06    677.60 253.37   4837    4750    6040     18
+//	wide-versions    530.27 386.41    531.95 178.63   4566    4549    7206      7
+//	backtracking      44.40  24.85     44.37   9.99    444     435     769      4
+//	unsatisfiable      3.33   3.10      3.18   0.91     39      37     124      0
 //
 //	entry            warm B/op         warm allocs/op
 //	                 before    after   before      after
-//	single-no-deps     3.9 MB   2.1 MB    104,212     46,162
-//	small-tree        27.1 MB  12.7 MB    512,130    144,247
-//	extras            48.2 MB  21.6 MB    968,202    290,761
-//	app-set          754.8 MB 443.8 MB 12,276,480  5,114,188
-//	wide-versions    661.0 MB 357.4 MB 10,647,428  3,958,498
-//	backtracking      44.1 MB  17.3 MB    824,251    213,325
-//	unsatisfiable      3.9 MB   2.1 MB     70,718     21,405
+//	single-no-deps     3.9 MB   2.1 MB    104,384     46,164
+//	small-tree        27.1 MB  12.7 MB    511,426    144,254
+//	extras            48.4 MB  21.6 MB    971,659    290,764
+//	app-set          755.1 MB 443.7 MB 12,291,462  5,114,801
+//	wide-versions    661.1 MB 357.5 MB 10,649,006  3,960,940
+//	backtracking      44.1 MB  17.3 MB    822,959    213,327
+//	unsatisfiable      3.9 MB   2.1 MB     70,828     21,406
 //
 // Index call counts are IDENTICAL before and after, which is the point: the memo
 // makes each call cheaper and removes none. See the COUNT paragraph below.
 //
+// # What the defensive copy costs, measured rather than assumed
+//
+// Metadata copies RequiresDist, ProvidesExtra and each requirement's Extras
+// before handing them back (see index/rsfindex.go's cloneMetadata). The Extras
+// copy is the one with a per-element cost that varies by corpus, so it was
+// counted rather than waved through: one allocation per requirement carrying a
+// bracketed extra, and across the corpus that is 0% of requirements on five
+// entries, 0.95% on app-set (630 per resolution) and 14.4% on wide-versions
+// (2,430 per resolution). Those are 0.01% and 0.06% of each entry's warm
+// allocations, and they account for the whole warm allocs/op delta against a
+// build without the copy, to the allocation.
+//
 // Opening the snapshot: 233 ms, 141 MB, for 932,861 records. Retained heap
-// attributable to one resolve rose from 0.4 MB to 2.5 MB (app-set) and from
-// 1.4 MB to 5.4 MB (wide-versions), against a ~64 MB post-open baseline --
+// attributable to one resolve rose from 0.40 MB to 2.54 MB (app-set) and from
+// 1.36 MB to 5.31 MB (wide-versions), against a ~64 MB post-open baseline --
 // allocation churn and retained heap moved in opposite directions, so both are
 // reported.
 //
@@ -92,46 +107,67 @@
 // The gate in RFD 0001 Section 9 is <100 ms cold and <1 ms warm, and the RFD
 // records both as estimates.
 //
-//   - COLD: met by five of seven entries, missed by two -- app-set at 299 ms
-//     (3.0x, was 6.8x) and wide-versions at 400 ms (4.0x, was 5.4x).
+//   - COLD: met by five of seven entries, missed by two -- app-set at 292 ms
+//     (2.9x, was 6.7x) and wide-versions at 386 ms (3.9x, was 5.3x).
 //   - WARM: met by one of seven, and only just. unsatisfiable STRADDLES the
-//     line: 0.94 ms over ten iterations, and 0.97-1.03 ms across six runs of
-//     500 with a median near 0.98 -- one of those six is over. Call it "at the
-//     line", not "passed". The other six miss by 1.9x (single-no-deps), 6.8x
-//     (small-tree), 10.1x (backtracking), 13.8x (extras), 187x (wide-versions)
-//     and 262x (app-set), against 4x to 208x before.
+//     line: 0.91 ms here, and 0.97-1.03 ms across six runs of 500 in an earlier
+//     session with a median near 0.98 -- one of those six is over. Call it "at
+//     the line", not "passed". The other six miss by 1.8x (single-no-deps), 6.6x
+//     (small-tree), 10.0x (backtracking), 13.3x (extras), 179x (wide-versions)
+//     and 253x (app-set), against 3.2x to 678x before.
 //
-// Warm is now 2.4x to 4.5x faster than cold rather than indistinguishable from
-// it, so the two benchmarks finally measure different things.
+// ⚠️ Warm is 2.4x to 4.4x faster THAN IT WAS, which is not the same claim as
+// warm being that much faster than cold, and an earlier draft of this note
+// conflated the two. Warm against cold, after: 1.15x (app-set) to 3.4x
+// (unsatisfiable). What changed is that the two benchmarks now measure
+// different things at all -- before, warm was within 3% of cold everywhere.
 //
 // # Where the cost went, after the memo
 //
-// From `go tool pprof -top -cum` on BenchmarkResolveWarm/app-set (1.87 s of
-// samples inside Resolve, down from 5.85 s):
+// From `go tool pprof -top -cum` on BenchmarkResolveWarm/app-set, 2.49 s of
+// samples inside Resolve. Percentages are OF RESOLVE, not of total samples:
 //
-//	Candidates                     1.86 s   99.5% of Resolve
-//	  usable                       1.32 s   70.6%
-//	    expandRequirements         0.94 s   50.3%
-//	      marker.Evaluate          0.79 s   42.2%
-//	      pep440set.FromSpecifiers 0.45 s   24.1%
-//	    interpreterDependency      0.31 s   16.6%   (Specifiers.Check)
-//	    Metadata                     --       --    below the 0.03 s cutoff
-//	  candidate.Rank               0.47 s   25.1%   (sort.SliceStable)
+//	Candidates                     2.49 s  100.0% of Resolve
+//	  usable                       1.91 s   76.7%
+//	    expandRequirements         1.32 s   53.0%
+//	      marker.Evaluate          1.07 s   43.0%
+//	      pep440set.FromSpecifiers 0.71 s   28.5%
+//	    interpreterDependency      0.49 s   19.7%   (Specifiers.Check)
+//	    Metadata                   0.10 s    4.0%
+//	  candidate.Rank               0.48 s    19.3%  (sort.SliceStable)
 //
-// Metadata was 47.3% and requirement.Parse alone was 41.0%; neither now clears
-// the profiler's cutoff. What dominates instead is the work expandRequirements
-// does with the parsed requirements: evaluating each one's PEP 508 marker
-// against the target environment, and converting its specifiers into a
-// pep440set. Both re-run per candidate version, and both are pure functions of
-// (memoized requirement, fixed environment) -- so the next constant-factor win
-// is a memo of the PROJECTION, keyed by (package, version, extra), not of the
-// metadata. version.Parse is still 30% of Resolve, but it is now parsing
-// SPECIFIER OPERANDS inside FromSpecifiers rather than version keys.
+// Metadata was 47.3% of Resolve and requirement.Parse alone was 41.0%. Metadata
+// is now 4.0% and requirement.Parse does not appear in the top 250 nodes at all.
+//
+// ⚠️ An earlier draft of this note said Metadata was "below the profiler's
+// cutoff", which was true only of the node count that draft happened to ask for.
+// It is a real 4.0%, and a claim of the form "does not appear" is a claim about
+// the flag, not about the code.
+//
+// What dominates instead is the work expandRequirements does WITH the parsed
+// requirements: evaluating each one's PEP 508 marker against the target
+// environment, and converting its specifiers into a pep440set. Both re-run per
+// candidate version, and both are pure functions of (memoized requirement, fixed
+// environment) -- so the next constant-factor win is a memo of the PROJECTION,
+// keyed by (package, version, extra), not of the metadata. version.Parse is
+// still 34% of Resolve, but it is now parsing SPECIFIER OPERANDS inside
+// FromSpecifiers rather than version keys.
+//
+// ⚠️ THAT NEXT MEMO WOULD RE-OPEN THE HAZARD THIS ONE AVOIDS. A pep440set.Set
+// holds bounds, a bound holds a version.Version and a *posKey whose pub is
+// another, and Set is copied BY VALUE -- so a memoized Set shares parsed
+// versions between every goroutine that reads it, and Set.Singleton() hands
+// sp.lo.v straight out. Stressing it under -race today comes back clean, but
+// only incidentally: after #33 the sole surviving Compare call site is reached
+// only once the release lengths already match, which makes Padding a no-op.
+// Reordering cmpBound's discriminators brings the race back. Whoever builds
+// that memo owns the question, and "it was clean when I tried it" is not the
+// answer.
 //
 // Two upstream costs are now visible that the parse used to hide, and both are
 // in go-python-packaging's dependency rather than in this module:
-// version.Version.Compare is 30% of Resolve, and reflect.DeepEqual -- called as
-// a fast path from go-version's part.Parts.Compare -- is 17% on its own.
+// version.Version.Compare is 26% of Resolve, and reflect.DeepEqual -- called as
+// a fast path from go-version's part.Parts.Compare -- is 15% on its own.
 //
 // # What no amount of caching will fix
 //
@@ -144,7 +180,7 @@
 //
 // This is what the warm target turns on. At app-set's 4,837 index calls, a 1 ms
 // warm resolution allows 207 ns per call end to end; the memo brought the cost
-// per call down by a factor of 2.6 and it needs another factor of 262. Caching
+// per call down by a factor of 2.7 and it needs another factor of 253. Caching
 // cannot get there. The call count has to fall, and that is a go-pubgrub
 // interface conversation rather than a tuning exercise.
 //

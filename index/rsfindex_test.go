@@ -186,13 +186,30 @@ func openFixtureIndex(t *testing.T) *RSFIndex {
 		}),
 	}
 
+	// A requirement carrying BRACKETED EXTRAS, which no other fixture package
+	// has. requirement.Requirement.Extras is an exported []string, so it is a
+	// mutable slice reachable THROUGH a copied RequiresDist -- the one such
+	// slice below the copy, and the one the memo's aliasing tests could not see
+	// until this package existed. The second requirement deliberately carries no
+	// brackets, so the nil-Extras case travels the same path.
+	bracketed := pypirsf.PackageRecord{
+		CanonicalName: "bracketed",
+		ProjectName:   "Bracketed",
+		Snapshots: []pypirsf.SnapshotRecord{
+			{Snapshot: "2026080100", Version: "1.0.0", ReleaseDate: "\x00\x01", Summary: "x"},
+		},
+		Deps: buildStoredDepsField([]fixtureVersion{
+			{version: "1.0.0", requiresDist: []string{"requests[socks,security]>=2.0", "urllib3"}},
+		}),
+	}
+
 	path := filepath.Join(t.TempDir(), "fixture.rsf")
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("creating fixture: %v", err)
 	}
 	w := rsf.NewWriter(f)
-	for _, rec := range []pypirsf.PackageRecord{flask, broken, padded, nodeps, ambiguous, canonpref} {
+	for _, rec := range []pypirsf.PackageRecord{flask, broken, padded, nodeps, ambiguous, canonpref, bracketed} {
 		if _, err := w.WriteObject(rec); err != nil {
 			t.Fatalf("writing %s: %v", rec.CanonicalName, err)
 		}
@@ -521,7 +538,7 @@ func TestRSFIndexExposesCorpusSize(t *testing.T) {
 	idx := openFixtureIndex(t)
 
 	// Must match the record list in openFixtureIndex.
-	const fixturePackages = 6
+	const fixturePackages = 7
 
 	if got := idx.Len(); got != fixturePackages {
 		t.Errorf("Len() = %d, want %d", got, fixturePackages)
