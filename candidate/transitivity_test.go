@@ -90,7 +90,17 @@ func TestNewestIsAStrictWeakOrdering(t *testing.T) {
 		}
 	}
 
-	const triples = 3000000
+	// 300,000 keeps the default run near two seconds while still exercising each
+	// antecedent tens of thousands of times. Raise it with GPR_TRIPLES for a
+	// deeper pass; the published figure was taken at 3,000,000.
+	triples := 300000
+	if s := os.Getenv("GPR_TRIPLES"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			t.Fatalf("GPR_TRIPLES=%q: %v", s, err)
+		}
+		triples = n
+	}
 	var (
 		sawLessLess int
 		sawEquivPar int

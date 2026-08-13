@@ -51,7 +51,83 @@
 //
 // # Measured, 2026-08-13, on the machine above
 //
-// # ⚠️ THE found/rank RESULT, measured 2026-08-13 — READ THIS FIRST
+// # ⚠️ THE RANKING RESULT, measured 2026-08-13 — READ THIS FIRST
+//
+// The section below this one says "whatever is left is not index calls" and asks
+// what it is. It is the SORT, and it was 83-86% of a Candidates call.
+//
+// Two independent causes, and the fix for each is in this repository:
+//
+//   - The solver re-asks about a package on every round it reconsiders it, and
+//     every call re-ranked that package's versions from scratch. app-set's
+//     ranking work spans 87 Versions() calls over 18 distinct packages, and
+//     wide-versions' spans 17 calls over 7 -- reuse factors of 4.8 and 2.4.
+//     Provider now memoizes the ranked FULL version list per package for the
+//     life of the resolution; see provider.rankedVersions. The distinct counts
+//     are measured, not estimated: after the memo, versions/op below IS the
+//     number of distinct package names.
+//   - index.RSFIndex returns versions ASCENDING and the default Newest policy
+//     wants them descending, so sort.SliceStable was handed its worst case on
+//     essentially every call: about 7 Policy.Less calls per element, 43,709 of
+//     them to order app-set's 6,040 candidate versions. candidate.Rank now
+//     classifies the input in one linear pass and reverses it when it can.
+//
+// Warm, ten iterations, full snapshot, both sides measured in one session:
+//
+//	entry            warm ms            candvers      Metadata
+//	                 before   after     before after  before after
+//	single-no-deps      1.63    0.33      130    65      3     3    5.0x faster
+//	small-tree          4.28    1.59      984   254     30    30    2.7x
+//	extras              9.76    2.32     1658   321     43    43    4.2x
+//	app-set            68.98    7.22     6040   943    105   105    9.6x
+//	wide-versions      81.17   16.54     7206  4647     24    24    4.9x
+//	backtracking        6.36    1.36      769   264     13    13    4.7x
+//	unsatisfiable       0.70    0.52      124   124      3     3    1.3x
+//
+// candvers is the metric the found/rank change did not move AT ALL, and this is
+// what moves it: it sums len(Versions()) over calls, so it falls exactly when a
+// package stops being asked twice. Metadata calls are unchanged, which is the
+// point -- this change reads no less data, it just stops re-sorting it.
+//
+// Warm allocations fell with it: app-set 70.7 MB / 1,496,571 allocs to 12.2 MB /
+// 176,127, wide-versions 85.1 MB / 1,714,389 to 24.1 MB / 414,554.
+//
+// ⚠️ The <1 ms warm gate is now met by TWO entries rather than one --
+// single-no-deps at 0.33 ms joins unsatisfiable at 0.52 ms, and small-tree at
+// 1.59 ms is within reach. The other four still miss, by 2.3x (extras), 1.4x
+// (backtracking), 7.2x (app-set) and 16.5x (wide-versions), against 9.8x, 6.4x,
+// 69x and 81x before.
+//
+// # Where the cost is now
+//
+// From `pprof -peek Candidates` on the warm app-set and wide-versions entries
+// after the change. Candidates is 32.7% of samples, down from 45-47%:
+//
+//	Candidates                        100%
+//	  rankedVersions                 64.0%   once per PACKAGE now, not per call
+//	    candidate.Rank               31.3%     the linear detection pass
+//	    index.Versions               32.7%     version.Parse of the memoized keys
+//	  pep440set.Set.Contains         28.6%   per version per call
+//	    pep440set.atBound            23.8%     BUILDING the probe bound
+//	    containsBound                 4.1%     comparing it to the spans
+//	  usable                          6.8%
+//
+// Two things to read off that. First, the detection pass and the key parse are
+// both once-per-package costs now, so they scale with the closure rather than
+// with the search. Second, the remaining per-call cost is not the span walk that
+// an "intersect by binary search" idea would remove -- it is CONSTRUCTING the
+// bound for each version, 83% of Contains and 37.8% of the resolution's
+// allocations. A probe memoized alongside the ranked list would remove it
+// without needing versions to be contiguous, which
+// provider.TestInRangeIsNotContiguous measures they are not: 4.18% of production
+// packages have their admitted set split by a pre-release.
+//
+// ⚠️ What dominates the resolution as a whole is now garbage collection --
+// gcDrain is 30.6% of samples -- and the solver's own set algebra, not this
+// module's provider. The next honest measurement is of go-pubgrub's conflict
+// resolution, not of Candidates.
+//
+// # ⚠️ THE found/rank RESULT, measured 2026-08-13
 //
 // Both sides below were measured in ONE session on this machine, warm, ten
 // iterations, against the full snapshot: origin/main immediately before the
@@ -78,6 +154,12 @@
 // lists. The remaining cost is in walking and intersecting those lists — set algebra
 // and version comparison — not in reading metadata. That is the next thing to
 // measure, and rstudio/package-manager#19713 is about exactly that path.
+//
+// ⚠️ ANSWERED, and half wrong. It was version COMPARISON, in candidate.Rank's sort,
+// at 83-86% of a Candidates call — see the ranking section at the top. It was NOT
+// the set algebra: pep440set.Set.Contains, the whole intersection step, was 4.4% on
+// app-set and 5.2% on wide-versions. This paragraph named two suspects and the
+// profile convicted one of them.
 //
 // ⚠️ The `backtracking` row above measured NO BACKTRACKING. The entry was
 // `pandas, numpy<2`, which pinned pandas 3.0.5 — the newest published pandas — so

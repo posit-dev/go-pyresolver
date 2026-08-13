@@ -185,7 +185,7 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 // of Candidates on the benchmark's app-set entry and 85% on wide-versions, while
 // the usability walk the found/rank change had just optimized was 1.7% and 0.6%.
 // The solver re-asks about a package on every round it reconsiders it -- app-set
-// provokes 87 Versions() calls over 27 distinct packages -- and each of those
+// provokes 87 Versions() calls over 18 distinct packages -- and each of those
 // re-sorted from scratch.
 //
 // Two things fixed that, and they compose: the ranked list is memoized per
@@ -209,8 +209,9 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 	}
 
 	// ONE walk of the pre-ranked list does both jobs: it counts the in-range
-	// versions (rank) and finds the first usable one (best). Nothing is
-	// materialized and nothing is sorted.
+	// versions (rank) and finds the first usable one (best). No in-range slice is
+	// materialized, and nothing is ordered HERE -- rankedVersions did that once
+	// for this package, on whichever call reached it first.
 	//
 	// ⚠️ An index failure on a LOWER-ranked version is no longer always seen.
 	//
@@ -270,8 +271,10 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 // # Why the memo is here rather than in the index
 //
 // The solver asks about the same package on every round it reconsiders it --
-// app-set provokes 87 Versions() calls across 27 distinct packages -- and every
-// one of those calls used to re-sort. Sorting is where the time went: measured
+// app-set provokes 87 Versions() calls across 18 distinct packages, a reuse
+// factor of 4.8 -- and every one of those calls used to re-sort. The distinct
+// count is not an estimate: after this memo, `versions/op` on the benchmark IS
+// the number of distinct names, because each one triggers exactly one call. Sorting is where the time went: measured
 // warm against a production snapshot, candidate.Rank was 83% of Candidates on
 // app-set and 85% on wide-versions, against 1.7% and 0.6% for the usability walk
 // the found/rank change had just optimized. See resolver/bench_test.go.
