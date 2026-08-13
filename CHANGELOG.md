@@ -139,6 +139,44 @@ served it.
 
 ### Fixed
 
+- `index.RSFIndex` re-parsed everything it had already parsed. Its only cache
+  held the RAW record -- `pypirsf.VersionDeps` is unparsed strings throughout --
+  so a warm index skipped the file seek, the zstd decode and the varint
+  unmarshal, and none of those was where the time went. `Metadata` re-parsed its
+  PEP 508 requirements on every call and `Versions` re-parsed and re-sorted the
+  package's whole version list on every call, which is why a warm resolution
+  measured within 3% of a cold one on all seven corpus entries.
+
+  Two memos now sit above the blob cache: a parsed `PackageMetadata` per
+  (package, version), and the sorted, deduped version ORDER per package.
+  Measured on the Phase 3 corpus against a 932,861-package production snapshot,
+  **warm resolution is 2.4x to 4.5x faster, and makes 2.3x to 3.9x fewer
+  allocations** (`app-set` 682 to 262 ms, `wide-versions` 537 to 187 ms,
+  `backtracking` 45.8 to 10.1 ms). Cold improves nearly as much -- 1.3x to
+  2.3x -- because a backtracking resolution asks about the same version many
+  times within one resolve. `index.Metadata` no longer appears in a warm profile
+  at all, down from 47.3% of resolution CPU. Retained heap attributable to one
+  resolve rises from 0.4 MB to 2.5 MB (`app-set`) against a ~64 MB post-open
+  baseline: allocation churn and retained heap move in opposite directions here,
+  so both are reported.
+
+  Index call counts are unchanged, deliberately: `Provider.Candidates` must
+  return a count that is zero exactly when nothing satisfies, so it establishes
+  usability by doing each version's full dependency work. This makes each call
+  cheaper and removes no call.
+
+  ⚠️ The version memo holds KEYS and re-parses them rather than holding parsed
+  values, because **a `version.Version` cannot be shared between goroutines**.
+  `Version.Compare` pads the shorter operand's release segment with `append`,
+  and `cmpkey` builds that segment by reslicing away trailing zeros, so "3.0.0"
+  carries a `Parts` of len 1 and cap 3 and padding it back writes into spare
+  capacity in a backing array that a by-value copy shares. A memo holding parsed
+  versions makes eight concurrent resolutions against one shared index fail
+  `go test -race`; holding keys does not. The defect is upstream, in
+  `rstudio/go-version` v0.0.2 as reached through `go-python-packaging` v0.5.0,
+  and cannot be worked around here because `key.release` is unexported.
+  ([#18651](https://github.com/rstudio/package-manager/issues/18651))
+
 - `pep440set` derived a bound's sort key on every comparison rather than once
   per bound. `cmpBound` sits in the innermost loop of the set algebra, which is
   itself in the solver's hot loop, and each call rendered both versions' release
