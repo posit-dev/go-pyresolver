@@ -150,9 +150,9 @@ served it.
   Two memos now sit above the blob cache: a parsed `PackageMetadata` per
   (package, **stored version key**), and the sorted, deduped version ORDER per
   package. Measured on the Phase 3 corpus against a 932,861-package production
-  snapshot, **warm resolution is 2.4x to 4.4x faster, and makes 2.3x to 3.9x
-  fewer allocations** (`app-set` 678 to 253 ms, `wide-versions` 532 to 179 ms,
-  `backtracking` 44.4 to 10.0 ms). Cold improves nearly as much -- 1.1x to
+  snapshot, **warm resolution is 2.3x to 4.3x faster, and makes 2.3x to 3.8x
+  fewer allocations** (`app-set` 678 to 261 ms, `wide-versions` 532 to 183 ms,
+  `backtracking` 44.4 to 10.2 ms). Cold improves nearly as much -- 1.1x to
   2.3x -- because a backtracking resolution asks about the same version many
   times within one resolve. `index.Metadata` falls from 47.3% of resolution CPU
   to 4.0%, and `requirement.Parse` leaves the profile entirely. Retained heap
@@ -177,6 +177,13 @@ served it.
   rather than the `O(n)` scan that made caching it look worthwhile. This is
   immaterial for a CLI, which builds an index per resolve, and material for a
   long-lived server accepting arbitrary requests.
+
+  Nothing REQUEST-SCOPED is memoized under that shared key, which the error path
+  has to respect too: `ErrMetadataUnusable` is memoized as the facts (which
+  requirement string, and why it would not parse) and re-rendered per call
+  against the version the caller actually asked for. Memoizing the finished
+  message would tell a caller asking about `1.0` that its request for `1.0.0`
+  had failed, since both spellings share one entry.
 
   ⚠️ The version memo holds KEYS and re-parses them rather than holding parsed
   values, because **a `version.Version` cannot be shared between goroutines**.

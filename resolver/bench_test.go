@@ -15,7 +15,7 @@
 //
 // Cold is not "warm plus I/O". The memos pay off WITHIN one resolution too,
 // because a backtracking solver asks about the same version repeatedly, which
-// is why cold improved 1.1x to 2.3x alongside warm's 2.4x to 4.4x.
+// is why cold improved 1.1x to 2.3x alongside warm's 2.3x to 4.3x.
 //
 // Opening the snapshot is measured separately (BenchmarkOpenSnapshot) and is
 // deliberately NOT part of cold. pypirsf.Open scans every record to build the
@@ -63,23 +63,23 @@
 //
 //	entry            cold ms          warm ms         idx    meta    cand   pins
 //	                 before  after    before  after
-//	single-no-deps     4.14   2.81      4.25   1.79    133     131     130      1
-//	small-tree        23.83  11.48     24.24   6.57    313     290     984      7
-//	extras            46.45  19.91     46.74  13.30    695     661    1658      8
-//	app-set          670.77 292.06    677.60 253.37   4837    4750    6040     18
-//	wide-versions    530.27 386.41    531.95 178.63   4566    4549    7206      7
-//	backtracking      44.40  24.85     44.37   9.99    444     435     769      4
-//	unsatisfiable      3.33   3.10      3.18   0.91     39      37     124      0
+//	single-no-deps     4.14   3.00      4.25   1.89    133     131     130      1
+//	small-tree        23.83  12.07     24.24   6.86    313     290     984      7
+//	extras            46.45  20.33     46.74  13.60    695     661    1658      8
+//	app-set          670.77 302.48    677.60 261.14   4837    4750    6040     18
+//	wide-versions    530.27 396.00    531.95 182.90   4566    4549    7206      7
+//	backtracking      44.40  25.03     44.37  10.22    444     435     769      4
+//	unsatisfiable      3.33   3.15      3.18   0.90     39      37     124      0
 //
 //	entry            warm B/op         warm allocs/op
 //	                 before    after   before      after
-//	single-no-deps     3.9 MB   2.1 MB    104,384     46,164
-//	small-tree        27.1 MB  12.7 MB    511,426    144,254
-//	extras            48.4 MB  21.6 MB    971,659    290,764
-//	app-set          755.1 MB 443.7 MB 12,291,462  5,114,801
-//	wide-versions    661.1 MB 357.5 MB 10,649,006  3,960,940
-//	backtracking      44.1 MB  17.3 MB    822,959    213,327
-//	unsatisfiable      3.9 MB   2.1 MB     70,828     21,406
+//	single-no-deps     3.9 MB   2.1 MB    104,384     46,165
+//	small-tree        27.1 MB  12.7 MB    511,426    144,260
+//	extras            48.4 MB  21.5 MB    971,659    290,753
+//	app-set          755.1 MB 443.8 MB 12,291,462  5,114,833
+//	wide-versions    661.1 MB 357.5 MB 10,649,006  3,960,988
+//	backtracking      44.1 MB  17.3 MB    822,959    214,226
+//	unsatisfiable      3.9 MB   2.1 MB     70,828     21,405
 //
 // Index call counts are IDENTICAL before and after, which is the point: the memo
 // makes each call cheaper and removes none. See the COUNT paragraph below.
@@ -92,9 +92,10 @@
 // counted rather than waved through: one allocation per requirement carrying a
 // bracketed extra, and across the corpus that is 0% of requirements on five
 // entries, 0.95% on app-set (630 per resolution) and 14.4% on wide-versions
-// (2,430 per resolution). Those are 0.01% and 0.06% of each entry's warm
+// (2,430 per resolution). Those are 0.012% and 0.061% of each entry's warm
 // allocations, and they account for the whole warm allocs/op delta against a
-// build without the copy, to the allocation.
+// build without the copy, to the allocation: app-set +628 observed against +630
+// predicted, wide-versions +2,430 against +2,430.
 //
 // Opening the snapshot: 233 ms, 141 MB, for 932,861 records. Retained heap
 // attributable to one resolve rose from 0.40 MB to 2.54 MB (app-set) and from
@@ -107,18 +108,18 @@
 // The gate in RFD 0001 Section 9 is <100 ms cold and <1 ms warm, and the RFD
 // records both as estimates.
 //
-//   - COLD: met by five of seven entries, missed by two -- app-set at 292 ms
-//     (2.9x, was 6.7x) and wide-versions at 386 ms (3.9x, was 5.3x).
+//   - COLD: met by five of seven entries, missed by two -- app-set at 302 ms
+//     (3.0x, was 6.7x) and wide-versions at 396 ms (4.0x, was 5.3x).
 //   - WARM: met by one of seven, and only just. unsatisfiable STRADDLES the
-//     line: 0.91 ms here, and 0.97-1.03 ms across six runs of 500 in an earlier
+//     line: 0.90 ms here, and 0.97-1.03 ms across six runs of 500 in an earlier
 //     session with a median near 0.98 -- one of those six is over. Call it "at
-//     the line", not "passed". The other six miss by 1.8x (single-no-deps), 6.6x
-//     (small-tree), 10.0x (backtracking), 13.3x (extras), 179x (wide-versions)
-//     and 253x (app-set), against 3.2x to 678x before.
+//     the line", not "passed". The other six miss by 1.9x (single-no-deps), 6.9x
+//     (small-tree), 10.2x (backtracking), 13.6x (extras), 183x (wide-versions)
+//     and 261x (app-set), against 3.2x to 678x before.
 //
-// ⚠️ Warm is 2.4x to 4.4x faster THAN IT WAS, which is not the same claim as
+// ⚠️ Warm is 2.3x to 4.3x faster THAN IT WAS, which is not the same claim as
 // warm being that much faster than cold, and an earlier draft of this note
-// conflated the two. Warm against cold, after: 1.15x (app-set) to 3.4x
+// conflated the two. Warm against cold, after: 1.16x (app-set) to 3.5x
 // (unsatisfiable). What changed is that the two benchmarks now measure
 // different things at all -- before, warm was within 3% of cold everywhere.
 //
@@ -180,7 +181,7 @@
 //
 // This is what the warm target turns on. At app-set's 4,837 index calls, a 1 ms
 // warm resolution allows 207 ns per call end to end; the memo brought the cost
-// per call down by a factor of 2.7 and it needs another factor of 253. Caching
+// per call down by a factor of 2.6 and it needs another factor of 261. Caching
 // cannot get there. The call count has to fall, and that is a go-pubgrub
 // interface conversation rather than a tuning exercise.
 //

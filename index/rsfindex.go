@@ -97,7 +97,28 @@ type RSFIndex struct {
 // outlive the condition that caused it.
 type memoEntry struct {
 	meta PackageMetadata
-	err  error
+
+	// unusable is non-nil when this record's Requires-Dist does not parse. The
+	// success and the failure are mutually exclusive, and meta is the zero value
+	// whenever this is set.
+	unusable *unusableRecord
+}
+
+// unusableRecord is the FACTS behind an ErrMetadataUnusable, memoized in place
+// of the finished error message.
+//
+// ⚠️ Storing the message instead would put the FIRST caller's requested version
+// into every later caller's error, because the memo is keyed by the stored key
+// and several requested spellings share one entry. A caller asking about "1.0"
+// would be told its request for "1.0.0" failed. Nothing request-scoped is
+// memoized here for the same reason PackageMetadata.Version is stored zeroed;
+// unusableErr re-renders against the version actually asked for.
+type unusableRecord struct {
+	// requirement is the stored Requires-Dist string that would not parse.
+	requirement string
+	// cause is the parse error, kept in the chain so the malformed string stays
+	// recoverable for diagnostics.
+	cause error
 }
 
 // NewRSFIndex wraps an open pypirsf.File.
@@ -823,50 +844,61 @@ func (idx *RSFIndex) Metadata(ctx context.Context, pkg PackageName, ver version.
 	}
 
 	if entry, ok := idx.lookupMetadata(pkg, key); ok {
-		if entry.err != nil {
-			return PackageMetadata{}, entry.err
+		if entry.unusable != nil {
+			return PackageMetadata{}, idx.unusableErr(pkg, ver, entry.unusable)
 		}
 		return cloneMetadata(entry.meta, ver), nil
 	}
 
-	meta, err := idx.buildMetadata(pkg, ver, decoded[key])
+	meta, unusable := idx.buildMetadata(decoded[key])
+	meta.Name = pkg
 
-	// Stored with Version ZEROED. cloneMetadata always fills it from the
-	// caller's own ver, so a memoized Version could only ever be a version.Version
-	// shared between goroutines -- which is exactly what must not happen. Zeroing
-	// makes that structural rather than a rule to remember, and it stops the memo
-	// retaining the first caller's value for the life of the index.
-	stored := meta
-	stored.Version = version.Version{}
-	idx.storeMetadata(pkg, key, memoEntry{meta: stored, err: err})
+	// Version is never set on the stored value. cloneMetadata always fills it
+	// from the caller's own ver, so a memoized Version could only ever be a
+	// version.Version shared between goroutines -- which is exactly what must not
+	// happen. Leaving it zero makes that structural rather than a rule to
+	// remember. Name is a string, carries no such hazard, and is a fact about
+	// where the record lives, so it is memoized like any other field.
+	idx.storeMetadata(pkg, key, memoEntry{meta: meta, unusable: unusable})
 
-	if err != nil {
-		return PackageMetadata{}, err
+	if unusable != nil {
+		return PackageMetadata{}, idx.unusableErr(pkg, ver, unusable)
 	}
 	// Cloned on the miss path too, so the value a caller gets never aliases the
 	// memo -- cold and warm hand back the same kind of thing.
 	return cloneMetadata(meta, ver), nil
 }
 
+// unusableErr renders a memoized unusable record against the version the CALLER
+// asked for.
+//
+// ⚠️ Formatted per call rather than memoized as a finished message, for the same
+// reason cloneMetadata takes Version from the caller: the memo is keyed by the
+// STORED key, so several requested spellings share one entry, and a stored
+// message would name whichever spelling happened to arrive first. A caller
+// asking for "1.0" would be told its request for "1.0.0" failed, which is a
+// falsehood aimed squarely at whoever is reading the log to work out what they
+// asked for. The unusable record holds the FACTS -- which requirement string,
+// and why it would not parse -- and only those are memoized.
+func (idx *RSFIndex) unusableErr(pkg PackageName, ver version.Version, u *unusableRecord) error {
+	return fmt.Errorf("index %q: %q %s: parsing requirement %q: %w: %w",
+		idx.origin, pkg, ver, u.requirement, ErrMetadataUnusable, u.cause)
+}
+
 // buildMetadata parses one stored record into PackageMetadata.
 //
-// Split out of Metadata so the memo wraps exactly the work worth memoizing:
-// everything here is a pure function of raw, pkg and ver. Which record raw is
-// was decided by resolveStoredKey; ver is carried only to name the version in
-// error messages and to fill PackageMetadata.Version, which Metadata then zeroes
-// before storing.
+// Split out of Metadata so the memo wraps exactly the work worth memoizing.
+// Everything here is a pure function of raw ALONE -- which is why it takes
+// neither the package nor the version, though it once did: anything derived from
+// the request has no business in a value filed under a stored key. Metadata
+// fills Name, Version and Origin, and unusableErr names the version.
 //
-// ⚠️ The memoized error case is here and not in Metadata: a record whose
+// ⚠️ The memoized failure case is here and not in Metadata: a record whose
 // Requires-Dist does not parse is a fact about that stored record, so it belongs
-// under that record's key.
-func (idx *RSFIndex) buildMetadata(
-	pkg PackageName, ver version.Version, raw pypirsf.VersionDeps,
-) (PackageMetadata, error) {
-	meta := PackageMetadata{
-		Name:    pkg,
-		Version: ver,
-		Origin:  idx.origin,
-	}
+// under that record's key. It comes back as facts rather than as a message; see
+// unusableRecord.
+func (idx *RSFIndex) buildMetadata(raw pypirsf.VersionDeps) (PackageMetadata, *unusableRecord) {
+	meta := PackageMetadata{Origin: idx.origin}
 
 	if len(raw.RequiresDist) > 0 {
 		meta.RequiresDist = make([]requirement.Requirement, 0, len(raw.RequiresDist))
@@ -891,9 +923,7 @@ func (idx *RSFIndex) buildMetadata(
 				//
 				// The original parse error stays in the chain, so the specific
 				// malformed string is still recoverable for diagnostics.
-				return PackageMetadata{}, fmt.Errorf(
-					"index %q: %q %s: parsing requirement %q: %w: %w",
-					idx.origin, pkg, ver, rawReq, ErrMetadataUnusable, reqErr)
+				return PackageMetadata{}, &unusableRecord{requirement: rawReq, cause: reqErr}
 			}
 			meta.RequiresDist = append(meta.RequiresDist, req)
 		}

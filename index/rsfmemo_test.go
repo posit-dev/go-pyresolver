@@ -318,6 +318,38 @@ func TestMemoDoesNotSwallowPackageNotFound(t *testing.T) {
 	}
 }
 
+// Keying the memo by the STORED key means several requested spellings share one
+// entry, so nothing REQUEST-SCOPED may be memoized -- and an error message names
+// the request. Memoizing the finished ErrMetadataUnusable message told the
+// second caller that its request for the FIRST caller's spelling had failed,
+// which is a falsehood aimed at exactly the person reading the log to find out
+// what they asked for.
+//
+// The fixture's `broken` package stores "1.0" with an unparseable requirement,
+// so "1.0" hits it directly and "1.0.0" reaches the same record through PEP 440
+// equality. Both must be told about themselves.
+func TestUnusableErrorNamesTheVersionTHISCallerAsked(t *testing.T) {
+	idx := openFixtureIndex(t)
+	ctx := context.Background()
+	pkg := NewPackageName("broken")
+
+	for _, spelling := range []string{"1.0", "1.0.0", "1.0.0.0"} {
+		_, err := idx.Metadata(ctx, pkg, mustVersion(t, spelling))
+		if !errors.Is(err, ErrMetadataUnusable) {
+			t.Fatalf("%s: err = %v, want ErrMetadataUnusable", spelling, err)
+		}
+		if want := "\"broken\" " + spelling + ":"; !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: message does not name the version THIS caller asked for.\n"+
+				" got %v\nwant a message containing %q", spelling, err, want)
+		}
+		// The fact about the record must still be there -- this is not a
+		// trade of accuracy for genericity.
+		if !strings.Contains(err.Error(), "!!! not a requirement") {
+			t.Errorf("%s: message lost the offending requirement string: %v", spelling, err)
+		}
+	}
+}
+
 // ⚠️ The memo must not grow with what a caller ASKS FOR, only with what the file
 // HOLDS. This is the property that decides whether an RSFIndex can sit in a
 // long-lived server, and it is not a property of well-behaved callers -- it has
