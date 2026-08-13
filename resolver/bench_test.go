@@ -51,7 +51,43 @@
 //
 // # Measured, 2026-08-13, on the machine above
 //
-// ⚠️ EVERY FIGURE BELOW PREDATES THE found/rank CHANGE and none of them describe
+// # ⚠️ THE found/rank RESULT, measured 2026-08-13 — READ THIS FIRST
+//
+// Both sides below were measured in ONE session on this machine, warm, ten
+// iterations, against the full snapshot: origin/main immediately before the
+// found/rank provider, and the provider itself.
+//
+//	entry            warm ms            Metadata calls
+//	                 before   after     before  after
+//	single-no-deps      1.79    1.74       131      3     43.7x fewer calls
+//	small-tree          6.47    4.54       290     30      9.7x
+//	extras             13.39   10.03       661     43     15.4x
+//	app-set           257.52   70.76      4750    105     45.2x
+//	wide-versions     181.02   82.18      4549     24    189.5x
+//	backtracking        9.85    7.00       435     13     33.5x
+//	unsatisfiable       0.88    0.80        37      3     12.3x
+//
+// ⚠️ THE CALL COUNT WAS NOT THE BINDING CONSTRAINT ON THE WARM TARGET. Cutting
+// Metadata reads by up to 190x moved wall time by 1.03x to 3.64x, and the <1 ms warm
+// gate is still met by exactly ONE entry (unsatisfiable) — the same one that met it
+// before. This section used to argue "the call count has to fall"; it fell, hard, and
+// the gate did not move. Whatever is left is not index calls.
+//
+// Where it went is visible in the table: candvers is UNCHANGED (app-set still 6040)
+// because it sums len(Versions()) and the solver still asks for the same version
+// lists. The remaining cost is in walking and intersecting those lists — set algebra
+// and version comparison — not in reading metadata. That is the next thing to
+// measure, and rstudio/package-manager#19713 is about exactly that path.
+//
+// ⚠️ backtracking is NOT measured by this corpus. The `backtracking` entry resolves
+// pandas with numpy<2 and pins pandas 3.0.5, which is the NEWEST published pandas —
+// so nothing is backed out of and it is an ordinary resolve. Verified 2026-08-13. Any
+// claim about this change's effect on backtracking cost is unsupported by these
+// numbers; a genuine backtracking case still needs to be found and added.
+//
+// # Everything below predates the found/rank change
+//
+// ⚠️ EVERY FIGURE IN THE REST OF THIS COMMENT PREDATES IT and none of them describe
 // the current provider. They were taken when Provider.Candidates returned an exact
 // count and therefore tested every in-range version for usability. Candidates now
 // stops at the first usable version, which cut Metadata calls by 9.7x to 189.5x

@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-13
+
 ### Breaking
 
 - Requires **go-pubgrub v0.2.0**, whose `Provider.Candidates` returns
@@ -59,6 +61,30 @@ served it.
 
   So **9.7x to 189.5x**, and 5.9x to 111x counting all index calls rather than
   metadata reads alone. Pin *counts* are unchanged on all seven entries.
+
+  ⚠️ **In wall-clock terms this is much smaller, and the <1 ms warm target did not
+  move.** Measured in one session on one machine, warm, before and after:
+
+  | entry | warm before | warm after | |
+  |---|---:|---:|---:|
+  | `single-no-deps` | 1.79 ms | 1.74 ms | 1.03x |
+  | `small-tree` | 6.47 ms | 4.54 ms | 1.43x |
+  | `extras` | 13.39 ms | 10.03 ms | 1.33x |
+  | `backtracking` | 9.85 ms | 7.00 ms | 1.41x |
+  | `app-set` | 257.52 ms | 70.76 ms | 3.64x |
+  | `wide-versions` | 181.02 ms | 82.18 ms | 2.20x |
+  | `unsatisfiable` | 0.88 ms | 0.80 ms | 1.09x |
+
+  The warm gate is met by exactly one entry, the same one that met it before. So the
+  index call count was **not** the binding constraint on that target — the remaining
+  cost is walking and intersecting version lists (set algebra and version
+  comparison), not reading metadata. `candvers` is unchanged, which is where that
+  shows.
+
+  ⚠️ **Backtracking is unmeasured.** The `backtracking` corpus entry pins pandas
+  3.0.5 — the newest published pandas — so nothing is backed out of and it is an
+  ordinary resolve. No claim about this change's effect on backtracking cost is
+  supported by these numbers.
 
   `rank`, which only orders which package the solver works on next, is the count of
   versions in range taken *before* usability is tested. That is free, since the list
@@ -694,7 +720,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.1.0...v0.2.0
