@@ -103,41 +103,62 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 
 // Candidates implements solver.Provider.
 //
-// # count must be 0 exactly when nothing satisfies
+// # found must be true exactly when something usable is in range
 //
-// go-pubgrub treats a count of zero as "no version of this package lies within
+// go-pubgrub treats found == false as "no version of this package lies within
 // this range" and derives an incompatibility from it. So a version that
-// genuinely cannot be used must be left out of the count, and a version that is
-// merely undesirable must not be. That asymmetry is why admission
+// genuinely cannot be used must not make found true, and a version that is
+// merely undesirable must. That asymmetry is why admission
 // (candidate.PrereleaseSet) and ranking (candidate.Policy) are separate types
 // rather than one predicate.
 //
-// # best is filtered before it is ranked, not after
+// Because it is existence and not cardinality, this stops at the FIRST usable
+// version. That is what keeps the cost proportional to the packages actually
+// decided rather than to every version ever published: certifi has 130 releases
+// and no dependencies at all, and answering "is one of them usable" reads one.
 //
-// The solver rejects a decision outside the accumulated term rather than
-// trusting it, because such a decision corrupts the partial solution in a way
-// that no later error points back to. Discarding the versions outside allowed
-// BEFORE ranking is what guarantees best lies inside it; reordering those two
-// steps reintroduces the bug.
+// # rank is the in-range count, taken BEFORE usability is tested
+//
+// rank only orders which package the solver works on next, and go-pubgrub
+// documents it as a hint that may be any upper bound. The count of versions in
+// range before usability filtering is exactly that: it is >= the number of usable
+// ones, and it is free, because that list has to be built anyway to walk it.
+//
+// Do not be tempted to make it exact. An exact rank means testing every version
+// in range, which is the entire cost this design exists to avoid, in service of a
+// heuristic that go-pubgrub and both prose sources agree is not
+// correctness-bearing.
+//
+// ⚠️ Nor should it be a constant. Reporting a flat 1 is legal and disables the
+// heuristic, and that is not free: measured against a production snapshot it
+// silently changed which of several legal resolutions was found. The in-range
+// count reproduces the exact-count search order on everything measured.
+//
+// # ⚠️ Rank BEFORE the usability walk, not after
+//
+// The version this hands back must be the same one an exact implementation would
+// have chosen -- the highest-ranked USABLE version -- and the order of these two
+// steps is what makes that true. candidate.Rank is a stable sort over a pairwise
+// Less, so it orders a subset consistently with the superset it came from;
+// therefore the first usable version in ranked-in-range order is the same version
+// as Rank(usable-only)[0]. Filter first and rank the survivors and you get the
+// same answer at full enumeration cost; rank first and stop early and you get it
+// cheaply. Test usability first and rank after, and there is nothing left to stop
+// early on.
+//
+// Discarding the versions outside allowed BEFORE ranking is separately what
+// guarantees best lies inside allowed, which the solver refuses to trust.
 //
 // # Cost
 //
-// Deciding usability reads each candidate version's metadata, and the solver
-// asks about the same package repeatedly as it backtracks. That is affordable
-// because dependency metadata is resident in the PyPI RSF and read in-process
-// -- no network call, per RFD Rev 15 -- and because correctness here is not
-// negotiable: a cheaper usability test that disagreed with Dependencies would
-// hand the solver a decision whose dependencies then fail.
-//
-// This did show up in a profile, and the memo this note called for now exists in
-// index.RSFIndex, keyed by exactly (package, version). It made warm resolution
-// 2.4x to 4.5x faster and took index.Metadata off the profile entirely; it
-// changed no call count, because it cannot. What dominates now is the work
-// projectDependencies does with the parsed requirements -- evaluating markers
-// and converting specifiers to version sets -- which is a pure function of
-// (requirement, environment) and so is the next thing worth memoizing, keyed by
-// (package, version, extra). See resolver/bench_test.go.
-func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set, int, error) {
+// Deciding usability reads a version's metadata, and the solver asks about the
+// same package repeatedly as it backtracks, so index.RSFIndex memoizes by exactly
+// (package, version). What dominates now is the work projectDependencies does
+// with the parsed requirements -- evaluating markers and converting specifiers to
+// version sets -- which is a pure function of (requirement, environment) and so is
+// the next thing worth memoizing, keyed by (package, version, extra). See
+// resolver/bench_test.go.
+func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set, bool, int, error) {
 	switch pkg.Kind {
 	case KindRoot:
 		return singleVersion(p.opts.RootVersion, allowed)
@@ -151,16 +172,18 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 			// Not an error: an unknown name is something the solver explains
 			// through the derivation graph, and aborting the resolve over it
 			// would replace a good report with a bad one.
-			return pep440set.Empty(), 0, nil
+			return pep440set.Empty(), false, 0, nil
 		}
 		// Anything else -- a transport failure, a corrupt snapshot -- is NOT
-		// "no such version". Reporting it as count 0 would let the resolver
+		// "no such version". Reporting it as unavailable would let the resolver
 		// quietly settle on an older version, or blame the user's constraints
 		// for an outage.
-		return pep440set.Empty(), 0, fmt.Errorf("provider: versions of %s: %w", pkg, err)
+		return pep440set.Empty(), false, 0, fmt.Errorf("provider: versions of %s: %w", pkg, err)
 	}
 
-	admissible := make([]version.Version, 0, len(all))
+	// The cheap half of admission: range and pre-release policy, no metadata and
+	// no I/O. This list is both what gets ranked and what rank counts.
+	inRange := make([]version.Version, 0, len(all))
 	for _, v := range all {
 		if !allowed.Contains(v) {
 			continue
@@ -168,30 +191,34 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 		if !p.opts.Prereleases.Admits(pkg.Name, v) {
 			continue
 		}
-		ok, err := p.usable(pkg, v)
-		if err != nil {
-			return pep440set.Empty(), 0, err
-		}
-		if !ok {
-			continue
-		}
-		admissible = append(admissible, v)
-	}
-	if len(admissible) == 0 {
-		return pep440set.Empty(), 0, nil
+		inRange = append(inRange, v)
 	}
 
-	ranked := candidate.Rank(pkg.Name, admissible, p.opts.Policy)
-	return pep440set.Exactly(ranked[0]), len(ranked), nil
+	for _, v := range candidate.Rank(pkg.Name, inRange, p.opts.Policy) {
+		ok, err := p.usable(pkg, v)
+		if err != nil {
+			return pep440set.Empty(), false, 0, err
+		}
+		if ok {
+			return pep440set.Exactly(v), true, len(inRange), nil
+		}
+	}
+
+	// Every in-range version was rejected, so nothing is available. This is the
+	// one case that still costs a full walk -- and it is unavoidable, because
+	// "nothing here is usable" cannot be established without checking everything.
+	// The old behaviour paid this on every package; this pays it only when the
+	// answer really is "nothing".
+	return pep440set.Empty(), false, 0, nil
 }
 
 // singleVersion answers for a package with exactly one version and no index
 // behind it: the root and the interpreter.
-func singleVersion(v version.Version, allowed pep440set.Set) (pep440set.Set, int, error) {
+func singleVersion(v version.Version, allowed pep440set.Set) (pep440set.Set, bool, int, error) {
 	if !allowed.Contains(v) {
-		return pep440set.Empty(), 0, nil
+		return pep440set.Empty(), false, 0, nil
 	}
-	return pep440set.Exactly(v), 1, nil
+	return pep440set.Exactly(v), true, 1, nil
 }
 
 // usable reports whether pkg at v can be offered to the solver.

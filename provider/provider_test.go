@@ -90,12 +90,15 @@ func TestCandidatesExcludesVersionsOutsideAllowed(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	best, count, err := p.Candidates(provider.Project("flask"), atLeast(t, "2.0"))
+	best, found, rank, err := p.Candidates(provider.Project("flask"), atLeast(t, "2.0"))
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}
-	if count != 2 {
-		t.Errorf("count = %d, want 2 (1.0 lies outside the allowed set)", count)
+	if !found {
+		t.Fatal("found = false, want true")
+	}
+	if rank != 2 {
+		t.Errorf("rank = %d, want 2 (1.0 lies outside the allowed set)", rank)
 	}
 	if got := bestVersion(t, best); got.String() != "3.0" {
 		t.Errorf("best = %s, want 3.0", got)
@@ -104,8 +107,13 @@ func TestCandidatesExcludesVersionsOutsideAllowed(t *testing.T) {
 
 // go-pubgrub rejects a decision outside the accumulated term rather than
 // trusting it, because such a decision corrupts the partial solution in a way
-// no later error points back to. So best must be filtered by allowed BEFORE it
-// is ranked, and this is the assertion that catches a reordering.
+// no later error points back to. So the versions outside allowed are discarded
+// BEFORE ranking, and this is the assertion that catches a reordering.
+//
+// ⚠️ Ranking now happens before the usability walk, so this is the assertion
+// that catches the range filter being moved after it too — the ranked list must
+// already be confined to allowed, or the first usable version out of it can sit
+// outside.
 func TestCandidatesBestLiesWithinAllowed(t *testing.T) {
 	idx := index.NewMockIndex("test").
 		AddVersion("flask", "1.0").
@@ -119,12 +127,15 @@ func TestCandidatesBestLiesWithinAllowed(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	best, count, err := p.Candidates(provider.Project("flask"), allowed)
+	best, found, rank, err := p.Candidates(provider.Project("flask"), allowed)
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}
-	if count != 2 {
-		t.Fatalf("count = %d, want 2", count)
+	if !found {
+		t.Fatal("found = false, want true")
+	}
+	if rank != 2 {
+		t.Fatalf("rank = %d, want 2", rank)
 	}
 	got := bestVersion(t, best)
 	if !allowed.Contains(got) {
@@ -142,12 +153,16 @@ func TestCandidatesPrereleaseAdmission(t *testing.T) {
 
 	t.Run("excluded when the package is not enabled", func(t *testing.T) {
 		p := provider.New(context.Background(), idx, testOptions(t))
-		best, count, err := p.Candidates(provider.Project("flask"), pep440set.All())
+		best, found, rank, err := p.Candidates(provider.Project("flask"), pep440set.All())
 		if err != nil {
 			t.Fatalf("Candidates: %v", err)
 		}
-		if count != 1 {
-			t.Errorf("count = %d, want 1 (the release candidate is not admissible)", count)
+		if !found {
+			t.Fatal("found = false, want true")
+		}
+		if rank != 1 {
+			t.Errorf("rank = %d, want 1 (the release candidate is not admissible, and "+
+				"pre-release admission is part of the in-range filter rank counts)", rank)
 		}
 		if got := bestVersion(t, best); got.String() != "1.0" {
 			t.Errorf("best = %s, want 1.0", got)
@@ -159,12 +174,15 @@ func TestCandidatesPrereleaseAdmission(t *testing.T) {
 		opts.Prereleases = candidate.PrereleaseSet{"flask": true}
 		p := provider.New(context.Background(), idx, opts)
 
-		best, count, err := p.Candidates(provider.Project("flask"), pep440set.All())
+		best, found, rank, err := p.Candidates(provider.Project("flask"), pep440set.All())
 		if err != nil {
 			t.Fatalf("Candidates: %v", err)
 		}
-		if count != 2 {
-			t.Errorf("count = %d, want 2", count)
+		if !found {
+			t.Fatal("found = false, want true")
+		}
+		if rank != 2 {
+			t.Errorf("rank = %d, want 2", rank)
 		}
 		if got := bestVersion(t, best); got.String() != "2.0rc1" {
 			t.Errorf("best = %s, want 2.0rc1", got)
@@ -172,18 +190,18 @@ func TestCandidatesPrereleaseAdmission(t *testing.T) {
 	})
 }
 
-// An unknown package is count 0 and NO error: the solver reads count 0 as "no
+// An unknown package is found == false and NO error: the solver reads that as "no
 // version of this is available in this range" and explains it through the
 // derivation graph. An error would abort the whole resolve over a typo.
-func TestCandidatesUnknownPackageIsZeroCountAndNoError(t *testing.T) {
+func TestCandidatesUnknownPackageIsNotFoundAndNoError(t *testing.T) {
 	p := provider.New(context.Background(), index.NewMockIndex("test"), testOptions(t))
 
-	_, count, err := p.Candidates(provider.Project("nosuchpkg"), pep440set.All())
+	_, found, _, err := p.Candidates(provider.Project("nosuchpkg"), pep440set.All())
 	if err != nil {
 		t.Fatalf("Candidates: %v, want nil", err)
 	}
-	if count != 0 {
-		t.Errorf("count = %d, want 0", count)
+	if found {
+		t.Error("found = true, want false")
 	}
 }
 
@@ -194,11 +212,11 @@ func TestCandidatesKnownPackageWithNoAdmissibleVersion(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	if _, count, err := p.Candidates(provider.Project("empty"), pep440set.All()); err != nil || count != 0 {
-		t.Errorf("a registered package with no versions: count = %d, err = %v; want 0, nil", count, err)
+	if _, found, _, err := p.Candidates(provider.Project("empty"), pep440set.All()); err != nil || found {
+		t.Errorf("a registered package with no versions: found = %v, err = %v; want false, nil", found, err)
 	}
-	if _, count, err := p.Candidates(provider.Project("flask"), atLeast(t, "2.0")); err != nil || count != 0 {
-		t.Errorf("no version in range: count = %d, err = %v; want 0, nil", count, err)
+	if _, found, _, err := p.Candidates(provider.Project("flask"), atLeast(t, "2.0")); err != nil || found {
+		t.Errorf("no version in range: found = %v, err = %v; want false, nil", found, err)
 	}
 }
 
@@ -209,17 +227,22 @@ func (oldestFirst) Less(_ index.PackageName, a, b version.Version) bool { return
 
 // THE invariant most likely to rot. candidate.Policy ranks and never filters:
 // a version a policy dislikes is still a version the solver may use, and
-// dropping it from the count would be indistinguishable from the version not
-// existing -- which makes the failure report describe a conflict that is not
-// the real one.
-func TestPolicyChangesBestButNotCount(t *testing.T) {
+// dropping it would be indistinguishable from the version not existing -- which
+// makes the failure report describe a conflict that is not the real one.
+//
+// ⚠️ This matters MORE now that ranking happens before the usability walk. Rank
+// decides the order versions are tried in, so a Policy that filtered would not
+// merely reorder preferences: it would make the skipped versions unreachable, and
+// a package whose only usable version the Policy disliked would report
+// found == false.
+func TestPolicyChangesBestButNotRank(t *testing.T) {
 	idx := index.NewMockIndex("test").
 		AddVersion("flask", "1.0").
 		AddVersion("flask", "2.0").
 		AddVersion("flask", "3.0")
 
 	newestOpts := testOptions(t)
-	newestBest, newestCount, err := provider.New(context.Background(), idx, newestOpts).
+	newestBest, newestFound, newestRank, err := provider.New(context.Background(), idx, newestOpts).
 		Candidates(provider.Project("flask"), pep440set.All())
 	if err != nil {
 		t.Fatalf("Candidates (default policy): %v", err)
@@ -227,14 +250,18 @@ func TestPolicyChangesBestButNotCount(t *testing.T) {
 
 	oldestOpts := testOptions(t)
 	oldestOpts.Policy = oldestFirst{}
-	oldestBest, oldestCount, err := provider.New(context.Background(), idx, oldestOpts).
+	oldestBest, oldestFound, oldestRank, err := provider.New(context.Background(), idx, oldestOpts).
 		Candidates(provider.Project("flask"), pep440set.All())
 	if err != nil {
 		t.Fatalf("Candidates (oldest-first policy): %v", err)
 	}
 
-	if newestCount != 3 || oldestCount != 3 {
-		t.Errorf("counts = %d and %d, want 3 and 3: a Policy must not filter", newestCount, oldestCount)
+	if !newestFound || !oldestFound {
+		t.Fatalf("found = %v and %v, want true and true: a Policy must not make a version "+
+			"unreachable", newestFound, oldestFound)
+	}
+	if newestRank != 3 || oldestRank != 3 {
+		t.Errorf("ranks = %d and %d, want 3 and 3: a Policy must not filter", newestRank, oldestRank)
 	}
 	if got := bestVersion(t, newestBest); got.String() != "3.0" {
 		t.Errorf("default policy best = %s, want 3.0", got)
@@ -251,28 +278,28 @@ func TestCandidatesForRootAndPython(t *testing.T) {
 	opts.RootVersion = version.MustParse("1")
 	p := provider.New(context.Background(), index.NewMockIndex("test"), opts)
 
-	best, count, err := p.Candidates(provider.Root(), pep440set.All())
-	if err != nil || count != 1 {
-		t.Fatalf("root: count = %d, err = %v; want 1, nil", count, err)
+	best, found, rank, err := p.Candidates(provider.Root(), pep440set.All())
+	if err != nil || !found || rank != 1 {
+		t.Fatalf("root: found = %v, rank = %d, err = %v; want true, 1, nil", found, rank, err)
 	}
 	if got := bestVersion(t, best); got.String() != "1" {
 		t.Errorf("root best = %s, want 1", got)
 	}
 
-	best, count, err = p.Candidates(provider.Python(), pep440set.All())
-	if err != nil || count != 1 {
-		t.Fatalf("python: count = %d, err = %v; want 1, nil", count, err)
+	best, found, rank, err = p.Candidates(provider.Python(), pep440set.All())
+	if err != nil || !found || rank != 1 {
+		t.Fatalf("python: found = %v, rank = %d, err = %v; want true, 1, nil", found, rank, err)
 	}
 	if got := bestVersion(t, best); got.String() != "3.11.4" {
 		t.Errorf("python best = %s, want 3.11.4", got)
 	}
 
 	// Outside the allowed set, both are unavailable rather than offered anyway.
-	if _, count, err := p.Candidates(provider.Python(), atLeast(t, "3.12")); err != nil || count != 0 {
-		t.Errorf("python outside allowed: count = %d, err = %v; want 0, nil", count, err)
+	if _, found, _, err := p.Candidates(provider.Python(), atLeast(t, "3.12")); err != nil || found {
+		t.Errorf("python outside allowed: found = %v, err = %v; want false, nil", found, err)
 	}
-	if _, count, err := p.Candidates(provider.Root(), atLeast(t, "2")); err != nil || count != 0 {
-		t.Errorf("root outside allowed: count = %d, err = %v; want 0, nil", count, err)
+	if _, found, _, err := p.Candidates(provider.Root(), atLeast(t, "2")); err != nil || found {
+		t.Errorf("root outside allowed: found = %v, err = %v; want false, nil", found, err)
 	}
 }
 
@@ -281,9 +308,9 @@ func TestCandidatesForRootAndPython(t *testing.T) {
 func TestRootVersionDefaults(t *testing.T) {
 	p := provider.New(context.Background(), index.NewMockIndex("test"), testOptions(t))
 
-	best, count, err := p.Candidates(provider.Root(), pep440set.All())
-	if err != nil || count != 1 {
-		t.Fatalf("root: count = %d, err = %v; want 1, nil", count, err)
+	best, found, rank, err := p.Candidates(provider.Root(), pep440set.All())
+	if err != nil || !found || rank != 1 {
+		t.Fatalf("root: found = %v, rank = %d, err = %v; want true, 1, nil", found, rank, err)
 	}
 	if got := bestVersion(t, best); got.String() != "0" {
 		t.Errorf("default root version = %s, want 0", got)
