@@ -125,6 +125,44 @@ func TestBoundOrderingPastInt64(t *testing.T) {
 	}
 }
 
+// TestCanonDigits exercises the leading-zero stripping DIRECTLY, because
+// nothing else does.
+//
+// releaseKey's only caller feeds it BaseVersion(), which renders every segment
+// through big.Int.String() and so is already leading-zero-free -- no bound
+// built from a parsed version can reach the stripping below. That makes
+// canonDigits defensive code against a future caller that hands releaseKey a
+// spelling gpp has not normalized, and defensive code with no test is how a
+// "simplification" that drops it passes review. cmpDigits compares
+// length-first, so an unstripped run would sort "007" above "7".
+func TestCanonDigits(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"7", "7"},
+		{"007", "7"},
+		{"0", "0"},
+		{"000", "0"},
+		{"0100", "100"},
+		{"10", "10"},
+		{"", ""},
+		{"00000000000000000001", "1"},
+	}
+	for _, tc := range cases {
+		if got := canonDigits(tc.in); got != tc.want {
+			t.Errorf("canonDigits(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	// The point of stripping: the canonical runs must compare equal, and the
+	// unstripped ones would not.
+	if got := cmpDigits(canonDigits("007"), canonDigits("7")); got != 0 {
+		t.Errorf("cmpDigits(canon 007, canon 7) = %d, want 0", got)
+	}
+	if got := cmpDigits("007", "7"); got == 0 {
+		t.Error("cmpDigits compares length first, so unstripped runs should NOT " +
+			"compare equal; this test no longer shows what canonDigits is for")
+	}
+}
+
 // TestBoundEqualSpellings: 1.0 and 1.0.0 are the same version, so bounds
 // built from them must compare equal. Canonicalization depends on this.
 func TestBoundEqualSpellings(t *testing.T) {

@@ -144,23 +144,36 @@ served it.
   itself in the solver's hot loop, and each call rendered both versions' release
   segments to a string and split it, then rendered and **re-parsed** both public
   versions. One resolution against an index shaped like a curated or air-gapped
-  repository -- packages present, transitive dependencies absent -- allocated
-  25 GB and took 17.5 s. The failing, unsatisfiable path is the expensive one,
-  so a request that cannot be satisfied was the one at risk of exhausting memory
-  instead of returning an error.
+  repository -- packages present, transitive dependencies absent -- took 17.5 s
+  and allocated 25 GB *cumulatively*: bytes handed out and collected over the
+  run, not memory held. **The symptom is latency, not memory exhaustion.** Peak
+  heap through that same resolution was measured at 115 MB of `HeapSys` before
+  this change and 15 MB after, three orders of magnitude below the cumulative
+  figure; what the churn buys is garbage collection, and the resolution is
+  GC-bound for tens of seconds. The failing, unsatisfiable path is the expensive
+  one, so a request that could not be satisfied was the slowest one to be told
+  so.
 
-  The key is now derived once, when the bound is built, and the span slices the
-  algebra allocates are sized up front instead of grown. Same resolution, same
-  index calls, same outcome: **17.5 s to 2.1 s, 25.1 GB to 4.2 GB, and 568
-  million allocations to 14.8 million**. Building a set of specifiers costs
-  slightly more than it did (`>=1.0`: 1.55 to 1.91 µs) because a bound now pays
-  for its key up front; comparing sets costs far less (`Equal`: 10.1 µs and 320
-  allocations to 0.16 µs and none).
+  The key is now derived once, when the bound is built. The span slices the
+  algebra allocates are sized up front instead of grown -- and allocated only
+  once there is a span to put in them, so an operation whose result is empty
+  allocates nothing at all. Same resolution, same index calls, same outcome:
+  **17.5 s to 2.1 s, 25.1 GB to 3.7 GB allocated, and 568 million allocations
+  to 14.8 million**. Building a set of specifiers costs slightly more than it
+  did (`>=1.0`: 1.55 to 1.91 µs) because a bound now pays for its key up front;
+  comparing sets costs far less (`Equal`: 10.1 µs and 320 allocations to
+  0.16 µs and none).
 
   No ordering changed. `TestBoundKeyAgreesWithLiteral` holds the derived-once
   and derived-on-demand paths to the same answer on every pair of a widened
   ordering grid, whose PEP 440 orderings were cross-checked against
-  pypa/packaging 26.2.
+  pypa/packaging 26.2. Against the full production snapshot,
+  `TestDifferentialAgainstRealCorpus` still agrees with
+  `version.Specifiers.Check` on every pair it compares: **755,934 (specifier,
+  version) pairs over 7,188 specifier sets** in the 400-package sample it takes
+  by default, and 33,918,235 pairs over 305,548 specifier sets when widened to
+  20,000 packages with `PEP440SET_CORPUS_PACKAGES`. Zero disagreements either
+  way.
   ([#19713](https://github.com/rstudio/package-manager/issues/19713))
 
 ## [0.4.0] - 2026-08-10

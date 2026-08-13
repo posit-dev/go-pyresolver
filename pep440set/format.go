@@ -93,6 +93,13 @@ func (s Set) excluded() (string, bool) {
 	if lo.lo.inf >= 0 || hi.hi.inf <= 0 {
 		return "", false
 	}
+	// ⚠️ THIS CHECK ALSO ESTABLISHES lo.hi.inf == 0, WHICH withEdge BELOW
+	// DEPENDS ON. An infinite bound carries no version and leaves edge at its
+	// zero value, edgeBelowRelease, so it can never be edgeAt; requiring edgeAt
+	// here is what makes lo.hi finite. withEdge carries inf across, so relaxing
+	// this to admit an infinite bound would hand cmpBound a bound that is both
+	// infinite and edged -- a position that does not exist. Keep the edgeAt
+	// requirement, or make the finiteness check explicit before withEdge.
 	if lo.hi.edge != edgeAt {
 		return "", false
 	}

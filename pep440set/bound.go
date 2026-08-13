@@ -57,7 +57,9 @@ type bound struct {
 // set algebra, which is itself in the solver's hot loop, so it is called orders
 // of magnitude more often than a bound is built. One resolution against a
 // curated-shaped index -- packages present, transitive dependencies absent --
-// allocated 25 GB and took 17.5 s with this work on the comparison side.
+// took 17.5 s and allocated 25 GB CUMULATIVELY with this work on the comparison
+// side. Cumulatively, not concurrently: peak heap stayed under 120 MB, so what
+// the churn bought was garbage collection. The cost is latency, not footprint.
 type posKey struct {
 	// epoch and release are the canonical (leading-zero-free, trailing-zero-
 	// stripped) decimal digit runs releaseKey produces.
@@ -260,11 +262,13 @@ func cmpBound(a, b bound) int {
 	// Both inside the group. Compare the public version first, so that
 	// aboveLocals(1.0) lands below at(1.0.post0.dev0) ...
 	//
-	// Identical public spellings are identical versions -- both are the
+	// Identical public spellings are identical PUBLIC versions -- both are the
 	// normalized rendering -- so the compare is skipped rather than run to
-	// reach 0. That is the common case here: the edges around one version all
-	// share its public spelling, and Version.Compare's own fast path renders
-	// both sides to a string before it can say so.
+	// reach 0. It says nothing about the bounds' own versions, which can still
+	// differ in the local label the public spelling drops; the two blocks below
+	// are what order those. Skipping is the common case here: the edges around
+	// one version all share its public spelling, and Version.Compare's own fast
+	// path renders both sides to a string before it can say so.
 	if ak.public != bk.public && ak.pubOK && bk.pubOK {
 		if c := ak.pub.Compare(bk.pub); c != 0 {
 			return c
