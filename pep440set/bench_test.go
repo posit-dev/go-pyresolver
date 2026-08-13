@@ -59,12 +59,50 @@ func BenchmarkIntersect(b *testing.B) {
 	}
 }
 
+// BenchmarkIntersectEmptyOperand is the SAME operation with an empty operand,
+// and it must not allocate.
+//
+// ⚠️ A BENCHMARK THAT ONLY MEASURES THE NON-EMPTY CASE IS WHY SIZING THE SPAN
+// SLICE UP FRONT SHIPPED AS A REGRESSION HERE. Intersecting with Empty keeps
+// nothing, so the loop never runs and a slice allocated before it is discarded
+// whole -- and that path is reachable in the solver, because Difference(a, b)
+// is a.Intersect(b.Complement()) and All().Complement() is empty. The LHS has
+// eight spans on purpose: the wasted allocation was sized from both operands,
+// so a one-span LHS would barely show it.
+func BenchmarkIntersectEmptyOperand(b *testing.B) {
+	a := benchSet(b, ">=1.0,!=1.1,!=1.2,!=1.3,!=1.4,!=1.5,!=1.6,!=1.7,<2.0")
+	if len(a.spans) != 8 {
+		b.Fatalf("LHS has %d spans, want 8", len(a.spans))
+	}
+	empty := Empty()
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.Intersect(empty)
+	}
+}
+
 // BenchmarkComplement covers the other half: every negative term is one.
 func BenchmarkComplement(b *testing.B) {
 	s := benchSet(b, ">=1.0,<2.0,!=1.5")
 	b.ReportAllocs()
 	for b.Loop() {
 		_ = s.Complement()
+	}
+}
+
+// BenchmarkComplementAll is the complement whose RESULT is empty, the canonical
+// route to Empty, and it must not allocate either.
+//
+// All() fills the order, so there is no gap below its span and no tail above
+// it: the loop appends nothing. Sizing the gap slice before the loop spent a
+// span-sized allocation on every one of these.
+func BenchmarkComplementAll(b *testing.B) {
+	s := All()
+	b.ReportAllocs()
+	for b.Loop() {
+		if got := s.Complement(); !got.IsEmpty() {
+			b.Fatalf("All().Complement() = %s, want empty", got)
+		}
 	}
 }
 

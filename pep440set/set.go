@@ -12,6 +12,23 @@ type span struct{ lo, hi bound }
 // The zero value is the empty set.
 type Set struct{ spans []span }
 
+// appendSpan appends sp to out, allocating out with capacity n on the first
+// append and never before it.
+//
+// ⚠️ THE POINT IS THE ALLOCATION THAT DOES NOT HAPPEN. A span is two bounds and
+// a bound carries a version.Version, so a span is hundreds of bytes; sizing a
+// span slice up front is worth doing, but doing it before the loop that would
+// fill it spends kilobytes on every operation whose result is empty. Empty
+// results are not exotic here: Difference(a, b) is a.Intersect(b.Complement()),
+// and All().Complement() -- the canonical route to Empty -- has no gaps to
+// return at all.
+func appendSpan(out []span, n int, sp span) []span {
+	if out == nil {
+		out = make([]span, 0, n)
+	}
+	return append(out, sp)
+}
+
 // newSet canonicalizes. Every constructor and every operation returns through
 // it, because versionset.Set requires Equal to hold across representations.
 func newSet(spans ...span) Set {
@@ -124,8 +141,12 @@ func (s Set) Union(other Set) Set {
 func (s Set) Intersect(other Set) Set {
 	// Both sides are canonical -- sorted and disjoint -- so the intersection
 	// has at most len(s)+len(other)-1 spans however many pairs the loop below
-	// visits. Sizing to that beats growing a span slice by doubling.
-	out := make([]span, 0, len(s.spans)+len(other.spans))
+	// visits. Sizing to that beats growing a span slice by doubling, but the
+	// slice is allocated on the first span kept rather than before the loop:
+	// an intersection that keeps nothing -- either operand empty, or two
+	// non-empty operands that do not meet -- then costs no allocation at all.
+	// See appendSpan.
+	var out []span
 	for _, a := range s.spans {
 		for _, b := range other.spans {
 			lo, hi := a.lo, a.hi
@@ -136,7 +157,7 @@ func (s Set) Intersect(other Set) Set {
 				hi = b.hi
 			}
 			if cmpBound(lo, hi) < 0 {
-				out = append(out, span{lo, hi})
+				out = appendSpan(out, len(s.spans)+len(other.spans), span{lo, hi})
 			}
 		}
 	}
@@ -148,17 +169,23 @@ func (s Set) Complement() Set {
 	if len(s.spans) == 0 {
 		return All()
 	}
-	// One gap below each span, plus the tail above the last one.
-	out := make([]span, 0, len(s.spans)+1)
+	// One gap below each span, plus the tail above the last one -- sized to
+	// that, and allocated only once there is a first gap to put in it. A set
+	// that fills the order leaves no gap and no tail, so All().Complement()
+	// walks straight through to the empty set without allocating. See
+	// appendSpan.
+	var out []span
 	cursor := negInf()
 	for _, sp := range s.spans {
 		if cmpBound(cursor, sp.lo) < 0 {
-			out = append(out, span{cursor, sp.lo})
+			out = appendSpan(out, len(s.spans)+1, span{cursor, sp.lo})
 		}
 		cursor = sp.hi
 	}
 	if cmpBound(cursor, posInf()) < 0 {
-		out = append(out, span{cursor, posInf()})
+		// Reaching here with out still nil means no gap was found, so the tail
+		// is the only span there will be.
+		out = appendSpan(out, 1, span{cursor, posInf()})
 	}
 	return newSet(out...)
 }
