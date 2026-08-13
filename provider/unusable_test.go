@@ -313,6 +313,69 @@ func TestUnusableRecordsAreDeduplicated(t *testing.T) {
 	}
 }
 
+// TestEveryReasonIsRecordedWhenNOTHINGIsUsable pins the claim the whole shrinking of
+// Unusable() rests on.
+//
+// Candidates stops at the first usable version, so versions ranked below the chosen
+// one are never examined and never recorded — Unusable() became what the resolution
+// ENCOUNTERED rather than an audit of everything published. The defence of that is
+// narrow and specific: when a package has NOTHING usable, establishing "nothing"
+// requires examining all of it, so every reason is still recorded. That is the case
+// a failure report actually needs, because it is the one that produces "no version
+// of X matches".
+//
+// ⚠️ Until this test, that defence was an argument and nothing more. It is stated in
+// three doc comments and a CHANGELOG entry, so it needs to be true.
+func TestEveryReasonIsRecordedWhenNOTHINGIsUsable(t *testing.T) {
+	// Three versions, all in range, none usable, for three DIFFERENT reasons. The
+	// reasons differ so that a record naming the wrong version is visible rather
+	// than plausible; deduplication is not the hazard, since record keys on package
+	// AND version AND reason, so distinct versions could never collapse anyway.
+	idx := index.NewMockIndex("test").
+		SetUnavailable("flask", "3.0").
+		SetMetadata("flask", "2.0", index.PackageMetadata{
+			RequiresDist: mustRequirements(t, "foo ===lolwat"),
+		}).
+		SetMetadata("flask", "1.0", index.PackageMetadata{
+			RequiresDist: mustRequirements(t, "bar @ https://example.com/bar-1.0-py3-none-any.whl"),
+		})
+
+	p := provider.New(context.Background(), idx, testOptions(t))
+
+	_, found, _, err := p.Candidates(provider.Project("flask"), pep440set.All())
+	if err != nil {
+		t.Fatalf("Candidates: %v", err)
+	}
+	if found {
+		t.Fatal("found = true, but no version of flask is usable")
+	}
+
+	got := p.Unusable()
+	if len(got) != 3 {
+		t.Fatalf("recorded %d reasons, want 3 — one per version. When nothing is usable "+
+			"the walk is exhaustive by necessity, so a missing record means the failure "+
+			"report has lost a version it could have explained: %+v", len(got), got)
+	}
+
+	byVersion := map[string]provider.Unusable{}
+	for _, rec := range got {
+		byVersion[rec.Version.String()] = rec
+	}
+	for _, want := range []string{"1.0", "2.0", "3.0"} {
+		rec, ok := byVersion[want]
+		if !ok {
+			t.Errorf("no record for flask %s; got records for %v", want, byVersion)
+			continue
+		}
+		if rec.Offered {
+			t.Errorf("flask %s is recorded as offered, but nothing was usable", want)
+		}
+		if rec.Reason == "" {
+			t.Errorf("flask %s recorded with no reason, which explains nothing", want)
+		}
+	}
+}
+
 // A root requirement that cannot be expressed has no other version to fall back
 // to, so it aborts the resolve instead of quietly excluding something.
 func TestRootRequirementsThatCannotBeExpressedAreAnError(t *testing.T) {

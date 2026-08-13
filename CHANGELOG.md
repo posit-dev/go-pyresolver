@@ -13,6 +13,36 @@ served it.
 
 ## [Unreleased]
 
+### Changed
+
+- The benchmark corpus's `backtracking` entry is `pandas, numpy<1.26` rather than
+  `pandas, numpy<2`, and **actually backtracks again**. Under the old bound pandas had
+  relaxed its floor, so the newest pandas satisfied `numpy<2` on its own: the entry
+  pinned pandas 3.0.5, backed out of nothing, and measured an ordinary resolve while
+  still being named `backtracking`. It stayed that way across at least one release and
+  the cost analysis written on top of it implied coverage the corpus did not have.
+
+  The corrected entry costs 42 `Metadata` and 30 `Versions` calls for 6 pins, against
+  13 and 9 for 4 pins. ⚠️ Most of that 3.2x is a **bigger closure**, not backtracking:
+  pandas 2.x pulls `pytz` and `tzdata` that pandas 3.x does not. Pinning
+  `pandas==2.3.3` with the same numpy bound — identical closure, nothing to back out
+  of — costs 26 and 20. So 13 → 26 is the closure and only 26 → 42, about **1.6x**, is
+  the repeated asking.
+
+  ⚠️ An entry defined by "the newest version cannot be used" is inherently perishable,
+  because the packages it names keep releasing. So `benchEntry.MustNotBeNewest` now
+  asserts the property instead of assuming it: if the driver package can be taken at
+  its newest version, the benchmark **fails** rather than reporting a comfortable
+  number. Verified by putting the stale bound back and watching it fail.
+
+### Added
+
+- `TestEveryReasonIsRecordedWhenNOTHINGIsUsable`, pinning the claim the whole
+  shrinking of `Unusable()` rests on: when a package has nothing usable, establishing
+  that requires examining all of it, so every reason is still recorded. That is the
+  case a failure report needs, it is asserted in three doc comments and a changelog
+  entry, and until now it was an argument rather than a test.
+
 ## [0.5.0] - 2026-08-13
 
 ### Breaking

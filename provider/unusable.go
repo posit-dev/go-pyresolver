@@ -73,11 +73,13 @@ type Unusable struct {
 // resolution had already moved past, which no failure was going to be attributed
 // to.
 //
-// ⚠️ That last claim is an argument, not a guarantee this module tests. A
-// 200-package prototype comparison against the production snapshot produced no
-// changed failure report, but nothing here pins it: the differential compares
-// found, best and rank, not Unusable() and not rendered reports. Treat a report
-// difference as possible-but-unexpected rather than excluded.
+// The exhaustive-when-nothing-is-usable half IS tested, by
+// TestEveryReasonIsRecordedWhenNOTHINGIsUsable.
+//
+// ⚠️ The broader claim that no failure REPORT changes is not. A 200-package prototype
+// comparison against the production snapshot produced none, but nothing here pins it:
+// the differential compares found, best and rank, not Unusable() and not rendered
+// reports. Treat a report difference as possible-but-unexpected rather than excluded.
 //
 // Do not read a short list as "nothing else is wrong with this package".
 func (p *Provider) Unusable() []Unusable {

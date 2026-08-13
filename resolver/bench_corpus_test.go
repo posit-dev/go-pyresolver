@@ -4,6 +4,8 @@ package resolver_test
 
 import (
 	"testing"
+
+	"github.com/posit-dev/go-pyresolver/index"
 )
 
 // benchEntry is one input to the resolution benchmark.
@@ -38,6 +40,29 @@ type benchEntry struct {
 	// seven shape packages. It is what lets the benchmark be exercised in CI
 	// without the 981 MB snapshot.
 	OnExcerpt bool
+
+	// MustNotBeNewest names a package this entry requires the resolution to pin
+	// BELOW its newest published version. Empty means no such requirement.
+	//
+	// # This exists because an entry went stale silently and nobody noticed
+	//
+	// The `backtracking` entry was `pandas, numpy<2`, chosen because recent pandas
+	// required numpy>=2 and so had to be backed out of. Then pandas relaxed its
+	// floor, the newest pandas satisfied numpy<2 on its own, and the entry quietly
+	// became an ordinary resolve -- still passing, still producing numbers, still
+	// named `backtracking`, and measuring nothing of the kind. It stayed that way
+	// across at least one release, and the cost analysis written on top of it
+	// implied a coverage the corpus did not have.
+	//
+	// A corpus entry defined by "the newest version cannot be used" is inherently
+	// perishable, because the packages it names keep releasing. So the property is
+	// asserted rather than assumed: if the driver package can be taken at its
+	// newest version, no backing-out happened and the benchmark FAILS instead of
+	// reporting a comfortable number.
+	//
+	// ⚠️ Enforced only against a full snapshot, like WantFailure. The excerpt does
+	// not carry the version history this reasoning needs.
+	MustNotBeNewest index.PackageName
 }
 
 // benchCorpus is the fixed corpus this benchmark measures.
@@ -102,16 +127,25 @@ var benchCorpus = []benchEntry{
 			"establishing usability one version at a time.",
 	},
 	{
-		Name:         "backtracking",
-		Requirements: []string{"pandas", "numpy<2"},
+		Name:            "backtracking",
+		Requirements:    []string{"pandas", "numpy<1.26"},
+		MustNotBeNewest: "pandas",
 		Why: "A resolution that cannot be reached by taking the newest of " +
-			"everything: recent pandas releases require numpy>=2 on this " +
-			"interpreter, so the solver must back out of its first choice and try " +
-			"older pandas. Backtracking is what makes Candidates get asked about " +
-			"the same package repeatedly, which is the case the warm target is " +
-			"most exposed to. ⚠️ Against the committed excerpt, where pandas' own " +
-			"dependencies are absent, this one entry takes ~17 s and allocates " +
-			"~25 GB per iteration -- see the second cost profile in bench_test.go. " +
+			"everything: pandas from 3.0 on requires numpy>=1.26 on this " +
+			"interpreter, so the solver must back out of its first choice and walk " +
+			"down to pandas 2.x. Backtracking is what makes Candidates get asked " +
+			"about the same package repeatedly, which is the case the warm target " +
+			"is most exposed to. ⚠️ The bound was numpy<2 until 2026-08-13, when " +
+			"pandas relaxed its floor and the entry silently stopped backtracking " +
+			"-- it pinned the NEWEST pandas and measured an ordinary resolve while " +
+			"still being named backtracking. MustNotBeNewest exists so that cannot " +
+			"happen quietly again; if this entry starts taking the newest pandas, " +
+			"the benchmark fails and the bound needs tightening. ⚠️ Against the " +
+			"committed excerpt, where pandas' own dependencies are absent, this " +
+			"entry is still by far the most expensive: ~3.1 GB and a couple of " +
+			"seconds per iteration, against milliseconds for the others. (It was " +
+			"~25 GB and ~17 s before the found/rank change; the second cost profile " +
+			"in bench_test.go still quotes the old figures and is marked historical.) " +
 			"Exclude it with -bench 'Cold/(single|small|extras|unsat)' if you only " +
 			"want a quick check that the benchmark still runs.",
 	},
@@ -160,6 +194,8 @@ func TestBenchCorpusIsWellFormed(t *testing.T) {
 			t.Errorf("%s: Why is %d characters; state what this entry measures that no "+
 				"other entry does", entry.Name, len(entry.Why))
 		}
+
+		checkMustNotBeNewest(t, entry)
 	}
 
 	// The corpus is only useful in CI if something in it resolves against the
@@ -173,5 +209,58 @@ func TestBenchCorpusIsWellFormed(t *testing.T) {
 	if onExcerpt == 0 {
 		t.Error("no corpus entry is marked OnExcerpt, so the benchmark cannot be exercised " +
 			"without the 981 MB production snapshot")
+	}
+}
+
+// checkMustNotBeNewest is the snapshot-free half of the backtracking guard.
+//
+// checkBackedOut can only see that the driver was pinned below its newest selectable
+// version, and that is NECESSARY but not SUFFICIENT: bounding the driver directly
+// produces the same observation with no back-out at all. `pandas<3, numpy` pins an
+// older pandas on the first try and costs 28 Metadata calls where the real entry
+// costs 42, and checkBackedOut passes it.
+//
+// So the shape is enforced here instead: the constraint must be INDIRECT. An entry
+// that names MustNotBeNewest may not itself put a version bound on that package —
+// something the driver depends on has to be what excludes the newer versions.
+//
+// ⚠️ This runs without a snapshot, so it fails in CI rather than only for whoever
+// runs the full benchmark. The guard it completes does not.
+func checkMustNotBeNewest(t *testing.T, entry benchEntry) {
+	t.Helper()
+
+	if entry.MustNotBeNewest == "" {
+		return
+	}
+
+	if got := index.NewPackageName(string(entry.MustNotBeNewest)); got != entry.MustNotBeNewest {
+		t.Errorf("%s: MustNotBeNewest is %q, which canonicalizes to %q — it is looked up in "+
+			"Resolution.Pinned by exact key, so a non-canonical name silently never matches",
+			entry.Name, entry.MustNotBeNewest, got)
+	}
+
+	if entry.WantFailure {
+		t.Errorf("%s: MustNotBeNewest and WantFailure cannot both be set; a failed resolution "+
+			"pins nothing, so there is no version to compare", entry.Name)
+	}
+
+	var mentioned bool
+	for _, r := range mustRequirements(t, entry.Requirements...) {
+		if index.NewPackageName(r.Name) != entry.MustNotBeNewest {
+			continue
+		}
+		mentioned = true
+		if r.Specifiers.Len() > 0 {
+			t.Errorf("%s: MustNotBeNewest names %s, but this entry bounds %s directly (%q). "+
+				"That makes the back-out check vacuous — the solver picks an older version on "+
+				"its FIRST try and nothing is abandoned, while the check still passes. "+
+				"Constrain something %s depends on instead.",
+				entry.Name, entry.MustNotBeNewest, entry.MustNotBeNewest,
+				r.String(), entry.MustNotBeNewest)
+		}
+	}
+	if !mentioned {
+		t.Errorf("%s: MustNotBeNewest names %s, which this entry does not require, so it may "+
+			"not appear in the resolution at all", entry.Name, entry.MustNotBeNewest)
 	}
 }

@@ -79,11 +79,24 @@
 // and version comparison — not in reading metadata. That is the next thing to
 // measure, and rstudio/package-manager#19713 is about exactly that path.
 //
-// ⚠️ backtracking is NOT measured by this corpus. The `backtracking` entry resolves
-// pandas with numpy<2 and pins pandas 3.0.5, which is the NEWEST published pandas —
-// so nothing is backed out of and it is an ordinary resolve. Verified 2026-08-13. Any
-// claim about this change's effect on backtracking cost is unsupported by these
-// numbers; a genuine backtracking case still needs to be found and added.
+// ⚠️ The `backtracking` row above measured NO BACKTRACKING. The entry was
+// `pandas, numpy<2`, which pinned pandas 3.0.5 — the newest published pandas — so
+// nothing was backed out of and it was an ordinary resolve under a misleading name.
+// The entry has since been tightened to `numpy<1.26`, which pins pandas 2.x and does
+// back out, and benchEntry.MustNotBeNewest now FAILS the benchmark if it ever stops
+// doing so.
+//
+// ⚠️ The corrected entry costs 42 Metadata and 30 Versions calls against the old
+// entry's 13 and 9, but do NOT read that 3.2x as the price of backtracking. Most of
+// it is a bigger closure: pandas 2.x pulls pytz and tzdata that pandas 3.x does not,
+// taking the resolution from 4 pins to 6. Pinning `pandas==2.3.3` with the same
+// numpy bound — same 6-package closure, nothing to back out of — costs 26 Metadata
+// and 20 Versions. So 13 → 26 is the closure and only 26 → 42, about 1.6x, is the
+// repeated asking.
+//
+// So: the 9.85 → 7.00 ms row is real, but it is a measurement of an ordinary resolve,
+// not of backtracking. Re-run the benchmark for a backtracking figure; do not read
+// one out of the table above.
 //
 // # Everything below predates the found/rank change
 //
@@ -319,9 +332,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/posit-dev/go-pyresolver/candidate"
 	"github.com/posit-dev/go-pyresolver/index"
 	"github.com/posit-dev/go-pyresolver/pypirsf"
 	"github.com/posit-dev/go-pyresolver/resolver"
+	"github.com/posit-dev/go-python-packaging/version"
 )
 
 // benchFixturePath is the committed excerpt, and benchFileEnv is the SAME env
@@ -379,7 +394,10 @@ func freshIndex(b *testing.B, file *pypirsf.File) *index.RSFIndex {
 // index calls produces a beautifully fast number that measures nothing, and
 // that is exactly what every entry does against the 139-package excerpt -- so
 // there, the outcome is reported rather than asserted.
-func checkOutcome(b *testing.B, entry benchEntry, res *resolver.Resolution, err error, excerpt bool) {
+func checkOutcome(
+	b *testing.B, entry benchEntry, idx index.MetadataIndex,
+	res *resolver.Resolution, err error, excerpt bool,
+) {
 	b.Helper()
 
 	if excerpt {
@@ -393,6 +411,86 @@ func checkOutcome(b *testing.B, entry benchEntry, res *resolver.Resolution, err 
 		b.Fatalf("%s: Resolve: %v", entry.Name, err)
 	case !entry.WantFailure && len(res.Pinned) == 0:
 		b.Fatalf("%s: resolved to nothing; the benchmark would be timing an empty walk", entry.Name)
+	}
+
+	if entry.MustNotBeNewest != "" && !entry.WantFailure {
+		checkBackedOut(b, entry, idx, res)
+	}
+}
+
+// checkBackedOut enforces MustNotBeNewest: the named package must be pinned below
+// the newest version this resolution could have SELECTED.
+//
+// The alternative to asserting this is what already happened once -- an entry named
+// `backtracking` that had quietly become an ordinary resolve, still passing.
+//
+// # ⚠️ Necessary, not sufficient
+//
+// Pinning below the newest selectable version is evidence that the first choice was
+// abandoned only when the constraint driving it is INDIRECT. Bound the driver
+// directly -- `pandas<3` rather than `numpy<1.26` -- and the solver picks an older
+// pandas on the first try, backing out of nothing, while this check passes happily.
+// Measured: `pandas<3, numpy` costs 28 Metadata calls against the real entry's 42.
+//
+// TestBenchCorpusIsWellFormed is what closes that hole, by refusing an entry whose
+// own requirements bound the package named here. The two checks are meant to be read
+// together; neither is enough alone.
+//
+// # ⚠️ The comparand is the newest SELECTABLE version, not the newest published
+//
+// index.Versions returns everything in the snapshot, pre-releases included, but a
+// bare requirement cannot select a pre-release. So comparing against the published
+// maximum makes this vacuous for any package whose newest release is an alpha, beta
+// or rc: the equality can never hold and the guard passes unconditionally.
+//
+// That is not hypothetical. The snapshot this was written against carries pandas
+// 3.0.0rc0, rc1 and rc2, so during an rc window the published maximum IS a
+// pre-release -- and the guard would have switched itself off in exactly the same
+// silent way the entry it protects went stale. Six of twenty-eight popular packages
+// sampled in that snapshot currently have a pre-release maximum.
+func checkBackedOut(b *testing.B, entry benchEntry, idx index.MetadataIndex, res *resolver.Resolution) {
+	b.Helper()
+
+	pinned, ok := res.Pinned[entry.MustNotBeNewest]
+	if !ok {
+		b.Fatalf("%s: %s is not in the resolution, so this entry cannot be measuring a "+
+			"back-out of it", entry.Name, entry.MustNotBeNewest)
+	}
+
+	all, err := idx.Versions(context.Background(), entry.MustNotBeNewest)
+	if err != nil {
+		b.Fatalf("%s: versions of %s: %v", entry.Name, entry.MustNotBeNewest, err)
+	}
+
+	// The same admission the provider applies, built from the same requirements, so
+	// "newest" means the same thing here as it does to the resolution.
+	admits := candidate.EnabledPrereleases(mustRequirements(b, entry.Requirements...), nil)
+
+	var newest version.Version
+	var found bool
+	for _, v := range all {
+		if !admits.Admits(entry.MustNotBeNewest, v) {
+			continue
+		}
+		if !found || v.Compare(newest) > 0 {
+			newest, found = v, true
+		}
+	}
+	if !found {
+		b.Fatalf("%s: no selectable version of %s in the index, so there is nothing for "+
+			"MustNotBeNewest to compare against", entry.Name, entry.MustNotBeNewest)
+	}
+
+	if pinned.Compare(newest) == 0 {
+		b.Fatalf("%s: pinned %s %s, which IS the newest selectable version — so nothing was "+
+			"backed out of and this entry is timing an ordinary resolve under a name that "+
+			"claims otherwise. That is exactly how it went stale before.\n\n"+
+			"⚠️ Fix it by tightening the constraint on what %s DEPENDS ON, not on %s itself. "+
+			"Bounding %s directly would make this check pass while still backing out of "+
+			"nothing, and TestBenchCorpusIsWellFormed will reject it. Record the new bound "+
+			"and the date in the entry's Why.",
+			entry.Name, entry.MustNotBeNewest, pinned,
+			entry.MustNotBeNewest, entry.MustNotBeNewest, entry.MustNotBeNewest)
 	}
 }
 
@@ -442,11 +540,12 @@ func BenchmarkResolveCold(b *testing.B) {
 			)
 			b.ReportAllocs()
 			for b.Loop() {
-				counting := newCountingIndex(freshIndex(b, file))
+				fresh := freshIndex(b, file)
+				counting := newCountingIndex(fresh)
 				res, err := resolver.Resolve(ctx, reqs, counting, opts)
 
 				b.StopTimer()
-				checkOutcome(b, entry, res, err, excerpt)
+				checkOutcome(b, entry, fresh, res, err, excerpt)
 				if res != nil {
 					pinned = len(res.Pinned)
 				}
@@ -482,7 +581,7 @@ func BenchmarkResolveWarm(b *testing.B) {
 			// Prime it. Everything the corpus entry touches is decoded once
 			// here, outside the timer, which is what makes the loop warm.
 			warm, err := resolver.Resolve(ctx, reqs, idx, opts)
-			checkOutcome(b, entry, warm, err, excerpt)
+			checkOutcome(b, entry, idx, warm, err, excerpt)
 
 			var (
 				c      counts
@@ -495,7 +594,7 @@ func BenchmarkResolveWarm(b *testing.B) {
 				res, err := resolver.Resolve(ctx, reqs, counting, opts)
 
 				b.StopTimer()
-				checkOutcome(b, entry, res, err, excerpt)
+				checkOutcome(b, entry, idx, res, err, excerpt)
 				if res != nil {
 					pinned = len(res.Pinned)
 				}
