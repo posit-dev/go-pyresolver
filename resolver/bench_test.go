@@ -51,12 +51,27 @@
 //
 // # Measured, 2026-08-13, on the machine above
 //
+// ⚠️ EVERY FIGURE BELOW PREDATES THE found/rank CHANGE and none of them describe
+// the current provider. They were taken when Provider.Candidates returned an exact
+// count and therefore tested every in-range version for usability. Candidates now
+// stops at the first usable version, which cut Metadata calls by 9.7x to 189.5x
+// across these same entries -- see CHANGELOG.md for the current table. Kept because
+// they are the BEFORE side of that comparison and because the cost analysis they
+// support is what motivated the change; re-run the benchmark for current numbers
+// rather than reading them here.
+//
+// Two of the columns need care even as history. `cand` is not "candidate versions
+// the resolution walked": it SUMS len(Versions()) over calls, so a package asked
+// about twice contributes its list twice -- certifi's 130 is 2 x 65 published
+// versions, not 130 releases. And `meta` counted one read per in-range version per
+// round, so certifi's 131 is 65 + 65 + 1 for the decided version's Dependencies.
+//
 // Ten iterations per entry, cold and warm in one run, before and after the
 // parsed memo added to index.RSFIndex. Times are per resolution; idx is total
-// MetadataIndex calls, of which meta is Metadata; cand is the number of
-// candidate versions the resolution walked; pins is the size of the closure.
-// Both columns of each pair were measured in the same session on the same
-// machine; two repeat runs of each reproduced every figure within 3%.
+// MetadataIndex calls, of which meta is Metadata; cand is as described above;
+// pins is the size of the closure. Both columns of each pair were measured in the
+// same session on the same machine; two repeat runs of each reproduced every
+// figure within 3%.
 //
 // Every figure below is the mean of TWO full runs; the two agreed within 3%
 // except where noted.
@@ -170,7 +185,14 @@
 // version.Version.Compare is 26% of Resolve, and reflect.DeepEqual -- called as
 // a fast path from go-version's part.Parts.Compare -- is 15% on its own.
 //
-// # What no amount of caching will fix
+// # What no amount of caching will fix — RESOLVED, and kept as the reasoning
+//
+// ⚠️ This section diagnosed the problem the found/rank change then fixed, so read it
+// in the past tense. Candidates no longer returns an exact count and no longer walks
+// every in-range version; the call count did fall, and it fell without the interface
+// change this section anticipated needing, exactly as the closing paragraph
+// predicted. What follows is why, kept because the diagnosis is the argument for the
+// change and because its numbers are the BEFORE side.
 //
 // The COUNT: this provider returns an EXACT count, so it calls usable on every
 // in-range version that pre-release policy admits, and usable computes the

@@ -43,7 +43,7 @@ func (f failingIndex) Metadata(ctx context.Context, pkg index.PackageName, ver v
 
 // THE row that matters most. A version that cannot be USED is data the solver
 // reasons with; an index that cannot ANSWER is not. Reporting a transport
-// failure as count 0 would let the resolution quietly settle on an older
+// failure as found == false would let the resolution quietly settle on an older
 // version, or blame the user's constraints for an outage -- and nothing in the
 // report would point back here.
 func TestTransportErrorsPropagateRatherThanReadingAsNoSuchVersion(t *testing.T) {
@@ -59,12 +59,12 @@ func TestTransportErrorsPropagateRatherThanReadingAsNoSuchVersion(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			p := provider.New(context.Background(), tc.idx, testOptions(t))
 
-			_, count, err := p.Candidates(provider.Project("flask"), pep440set.All())
+			_, found, _, err := p.Candidates(provider.Project("flask"), pep440set.All())
 			if !errors.Is(err, errTransport) {
 				t.Fatalf("err = %v, want it to wrap the transport failure", err)
 			}
-			if count != 0 {
-				t.Errorf("count = %d alongside an error; want 0", count)
+			if found {
+				t.Error("found = true alongside an error; want false")
 			}
 			if len(p.Unusable()) != 0 {
 				t.Errorf("a transport failure was recorded as an unusable version: %v", p.Unusable())
@@ -74,25 +74,34 @@ func TestTransportErrorsPropagateRatherThanReadingAsNoSuchVersion(t *testing.T) 
 }
 
 // An sdist-only release exists and is visible on PyPI, so "no versions
-// available" is the worst thing the report could say about it. Excluding it
-// from the count is what keeps the solver's arithmetic honest; recording WHY is
-// what lets the report say something true.
-func TestSdistOnlyVersionIsExcludedAndRecorded(t *testing.T) {
+// available" is the worst thing the report could say about it. Not OFFERING it is
+// what keeps the resolution honest; recording WHY is what lets the report say
+// something true.
+//
+// ⚠️ rank is 2 here, not 1. rank counts the versions in range before usability is
+// tested, so an unusable version is still counted — it is documented as a hint
+// that may over-count, and this is that in action. What must stay exact is best
+// (the usable version) and the record naming 3.0.
+func TestSdistOnlyVersionIsNotOfferedAndIsRecorded(t *testing.T) {
 	idx := index.NewMockIndex("test").
 		AddVersion("flask", "2.0").
 		SetUnavailable("flask", "3.0")
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	best, count, err := p.Candidates(provider.Project("flask"), pep440set.All())
+	best, found, rank, err := p.Candidates(provider.Project("flask"), pep440set.All())
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("count = %d, want 1 (3.0 has no readable metadata)", count)
+	if !found {
+		t.Fatal("found = false, want true: 2.0 is usable")
+	}
+	if rank != 2 {
+		t.Errorf("rank = %d, want 2 (both versions are in range; rank is counted before "+
+			"usability)", rank)
 	}
 	if got := bestVersion(t, best); got.String() != "2.0" {
-		t.Errorf("best = %s, want 2.0", got)
+		t.Errorf("best = %s, want 2.0 — 3.0 has no readable metadata", got)
 	}
 
 	rec := onlyRecord(t, p)
@@ -116,12 +125,15 @@ func TestUnrepresentableRequirementExcludesTheVersion(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	best, count, err := p.Candidates(provider.Project("app"), pep440set.All())
+	best, found, rank, err := p.Candidates(provider.Project("app"), pep440set.All())
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("count = %d, want 1", count)
+	if !found {
+		t.Fatal("found = false, want true: 0.9 is usable")
+	}
+	if rank != 2 {
+		t.Fatalf("rank = %d, want 2 (counted before usability)", rank)
 	}
 	if got := bestVersion(t, best); got.String() != "0.9" {
 		t.Errorf("best = %s, want 0.9", got)
@@ -147,12 +159,15 @@ func TestUnrepresentableRequiresPythonExcludesTheVersion(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	_, count, err := p.Candidates(provider.Project("flask"), pep440set.All())
+	_, found, rank, err := p.Candidates(provider.Project("flask"), pep440set.All())
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("count = %d, want 1", count)
+	if !found {
+		t.Fatal("found = false, want true: 2.0 is usable")
+	}
+	if rank != 2 {
+		t.Errorf("rank = %d, want 2 (counted before usability)", rank)
 	}
 
 	rec := onlyRecord(t, p)
@@ -171,12 +186,15 @@ func TestDirectReferenceRequirementExcludesTheDependingVersion(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	best, count, err := p.Candidates(provider.Project("app"), pep440set.All())
+	best, found, rank, err := p.Candidates(provider.Project("app"), pep440set.All())
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("count = %d, want 1", count)
+	if !found {
+		t.Fatal("found = false, want true: 1.0 is usable")
+	}
+	if rank != 2 {
+		t.Fatalf("rank = %d, want 2 (counted before usability)", rank)
 	}
 	if got := bestVersion(t, best); got.String() != "1.0" {
 		t.Errorf("best = %s, want 1.0", got)
@@ -205,12 +223,13 @@ func TestUnreadableRequiresPythonKeepsTheVersionAndRecordsWhy(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	_, count, err := p.Candidates(provider.Project("flask"), pep440set.All())
+	_, found, rank, err := p.Candidates(provider.Project("flask"), pep440set.All())
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("count = %d, want 1: the version stays a candidate", count)
+	if !found || rank != 1 {
+		t.Fatalf("found = %v, rank = %d; want true, 1: the version stays a candidate",
+			found, rank)
 	}
 
 	byPkg := depsByPackage(t, dependenciesOf(t, p, provider.Project("flask"), "3.0"))
@@ -247,17 +266,17 @@ func TestExcludedVersionIsNeverRecordedAsOffered(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	_, count, err := p.Candidates(provider.Project("flask"), pep440set.All())
+	_, found, _, err := p.Candidates(provider.Project("flask"), pep440set.All())
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}
-	if count != 0 {
-		t.Fatalf("count = %d, want 0: the version cannot be used", count)
+	if found {
+		t.Fatal("found = true, want false: the version cannot be used")
 	}
 
 	for _, rec := range p.Unusable() {
 		if rec.Offered {
-			t.Errorf("flask 3.0 was excluded (count 0) but is recorded as Offered: %+v", rec)
+			t.Errorf("flask 3.0 was excluded (found false) but is recorded as Offered: %+v", rec)
 		}
 	}
 }
@@ -266,8 +285,8 @@ func TestExcludedVersionIsNeverRecordedAsOffered(t *testing.T) {
 func TestUnknownPackageRecordsNothing(t *testing.T) {
 	p := provider.New(context.Background(), index.NewMockIndex("test"), testOptions(t))
 
-	if _, count, err := p.Candidates(provider.Project("nope"), pep440set.All()); err != nil || count != 0 {
-		t.Fatalf("count = %d, err = %v; want 0, nil", count, err)
+	if _, found, _, err := p.Candidates(provider.Project("nope"), pep440set.All()); err != nil || found {
+		t.Fatalf("found = %v, err = %v; want false, nil", found, err)
 	}
 	if got := p.Unusable(); len(got) != 0 {
 		t.Errorf("recorded %v for a package that does not exist", got)
@@ -284,7 +303,7 @@ func TestUnusableRecordsAreDeduplicated(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 	for range 5 {
-		if _, _, err := p.Candidates(provider.Project("flask"), pep440set.All()); err != nil {
+		if _, _, _, err := p.Candidates(provider.Project("flask"), pep440set.All()); err != nil {
 			t.Fatalf("Candidates: %v", err)
 		}
 	}

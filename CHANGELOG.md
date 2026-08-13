@@ -13,6 +13,96 @@ served it.
 
 ## [Unreleased]
 
+### Breaking
+
+- Requires **go-pubgrub v0.2.0**, whose `Provider.Candidates` returns
+  `(best, found, rank, err)` instead of `(best, count, err)`. `provider.Provider`
+  implements the new signature, so any caller that invoked `Candidates` directly —
+  which is the solver's job, not a caller's — must be updated.
+
+- `provider.Provider.Unusable()` and `resolver.ResolutionError.Unusable` return
+  **fewer entries**, and their documented meaning changed. They now hold the versions
+  the resolution actually examined rather than every published version it could have
+  set aside: candidate selection stops at the first usable version, so a version
+  ranked below the chosen one is never looked at and never recorded.
+
+  Filed as breaking rather than as a change because it alters what an exported method
+  returns for callers who render it, and `ResolutionError` is part of the surface
+  Package Manager consumes. ⚠️ Anything presenting this as "every version we set
+  aside" is now presenting an incomplete list. The entries that explain a *failure*
+  are still all present — a package with nothing usable is examined exhaustively,
+  because that is what establishing "nothing" requires.
+
+### Changed
+
+- `provider.Candidates` answers **existence** rather than cardinality. It walks the
+  in-range versions in ranked order and stops at the first usable one, instead of
+  testing every version in range and reporting an exact count.
+
+  Index calls previously scaled with candidate *versions* rather than with the
+  closure. `certifi` has 65 published versions and no dependencies at all, and an
+  exact count read every one of them on each of the two rounds the solver asked
+  about it — 131 `Metadata` calls. Answering existence takes 3.
+
+  Measured on this code against the production snapshot (932,861 packages), per
+  corpus entry, `Metadata` calls before → after:
+
+  | entry | before | after | |
+  |---|---:|---:|---:|
+  | `single-no-deps` (certifi) | 131 | 3 | 43.7x |
+  | `small-tree` (flask) | 290 | 30 | 9.7x |
+  | `extras` (flask[async]) | 661 | 43 | 15.4x |
+  | `backtracking` (pandas, numpy<2) | 435 | 13 | 33.5x |
+  | `app-set` (5 packages) | 4,750 | 105 | 45.2x |
+  | `wide-versions` (boto3) | 4,549 | 24 | 189.5x |
+  | `unsatisfiable` | 37 | 3 | 12.3x |
+
+  So **9.7x to 189.5x**, and 5.9x to 111x counting all index calls rather than
+  metadata reads alone. Pin *counts* are unchanged on all seven entries.
+
+  `rank`, which only orders which package the solver works on next, is the count of
+  versions in range taken *before* usability is tested. That is free, since the list
+  has to be built to walk it, and go-pubgrub documents `rank` as a hint it only ever
+  compares. ⚠️ It may therefore over-count the usable versions, deliberately.
+
+  ⚠️ Only a **negative** answer still walks everything, and that is irreducible:
+  proving nothing in range is usable means checking all of it. What this removes is
+  paying that walk on every package instead of only where the answer really is
+  "nothing".
+
+  ⚠️ Ranking happens **before** the usability walk, which is what makes the chosen
+  version identical to what filter-then-rank produced. `candidate.Rank` is a stable
+  sort over a pairwise `Less`, so it orders a subset consistently with its superset.
+  Reversing the two steps moves the answer silently, and the differential in
+  `provider/differential_test.go` is what holds it down: against real published
+  metadata it compares `found`, `best` and `rank` with an exact-count reference that
+  calls the *same* usability function, so the two cannot drift.
+
+- ⚠️ An index failure on a **lower-ranked** version is no longer always seen. `usable`
+  returns an error rather than `false` when the index cannot answer, and that error
+  aborts the resolve deliberately — an outage must not be reported as "no such
+  version". That is unchanged for every version the walk reaches, but the walk stops
+  at the first usable version, so a broken *older* release is not examined unless
+  backtracking narrows the range to it.
+
+  So a resolve can now succeed against an index that is broken for one old version
+  where it previously aborted, and whether such a failure surfaces became
+  path-dependent. This is not a weakening of the rule the error path exists for —
+  nothing is reported as unavailable on the strength of an outage; it is simply not
+  looked at — and it is arguably better, since an unreadable release nobody would
+  have chosen is a poor reason to fail. But it is a real change and it is not
+  something the differential can police, because the short-circuit walk examines
+  strictly fewer versions than an exhaustive one; that test compares errors in one
+  direction only, and says so.
+
+- `candidate.Policy.Less` must now be documented-and-actually **transitive**. It was
+  already required to be a "strict weak ordering" but only irreflexivity and
+  asymmetry were spelled out. Transitivity is what makes ranking the in-range
+  versions and stopping at the first usable one pick the same version as ranking the
+  usable ones alone; without it, which version is chosen starts to depend on which
+  others happened to be in range. No existing `Policy` in this module is affected —
+  `Newest` compares versions — but `Policy` is an interface embedders implement.
+
 ### Added
 
 - `pep440set`, a canonical PEP 440 version-set algebra (intersection, union,

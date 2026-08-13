@@ -216,16 +216,18 @@ func (idx *RSFIndex) deps(pkg PackageName) (map[string]pypirsf.VersionDeps, erro
 //
 // # What this does NOT change
 //
-// The number of index calls. Provider.Candidates returns an EXACT count, so it
-// establishes usability by doing each in-range version's full dependency work,
-// which is what makes calls scale with candidate versions rather than with the
-// closure. This makes each call cheaper and removes no call.
+// The number of index calls. This memo makes each call cheaper and removes no
+// call.
 //
-// Note that zero-exactness is not what forces this: a nonzero answer is settled by
-// finding one usable version and stopping, and only the zero answer requires
-// testing everything. It is the exact MAGNITUDE, which go-pubgrub uses solely in
-// its package-choice heuristic, that requires the full walk in the common case. See
-// provider/provider.go and resolver/bench_test.go.
+// ⚠️ HISTORICAL, as of the found/rank change: when this was written,
+// Provider.Candidates returned an exact count and so did each in-range version's
+// full dependency work, which is what made calls scale with candidate versions
+// rather than with the closure. That is what the paragraph above was measured
+// against. Candidates now answers existence and stops at the first usable version,
+// so the call counts recorded here and in resolver/bench_test.go's tables are the
+// OLD ones — see the CHANGELOG for the current figures. The point this note exists
+// to make is unaffected: a memo changes the cost per call and never the number of
+// them.
 //
 // # Metadata's slices are copied, deliberately
 //

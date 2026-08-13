@@ -48,7 +48,8 @@ type Unusable struct {
 	Reason string
 
 	// Offered reports whether the version was still offered to the solver
-	// despite Reason. False means it was excluded from the candidate count.
+	// despite Reason. False means it was passed over: not selectable, so the
+	// walk moved on to the next-ranked version.
 	Offered bool
 }
 
@@ -57,6 +58,28 @@ type Unusable struct {
 // Records are deduplicated: the solver asks about the same package many times
 // as it backtracks, and a report listing one sdist-only version forty times
 // would be unreadable.
+//
+// # ⚠️ This is what was ENCOUNTERED, not an audit of every published version
+//
+// Candidates walks versions in ranked order and stops at the first usable one, so
+// a version older than the one chosen is never examined and never recorded. Before
+// the found/rank split every in-range version was tested, and so every unusable
+// one appeared here.
+//
+// The records that matter are still collected. When a package has nothing usable
+// the walk is exhaustive by necessity, so every reason is recorded — and that is
+// the case a report most needs to explain, because it is the one that produces
+// "no version of X matches". What is dropped is reasons about versions the
+// resolution had already moved past, which no failure was going to be attributed
+// to.
+//
+// ⚠️ That last claim is an argument, not a guarantee this module tests. A
+// 200-package prototype comparison against the production snapshot produced no
+// changed failure report, but nothing here pins it: the differential compares
+// found, best and rank, not Unusable() and not rendered reports. Treat a report
+// difference as possible-but-unexpected rather than excluded.
+//
+// Do not read a short list as "nothing else is wrong with this package".
 func (p *Provider) Unusable() []Unusable {
 	return p.unusable
 }

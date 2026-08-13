@@ -20,6 +20,11 @@ import (
 // spelled once so the rest of this file stays readable.
 type dependency = solver.Dependency[Package, pep440set.Set]
 
+// Conformance is asserted here rather than left to the one place that constructs a
+// solver, so a signature drift in solver.Provider fails against the file that owns
+// the obligation instead of somewhere downstream.
+var _ solver.Provider[Package, pep440set.Set] = (*Provider)(nil)
+
 // Dependencies implements solver.Provider.
 //
 // # Depender is deliberately left empty

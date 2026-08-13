@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/klauspost/compress v1.19.2
-	github.com/posit-dev/go-pubgrub v0.1.0
+	github.com/posit-dev/go-pubgrub v0.2.0
 	github.com/posit-dev/go-python-packaging v0.5.0
 	github.com/rstudio/repository-snapshot-format v0.12.0
 )

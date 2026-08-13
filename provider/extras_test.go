@@ -79,8 +79,8 @@ func TestExtraDependsOnItsBaseAtExactlyTheSameVersion(t *testing.T) {
 
 // PackageMetadata.ProvidesExtra exists precisely so pkg[tests] where the extra
 // is spelled test does not resolve happily and install nothing. Asserted
-// through Candidates, because count 0 is exactly the signal the solver reads as
-// "no such thing" and turns into an explanation.
+// through Candidates, because found == false is exactly the signal the solver
+// reads as "no such thing" and turns into an explanation.
 func TestUnknownExtraHasNoCandidates(t *testing.T) {
 	idx := index.NewMockIndex("test").
 		SetMetadata("flask", "3.0.0", index.PackageMetadata{
@@ -89,22 +89,30 @@ func TestUnknownExtraHasNoCandidates(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	if _, count, err := p.Candidates(provider.WithExtra("flask", "asynk"), pep440set.All()); err != nil || count != 0 {
-		t.Errorf("misspelled extra: count = %d, err = %v; want 0, nil", count, err)
+	if _, found, _, err := p.Candidates(provider.WithExtra("flask", "asynk"), pep440set.All()); err != nil || found {
+		t.Errorf("misspelled extra: found = %v, err = %v; want false, nil", found, err)
 	}
-	if _, count, err := p.Candidates(provider.WithExtra("flask", "async"), pep440set.All()); err != nil || count != 1 {
-		t.Errorf("declared extra: count = %d, err = %v; want 1, nil", count, err)
+	if _, found, _, err := p.Candidates(provider.WithExtra("flask", "async"), pep440set.All()); err != nil || !found {
+		t.Errorf("declared extra: found = %v, err = %v; want true, nil", found, err)
 	}
 	// The base package is unaffected by either.
-	if _, count, err := p.Candidates(provider.Project("flask"), pep440set.All()); err != nil || count != 1 {
-		t.Errorf("base package: count = %d, err = %v; want 1, nil", count, err)
+	if _, found, _, err := p.Candidates(provider.Project("flask"), pep440set.All()); err != nil || !found {
+		t.Errorf("base package: found = %v, err = %v; want true, nil", found, err)
 	}
 }
 
-// Only the versions that declare the extra are candidates for it, which is what
+// Only the versions that declare the extra are SELECTABLE for it, which is what
 // makes "this package has that extra only from 3.0 on" resolvable rather than a
 // silent no-op.
-func TestCandidatesForAnExtraCountOnlyVersionsThatProvideIt(t *testing.T) {
+//
+// ⚠️ Note what rank does and does not say here. Three versions are in range and
+// only two provide the extra, and rank reports 3 — it counts what is in range
+// before usability is tested, deliberately, because testing usability is the cost
+// this provider exists to avoid. Over-counting is what this provider chooses --
+// go-pubgrub requires no bound either way -- and this is that gap in action. What
+// must still be exact is best (the newest version actually providing the extra)
+// and found.
+func TestCandidatesForAnExtraSelectOnlyVersionsThatProvideIt(t *testing.T) {
 	idx := index.NewMockIndex("test").
 		SetMetadata("flask", "2.0", index.PackageMetadata{}).
 		SetMetadata("flask", "3.0", index.PackageMetadata{ProvidesExtra: []string{"async"}}).
@@ -112,20 +120,30 @@ func TestCandidatesForAnExtraCountOnlyVersionsThatProvideIt(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	best, count, err := p.Candidates(provider.WithExtra("flask", "async"), pep440set.All())
+	best, found, rank, err := p.Candidates(provider.WithExtra("flask", "async"), pep440set.All())
 	if err != nil {
 		t.Fatalf("Candidates: %v", err)
 	}
-	if count != 2 {
-		t.Errorf("count = %d, want 2 (2.0 does not provide the extra)", count)
+	if !found {
+		t.Fatal("found = false, want true: 3.0 and 4.0 both provide the extra")
 	}
 	if got := bestVersion(t, best); got.String() != "4.0" {
-		t.Errorf("best = %s, want 4.0", got)
+		t.Errorf("best = %s, want 4.0 — the newest version that actually provides the extra, "+
+			"which is the part that must NOT be approximate", got)
+	}
+	if rank < 2 {
+		t.Errorf("rank = %d, want at least 2: rank may over-count but must never under-count "+
+			"the usable versions, or the heuristic would prefer this package over one that "+
+			"genuinely has fewer", rank)
 	}
 
-	// The base package still has all three.
-	if _, count, err := p.Candidates(provider.Project("flask"), pep440set.All()); err != nil || count != 3 {
-		t.Errorf("base package: count = %d, err = %v; want 3, nil", count, err)
+	// The base package: all three are selectable, and none is filtered out.
+	baseBest, found, _, err := p.Candidates(provider.Project("flask"), pep440set.All())
+	if err != nil || !found {
+		t.Fatalf("base package: found = %v, err = %v; want true, nil", found, err)
+	}
+	if got := bestVersion(t, baseBest); got.String() != "4.0" {
+		t.Errorf("base package best = %s, want 4.0", got)
 	}
 }
 
@@ -145,8 +163,8 @@ func TestExtraNamesNormalize(t *testing.T) {
 		t.Errorf("no dependency on the normalized extra flask[async-io]: %v", byPkg)
 	}
 
-	if _, count, err := p.Candidates(provider.WithExtra("flask", "Async_IO"), pep440set.All()); err != nil || count != 1 {
-		t.Errorf("count = %d, err = %v; want 1, nil", count, err)
+	if _, found, _, err := p.Candidates(provider.WithExtra("flask", "Async_IO"), pep440set.All()); err != nil || !found {
+		t.Errorf("found = %v, err = %v; want true, nil", found, err)
 	}
 }
 
