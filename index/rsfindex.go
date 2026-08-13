@@ -216,11 +216,16 @@ func (idx *RSFIndex) deps(pkg PackageName) (map[string]pypirsf.VersionDeps, erro
 //
 // # What this does NOT change
 //
-// The number of index calls. Provider.Candidates must return a count that is
-// zero exactly when nothing satisfies, so it establishes usability by doing each
-// version's full dependency work; that contract is what makes calls scale with
-// candidate versions rather than with the closure. This makes each call cheaper
-// and removes no call. See provider/provider.go.
+// The number of index calls. Provider.Candidates returns an EXACT count, so it
+// establishes usability by doing each in-range version's full dependency work,
+// which is what makes calls scale with candidate versions rather than with the
+// closure. This makes each call cheaper and removes no call.
+//
+// Note that zero-exactness is not what forces this: a nonzero answer is settled by
+// finding one usable version and stopping, and only the zero answer requires
+// testing everything. It is the exact MAGNITUDE, which go-pubgrub uses solely in
+// its package-choice heuristic, that requires the full walk in the common case. See
+// provider/provider.go and resolver/bench_test.go.
 //
 // # Metadata's slices are copied, deliberately
 //

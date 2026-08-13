@@ -173,27 +173,46 @@
 // # What no amount of caching will fix
 //
 // The COUNT: this provider returns an EXACT count, so it calls usable on every
-// version in the allowed range, and usable computes the version's full
-// dependencies. That is what makes index calls scale with candidate versions
-// rather than with the closure -- certifi has no dependencies at all and still
-// costs 131 Metadata calls, one per released version. Caching cannot remove it,
-// because it is a call count rather than a constant.
+// in-range version that pre-release policy admits, and usable computes the
+// version's full dependencies. That is what makes index calls scale with candidate
+// versions rather than with the closure -- certifi has no dependencies at all, 130
+// in-range versions, and costs 131 Metadata calls: one per version to establish
+// usability, plus one for the version actually decided. Caching cannot remove
+// them, because it is a call count rather than a constant.
 //
 // ⚠️ What forces the exact count is NOT the zero-exactness rule, and an earlier
 // version of this comment said it was ("a count that is zero exactly when
 // nothing satisfies, SO an exact count means testing every version"). That does
-// not follow. Zero-exactness is an EXISTENCE requirement, and existence is
-// settled by finding one usable version and stopping. It is the MAGNITUDE that
-// requires testing everything -- and go-pubgrub consumes the magnitude only in
-// its version-choice heuristic, which its own documentation and the prose sources
-// agree is tunable rather than correctness-bearing. So the expensive half of this
-// contract is the half that is explicitly not correctness-bearing.
+// not follow, and the distinction is directional:
+//
+//   - A NONZERO answer is existence, and existence is settled by finding one
+//     usable version and stopping. This is the common case.
+//   - A ZERO answer cannot be short-circuited. Proving nothing in range is usable
+//     requires testing all of it, and that half IS correctness-bearing --
+//     go-pubgrub derives KindNoVersions from exactly this. That cost is
+//     irreducible.
+//
+// So it is the MAGNITUDE of a nonzero count that forces the walk in the cases that
+// dominate, and go-pubgrub consumes the magnitude only in its PACKAGE-choice
+// heuristic -- which package to work on next, not which version, since the
+// provider hands back best itself. Its own documentation and both prose sources
+// agree that heuristic is tunable rather than correctness-bearing. What an exact
+// count costs, then, is paying the zero-case walk on every package instead of only
+// on the packages where the answer really is "nothing".
 //
 // This is what the warm target turns on. At app-set's 4,837 index calls, a 1 ms
 // warm resolution allows 207 ns per call end to end; the memo brought the cost
 // per call down by a factor of 2.6 and it needs another factor of 261. Caching
-// cannot get there. The call count has to fall, and that is a go-pubgrub
-// interface conversation rather than a tuning exercise.
+// cannot get there; the call count has to fall.
+//
+// ⚠️ And it can fall WITHOUT an interface change. go-pubgrub already documents the
+// magnitude as approximable, so a provider may rank the in-range versions, stop at
+// the first usable one, and report the pre-usability in-range count as the
+// magnitude -- all inside the existing contract. Measured that way against the
+// production snapshot it read 31.6x fewer metadata records across 200 packages with
+// identical pins and identical failure text. Changing the interface is worth doing
+// to stop the contract from reading as though an exact count were required, which
+// is what this comment got wrong; it is not what unblocks the call count.
 //
 // Note which entry cleared the warm bar: unsatisfiable, the one that resolves
 // nothing, at 39 index calls. The bar is a function of the call count, and only
