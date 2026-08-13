@@ -55,6 +55,29 @@ func TestCmpVerBoundAgreesWithCmpBound(t *testing.T) {
 	}
 }
 
+// TestVerPosReinit pins that re-initializing a USED verPos discards the
+// previous version's lazily derived public spelling. No production caller
+// re-inits today, but init's name promises it works, and the demonstrated
+// failure mode -- hoisting one verPos out of a per-candidate loop -- returned
+// the previous version's answer while every fresh-verPos test stayed green.
+func TestVerPosReinit(t *testing.T) {
+	entries := ascendingPositions(t)
+	versions := verPosVersions(t)
+	var p verPos
+	for _, v := range versions {
+		p.init(v)
+		materialized := atBound(v)
+		for _, e := range entries {
+			// Probe first WITHOUT re-initing, so p carries whatever pub state
+			// the previous version left behind if init failed to clear it.
+			if got, want := cmpVerBound(&p, e.b), cmpBound(materialized, e.b); got != want {
+				t.Fatalf("reused verPos: cmpVerBound(at(%s), %s) = %d, want %d",
+					v.String(), e.name, got, want)
+			}
+		}
+	}
+}
+
 // TestContainsAgreesWithContainsBound holds the exported fast path to the
 // reference path over sets with every span shape construct.go produces.
 func TestContainsAgreesWithContainsBound(t *testing.T) {

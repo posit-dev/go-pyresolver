@@ -38,8 +38,14 @@ type verPos struct {
 
 // init derives the group key, which every comparison needs first. The public
 // spelling waits for ensurePub.
+//
+// It clears the whole struct before deriving, so re-initializing a used verPos
+// cannot carry the previous version's public spelling into the next
+// comparison. No current caller re-inits, but the name promises it works, and
+// the hoist-one-out-of-the-loop micro-optimization that would start re-initing
+// is exactly the kind of change that skips re-reading this file.
 func (p *verPos) init(v version.Version) {
-	p.v = v
+	*p = verPos{v: v}
 	p.epoch, p.release = releaseKey(v)
 }
 

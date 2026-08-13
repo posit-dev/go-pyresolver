@@ -52,8 +52,12 @@ func TestRetainedHeapPerSet(t *testing.T) {
 	runtime.GC()
 	var m1 runtime.MemStats
 	runtime.ReadMemStats(&m1)
+	// Signed arithmetic on purpose: the live heap can shrink across the run
+	// (other tests' garbage collected between the two reads), and a uint64
+	// subtraction would log that as ~1.8e19 rather than as negative.
+	delta := int64(m1.HeapAlloc) - int64(m0.HeapAlloc)
 	t.Logf("live heap for %d Sets: %d bytes (%.1f B/Set)",
-		n, m1.HeapAlloc-m0.HeapAlloc, float64(m1.HeapAlloc-m0.HeapAlloc)/n)
+		n, delta, float64(delta)/n)
 	runtime.KeepAlive(keep)
 	runtime.KeepAlive(specs)
 }

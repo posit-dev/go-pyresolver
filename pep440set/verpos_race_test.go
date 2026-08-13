@@ -46,6 +46,39 @@ func TestContainsConcurrent(t *testing.T) {
 		probes = append(probes, mustV(t, spelling))
 	}
 
+	// The test's value depends on at least one probe actually descending to
+	// the pub.Compare arm -- group key tied, tier 1, public spellings
+	// differing, both parseable. Assert that rather than trusting the comment
+	// above: a change to the bound shapes FromSpecifiers builds could
+	// otherwise leave every probe stopping at the group key, and this test
+	// covering nothing while staying green.
+	reached := false
+	for _, v := range probes {
+		var p verPos
+		p.init(v)
+		p.ensurePub()
+		for _, sp := range s.spans {
+			for _, b := range []bound{sp.lo, sp.hi} {
+				if b.inf != 0 {
+					continue
+				}
+				bk := b.pos()
+				if cmpDigits(p.epoch, bk.epoch) != 0 ||
+					cmpSegments(p.release, bk.release) != 0 ||
+					b.tier() != 1 {
+					continue
+				}
+				if p.public != bk.public && p.pubOK && bk.pubOK {
+					reached = true
+				}
+			}
+		}
+	}
+	if !reached {
+		t.Fatal("no (probe, bound) pair reaches the pub.Compare arm; " +
+			"the fixture has drifted from the shape this test exists for")
+	}
+
 	want := make([]bool, len(probes))
 	for i, v := range probes {
 		want[i] = s.containsBound(atBound(v))
