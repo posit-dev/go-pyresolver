@@ -137,6 +137,32 @@ served it.
   documentation of `resolver/bench_test.go`.
   ([#18651](https://github.com/rstudio/package-manager/issues/18651))
 
+### Fixed
+
+- `pep440set` derived a bound's sort key on every comparison rather than once
+  per bound. `cmpBound` sits in the innermost loop of the set algebra, which is
+  itself in the solver's hot loop, and each call rendered both versions' release
+  segments to a string and split it, then rendered and **re-parsed** both public
+  versions. One resolution against an index shaped like a curated or air-gapped
+  repository -- packages present, transitive dependencies absent -- allocated
+  25 GB and took 17.5 s. The failing, unsatisfiable path is the expensive one,
+  so a request that cannot be satisfied was the one at risk of exhausting memory
+  instead of returning an error.
+
+  The key is now derived once, when the bound is built, and the span slices the
+  algebra allocates are sized up front instead of grown. Same resolution, same
+  index calls, same outcome: **17.5 s to 2.1 s, 25.1 GB to 4.2 GB, and 568
+  million allocations to 14.8 million**. Building a set of specifiers costs
+  slightly more than it did (`>=1.0`: 1.55 to 1.91 µs) because a bound now pays
+  for its key up front; comparing sets costs far less (`Equal`: 10.1 µs and 320
+  allocations to 0.16 µs and none).
+
+  No ordering changed. `TestBoundKeyAgreesWithLiteral` holds the derived-once
+  and derived-on-demand paths to the same answer on every pair of a widened
+  ordering grid, whose PEP 440 orderings were cross-checked against
+  pypa/packaging 26.2.
+  ([#19713](https://github.com/rstudio/package-manager/issues/19713))
+
 ## [0.4.0] - 2026-08-10
 
 ### Breaking

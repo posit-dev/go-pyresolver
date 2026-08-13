@@ -15,7 +15,12 @@ type Set struct{ spans []span }
 // newSet canonicalizes. Every constructor and every operation returns through
 // it, because versionset.Set requires Equal to hold across representations.
 func newSet(spans ...span) Set {
-	kept := spans[:0:0]
+	// Sized up front rather than grown. A span is two bounds and a bound
+	// carries a version.Version, so a span is hundreds of bytes wide and
+	// append's doubling copies all of it repeatedly; newSet is on the hot path
+	// of every set operation. The slice is a fresh array either way -- aliasing
+	// the caller's would let canonicalization write through it.
+	kept := make([]span, 0, len(spans))
 	for _, sp := range spans {
 		if cmpBound(sp.lo, sp.hi) < 0 {
 			kept = append(kept, sp)
@@ -31,7 +36,8 @@ func newSet(spans ...span) Set {
 		return cmpBound(kept[i].hi, kept[j].hi) < 0
 	})
 
-	out := []span{kept[0]}
+	out := make([]span, 1, len(kept))
+	out[0] = kept[0]
 	for _, sp := range kept[1:] {
 		last := &out[len(out)-1]
 		// Overlapping OR merely adjacent (lo == last.hi) must fuse: a gap of
@@ -116,7 +122,10 @@ func (s Set) Union(other Set) Set {
 
 // Intersect implements versionset.Set.
 func (s Set) Intersect(other Set) Set {
-	var out []span
+	// Both sides are canonical -- sorted and disjoint -- so the intersection
+	// has at most len(s)+len(other)-1 spans however many pairs the loop below
+	// visits. Sizing to that beats growing a span slice by doubling.
+	out := make([]span, 0, len(s.spans)+len(other.spans))
 	for _, a := range s.spans {
 		for _, b := range other.spans {
 			lo, hi := a.lo, a.hi
@@ -139,7 +148,8 @@ func (s Set) Complement() Set {
 	if len(s.spans) == 0 {
 		return All()
 	}
-	var out []span
+	// One gap below each span, plus the tail above the last one.
+	out := make([]span, 0, len(s.spans)+1)
 	cursor := negInf()
 	for _, sp := range s.spans {
 		if cmpBound(cursor, sp.lo) < 0 {
