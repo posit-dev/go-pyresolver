@@ -25,7 +25,13 @@ import (
 // a literal zero-fills the ten fields it does not mention -- python_version
 // becomes "" and a marker like python_version >= "3.8" silently flips its
 // answer.
-func testEnv(t *testing.T) marker.Environment {
+//
+// ⚠️ These four helpers take testing.TB rather than *testing.T so the
+// resolution benchmark (bench_test.go) can share the ONE definition of the
+// environment every measurement is taken in. A benchmark with its own copy of
+// testEnv would drift from this one, and a resolution measured against a
+// different interpreter is a different resolution.
+func testEnv(t testing.TB) marker.Environment {
 	t.Helper()
 	env, err := marker.EnvironmentFromTarget(
 		tags.Target{Implementation: "cp", PyMajor: 3, PyMinor: 11, OS: "linux", Arch: "x86_64"},
@@ -42,7 +48,7 @@ func testEnv(t *testing.T) marker.Environment {
 	return env
 }
 
-func testOptions(t *testing.T) resolver.Options {
+func testOptions(t testing.TB) resolver.Options {
 	t.Helper()
 	return resolver.Options{
 		Environment:   testEnv(t),
@@ -50,7 +56,7 @@ func testOptions(t *testing.T) resolver.Options {
 	}
 }
 
-func mustRequirements(t *testing.T, ss ...string) []requirement.Requirement {
+func mustRequirements(t testing.TB, ss ...string) []requirement.Requirement {
 	t.Helper()
 	out := make([]requirement.Requirement, 0, len(ss))
 	for _, s := range ss {
@@ -63,7 +69,7 @@ func mustRequirements(t *testing.T, ss ...string) []requirement.Requirement {
 	return out
 }
 
-func mustSpecifiers(t *testing.T, s string) version.Specifiers {
+func mustSpecifiers(t testing.TB, s string) version.Specifiers {
 	t.Helper()
 	specs, err := version.NewSpecifiers(s)
 	if err != nil {
