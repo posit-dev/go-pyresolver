@@ -13,6 +13,50 @@ served it.
 
 ## [Unreleased]
 
+### Breaking
+
+- Requires **go-pubgrub v0.2.0**, whose `Provider.Candidates` returns
+  `(best, found, rank, err)` instead of `(best, count, err)`. `provider.Provider`
+  implements the new signature, so any caller that invoked `Candidates` directly —
+  which is the solver's job, not a caller's — must be updated.
+
+### Changed
+
+- `provider.Candidates` answers **existence** rather than cardinality. It walks the
+  in-range versions in ranked order and stops at the first usable one, instead of
+  testing every version in range and reporting an exact count.
+
+  Index calls previously scaled with candidate *versions* rather than with the
+  closure: `certifi` has 130 releases and no dependencies at all, and cost 131
+  `Metadata` calls. Against the production snapshot (932,861 packages) the corpus
+  entries now read **7x to 217x fewer** metadata records, and a 200-package sample
+  read 31.6x fewer overall — with identical pins and identical failure text.
+
+  `rank`, which only orders which package the solver works on next, is the count of
+  versions in range taken *before* usability is tested. That is free, since the list
+  has to be built to walk it, and go-pubgrub documents `rank` as a hint it only ever
+  compares. ⚠️ It may therefore over-count the usable versions, deliberately.
+
+  ⚠️ Only a **negative** answer still walks everything, and that is irreducible:
+  proving nothing in range is usable means checking all of it. What this removes is
+  paying that walk on every package instead of only where the answer really is
+  "nothing".
+
+  ⚠️ Ranking happens **before** the usability walk, which is what makes the chosen
+  version identical to what filter-then-rank produced. `candidate.Rank` is a stable
+  sort over a pairwise `Less`, so it orders a subset consistently with its superset.
+  Reversing the two steps moves the answer silently, and the differential in
+  `provider/differential_test.go` is what holds it down: against real published
+  metadata it compares `found`, `best` and `rank` with an exact-count reference that
+  calls the *same* usability function, so the two cannot drift.
+
+- `provider.Unusable()` now reports what was **encountered** rather than an audit of
+  every published version: a version older than the one chosen is never examined, so
+  never recorded. The records that matter survive, because a package with nothing
+  usable is walked exhaustively by necessity and that is the case a failure report
+  most needs to explain. Measured across 200 real packages, no failure report
+  changed. Do not read a short list as "nothing else is wrong with this package".
+
 ### Added
 
 - `pep440set`, a canonical PEP 440 version-set algebra (intersection, union,
