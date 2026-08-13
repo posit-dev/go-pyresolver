@@ -120,6 +120,23 @@ served it.
   out by name rather than by matching a sentence.
   ([#18657](https://github.com/rstudio/package-manager/issues/18657))
 
+- A cold/warm resolution benchmark over a committed corpus
+  (`resolver/bench_test.go`, `resolver/bench_corpus_test.go`), the RFD 0001
+  Phase 3 exit gate. Test-only: no library code changed, and a benchmark never
+  runs under `go test ./...`, so the 981 MB production snapshot is never
+  required. It defaults to the committed excerpt and reads the same
+  `PYPIRSF_TEST_FILE` as the other real-corpus tests.
+
+  It counts `MetadataIndex` calls through a decorator as well as timing the
+  resolution, because the call count is the part that does not depend on the
+  machine. **The gate is not met.** Against the production snapshot: cold under
+  100 ms for five of seven corpus entries and 5-7x over for the other two; warm
+  under 1 ms for none of them, and warm is within 3% of cold everywhere, because
+  the only cache in the path holds raw strings and every `Metadata` call
+  re-parses them. Full table, profile and verdict are in the package
+  documentation of `resolver/bench_test.go`.
+  ([#18651](https://github.com/rstudio/package-manager/issues/18651))
+
 ## [0.4.0] - 2026-08-10
 
 ### Breaking
