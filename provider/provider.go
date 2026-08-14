@@ -319,14 +319,24 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 // it. None is a correctness defect; all three are changes, and an undocumented
 // change is the one that surprises someone later.
 //
-//   - RETAINED MEMORY, traded for churn. This holds the parsed version list of
-//     every package the closure reaches for the whole resolution, where those
-//     were previously transient garbage. Allocation volume falls sharply -- the
-//     benchmark's app-set entry goes from 1.44M allocations to 124k -- but that
-//     is total allocation, not peak retention, and the two move in opposite
-//     directions here. For a server running concurrent resolutions this is a
-//     shift from high-churn/low-retention to lower-churn/higher-retention. It is
-//     bounded by the closure and is NOT measured at peak.
+//   - RETAINED MEMORY. This holds the parsed version list of every package the
+//     closure reaches for the whole resolution, where those were previously
+//     transient garbage -- so the obvious worry is that it trades allocation
+//     churn for a higher high-water mark, and total allocation (B/op) cannot
+//     answer that because it is cumulative rather than peak.
+//
+//     ⚠️ MEASURED, and it goes the OTHER way: peak heap FELL, by 3.0x to 7.3x.
+//     app-set's peak-over-baseline went 53.9 MB to 7.4 MB and wide-versions'
+//     56.2 MB to 18.6 MB, reproducible across three runs a side. An earlier
+//     draft of this note asserted the trade-off as though it were established;
+//     it was a prediction, and it was wrong.
+//
+//     The reason is that the churn it removes was never short-lived. The old
+//     path allocated a fresh in-range slice AND a fresh Rank copy on every one
+//     of app-set's 87 calls, and those pile up within a GC cycle; the memo holds
+//     one list per package -- 18 of them -- and the in-range slice is gone
+//     entirely. Fewer live bytes, not more. See resolver.TestPeakHeapDuringOneResolve,
+//     which is a SAMPLED maximum and therefore a floor on the true peak.
 //
 //   - CANCELLATION. index.Versions checks ctx.Err(), so before this every
 //     Candidates call had a cancellation checkpoint even when nothing was in

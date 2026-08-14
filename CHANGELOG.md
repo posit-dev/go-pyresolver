@@ -51,6 +51,17 @@ served it.
   — which the previous release's change did not move at all. Allocations fall with it,
   `app-set` from 67.2 MB / 1,444,306 to 8.7 MB / 123,869.
 
+  **Peak heap falls too, 3.0x to 7.3x**, which is the number `B/op` cannot give:
+  `app-set`'s peak-over-baseline goes 53.9 MB → 7.4 MB and `wide-versions`' 56.2 MB →
+  18.6 MB, reproducible across three runs a side. ⚠️ This was worth measuring rather
+  than assuming, and it contradicts the obvious prediction: a memo holds version lists
+  for the whole resolve where they used to be garbage, so it *looks* like churn traded
+  for retention. It is not, because the churn was never short-lived — the old path
+  allocated a fresh in-range slice and a fresh `Rank` copy on each of `app-set`'s 87
+  calls, which pile up within a GC cycle, against 18 retained lists now and no in-range
+  slice at all. See `resolver.TestPeakHeapDuringOneResolve` (a *sampled* maximum, so a
+  floor on the true peak).
+
   ⚠️ This is a delta from `73d820a`, which already contains the `pep440set.Contains`
   change below, and the two are **not** independent — `Contains` sits inside
   `Candidates`. Measured as a 2×2 in one interleaved session on the three largest
@@ -169,8 +180,8 @@ served it.
   `rangesOver` was unioning per-version singletons, which is quadratic in `cmpBound`.
   Ranges are now built through specifiers (one or two spans regardless of version
   count), the union-built gappy shape is kept only for lists of ≤64, and a bare
-  full-snapshot run takes 57 seconds. A knob whose documented use hangs is worse than
-  no knob.
+  full-snapshot run finishes in well under a minute. A knob whose documented use hangs
+  is worse than no knob.
 
   ⚠️ That assertion replaced a derived one, and the distinction is the point. An earlier
   version reported the memoized-call count as calls-minus-packages — arithmetic over the

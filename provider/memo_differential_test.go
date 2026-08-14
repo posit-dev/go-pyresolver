@@ -74,10 +74,16 @@ func TestCandidatesAgreeAcrossRepeatedCallsWithDifferentRanges(t *testing.T) {
 	// an assertion, failing the package on the 40-minute limit. A knob whose
 	// documented use hangs is worse than no knob.
 	//
-	// 20,000 is ~85 seconds against a production snapshot and comfortably more
-	// than enough: the assertions are about a per-package memo, so coverage grows
-	// with distinct packages and saturates early. GPR_SAMPLE=0 still means "all",
-	// for anyone who wants it and has the time.
+	// 20,000 is well under a minute against a production snapshot and comfortably
+	// more than enough: the assertions are about a per-package memo, so coverage
+	// grows with distinct packages and saturates early. GPR_SAMPLE=0 still means
+	// "all", for anyone who wants it and has the time.
+	//
+	// ⚠️ Deliberately not a precise figure. Observed at 30s, 57s and 85s on the
+	// same machine and the same snapshot -- the 85s reading predates the
+	// specifier-built ranges below, and the rest is ambient load. Three different
+	// numbers for "the same run" were briefly recorded in three places, which is
+	// what a precise figure invites for something this contended.
 	limit := 20000
 	if s := os.Getenv("GPR_SAMPLE"); s != "" {
 		if limit, err = strconv.Atoi(s); err != nil {

@@ -118,8 +118,9 @@
 // purpose is that the solver reconsiders the same package repeatedly, which is
 // precisely what the memo targets, and it has both the largest candvers drop of
 // the corpus (7.1x, 2,495 to 351) and the largest Versions() drop (30 calls to
-// 6). Its 6.7x is above the 5.2x the retired entry showed, which is what one
-// would predict and is now measured rather than predicted.
+// 6). Its 7.5x is above the 6.3x single-no-deps shows and above what the retired
+// entry showed, which is what one would predict of the entry built to provoke
+// repeated candidacy queries, and is now measured rather than predicted.
 //
 // Warm allocations fell with the time, and by more:
 //

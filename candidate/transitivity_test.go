@@ -258,9 +258,16 @@ func realVersions(t *testing.T) [][]version.Version {
 			// Guard the premise rather than trusting it: a spelling that is not
 			// actually PEP 440-equal would make the "equivalence" half of this
 			// test check something else entirely.
+			//
+			// ⚠️ SKIP the class rather than fail the run. Appending ".0" is equal
+			// under PEP 440 for a release segment and NOT for a base carrying a
+			// local label -- "1.0+abc" gives "1.0+abc.0", which parses fine and
+			// compares unequal. PyPI rejects local versions on upload so no
+			// snapshot can contain one today, but a fixture that aborts on an
+			// input it merely cannot use turns a data property into a red test.
+			// The vacuity guard downstream is what catches "too few classes".
 			if alt.Compare(base) != 0 {
-				t.Fatalf("%s and %s were expected to be PEP 440-equal and are not",
-					base, alt)
+				continue
 			}
 			seen[alt.String()] = true
 			cl = append(cl, alt)
