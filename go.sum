@@ -6,8 +6,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/posit-dev/go-pubgrub v0.2.0 h1:RWGbZl0x1s1T/7kF1e1Q4CKyy+gMBqEh1rCaZwIzdLs=
 github.com/posit-dev/go-pubgrub v0.2.0/go.mod h1:5ks/krPJaOu6GmbBqaeOiFR+cBa4lh5lkYIxun6cWW4=
-github.com/posit-dev/go-python-packaging v0.6.0 h1:bqiHnvfeFN7TV7QWxwgCyTrZ75oJhg+hr0K41S6l67c=
-github.com/posit-dev/go-python-packaging v0.6.0/go.mod h1:NkELXOh/eRDT7c+LKFxJd+HkyGpKFsUIxpTYaq5xdkU=
+github.com/posit-dev/go-python-packaging v0.7.0 h1:pxyI2MmsP2iLqcwHkjZiXMPvvagywbslXid35czAh3o=
+github.com/posit-dev/go-python-packaging v0.7.0/go.mod h1:NkELXOh/eRDT7c+LKFxJd+HkyGpKFsUIxpTYaq5xdkU=
 github.com/rstudio/go-version v0.0.2 h1:ihU0xaF+Yuya0p2J6C8dfyB4gu/YehM1d6cTpabf/7A=
 github.com/rstudio/go-version v0.0.2/go.mod h1:Xfuma+m4R9L0P+Hof8iDDiL4/TJ8VjpdDXWq8qGXHL4=
 github.com/rstudio/repository-snapshot-format v0.12.0 h1:a6gRfXPLOR+5YxN7irO097lpWGOPMe8ZoATGkC9hcWE=

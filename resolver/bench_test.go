@@ -241,6 +241,80 @@
 // module's provider. The next honest measurement is of go-pubgrub's conflict
 // resolution, not of Candidates.
 //
+// ⚠️ THAT SECTION IS SUPERSEDED IN ONE ROW. "CONSTRUCTING the bound for each
+// version, 83% of Contains" was the diagnosis; #39 removed the bound and the
+// release-key change below removed what remained under it. Contains is now
+// 0.6% of samples on app-set, and the "probe memoized alongside the ranked
+// list" idea it proposes has nothing left to buy. The rest of the section
+// stands.
+//
+// # THE RELEASE-KEY RESULT, measured 2026-08-14 against 6c13230 (v0.6.0)
+//
+// pep440set derived a version's (epoch, release) group key by rendering the
+// version back to TEXT with BaseVersion() and splitting it apart again, once
+// per candidate version per Contains call. It now asks gpp for
+// version.ReleaseKey, which reads the parsed Version's own fields.
+//
+// Medians of three interleaved rounds, ten iterations, full snapshot. A fourth
+// round was run afterwards against the PUBLISHED gpp v0.7.0 rather than a local
+// replace, and reproduced every entry within noise (app-set 1.40x, wide-versions
+// 1.24x) except unsatisfiable; see the warning below it.
+//
+//	entry            warm ms          warm allocs/op
+//	                 before  after    before    after
+//	single-no-deps     0.21   0.15    3,637     2,260    1.38x / 1.61x fewer
+//	small-tree         1.06   0.80   19,393    10,908    1.32x / 1.78x
+//	extras             1.45   1.08   29,391    15,102    1.35x / 1.95x
+//	app-set            4.54   3.27   96,318    42,415    1.39x / 2.27x
+//	wide-versions      8.11   6.74  197,228   127,659    1.20x / 1.54x
+//	backtracking       2.78   2.33   43,304    21,015    1.19x / 2.06x
+//	unsatisfiable      0.33   0.31    6,448     5,168    1.07x / 1.25x
+//
+//	entry            cold ms          cold allocs/op
+//	                 before  after    before    after
+//	single-no-deps     0.27   0.23    4,365     2,982    1.17x / 1.46x
+//	small-tree         1.41   1.10   23,609    15,107    1.28x / 1.56x
+//	extras             1.82   1.46   34,630    20,354    1.25x / 1.70x
+//	app-set            5.94   4.70  118,465    64,533    1.26x / 1.84x
+//	wide-versions     13.14  11.86  276,776   207,206    1.11x / 1.34x
+//	backtracking       6.22   5.26   89,097    66,832    1.18x / 1.33x
+//	unsatisfiable      0.55   0.51    9,256     7,974    1.08x / 1.16x
+//
+// ⚠️ READ THE ALLOCATION COLUMN. The saving is not arithmetic, it is garbage:
+// app-set allocates 2.27x less warm while running 1.39x faster.
+//
+// In the warm profile Set.Contains falls from 41% of resolver.Resolve to 24% on
+// app-set, and from 33% to 14% on wide-versions -- 3.1x and 3.8x fewer samples
+// in absolute terms. The group key was 82% of Contains on app-set and 74% on
+// wide-versions before.
+//
+// ⚠️ AGAINST Resolve, NOT against total samples. The denominator has to be
+// something the change does not move, and total samples is not: removing this
+// allocation shrinks the profile's garbage-collection share too, so a
+// "% of samples" figure would credit this change with that as well. The same
+// binary's Contains share swings by 7x purely by changing -benchtime.
+//
+// ⚠️ strings.Split leaves the profile entirely, but math/big.nat.itoa and
+// version.writeRelease DO NOT: ensurePub still renders the public spelling,
+// which this change does not touch. They fall from 2.3% and 1.6% of samples
+// under Contains to below the sampling floor, which is not the same as gone.
+//
+// ⚠️ unsatisfiable IS NOT MEASURABLY FASTER. Its 1.07x is a median of three, and
+// a fourth confirmation round put it at 0.96x -- slower. Read it as no change.
+// That is the prediction met rather than a disappointment: it fails before
+// enumerating many candidates, so it makes the fewest Contains calls in the
+// corpus and has the least to gain. Its allocations do fall, by 1.25x, which is
+// the effect appearing where the mechanism says it should. An entry that gained
+// where it has no mechanism to would mean the measurement, not the change, was
+// doing the work.
+//
+// ⚠️ THIS IS MEASURED WITHOUT THE PARSED-VERSION MEMO, and the two are NOT
+// additive. After this change the largest remaining warm cost is version.Parse
+// inside index.Versions -- 16.9% of samples on wide-versions -- which is exactly
+// what that memo removes. Whichever lands second must re-measure against the
+// first rather than carrying this column forward, for the same reason #39 and the
+// ranking change needed a 2x2.
+//
 // # ⚠️ THE found/rank RESULT, measured 2026-08-13
 //
 // Both sides below were measured in ONE session on this machine, warm, ten
@@ -504,16 +578,21 @@
 //	        releaseKey            3.35 s
 //
 // Index calls are 11,029 and barely register. The work is version-set algebra
-// inside the solver's conflict resolution, and under it releaseKey, which
-// re-derives its ordering key from version.BaseVersion() -- a string render --
-// on every bound comparison. So the two regimes have two different dominant
-// costs, and a fix aimed at one does nothing for the other.
+// inside the solver's conflict resolution, and under it a `releaseKey` helper
+// that re-derived its ordering key from version.BaseVersion() -- a string
+// render -- on every bound comparison. So the two regimes have two different
+// dominant costs, and a fix aimed at one does nothing for the other.
 //
 // ⚠️ Those figures are the PRE-FIX baseline: they were taken before
 // rstudio/package-manager#19713 derived a bound's key once, which took the same
 // resolution to 2.1 s and 4.2 GB. They are kept because the point they make --
 // that an incomplete index has a completely different dominant cost from a
 // complete one, so the memo above does nothing for it -- survives the fix.
+//
+// ⚠️ `releaseKey` no longer exists at all: the release-key change above replaced
+// it with gpp's version.ReleaseKey, which derives the same key from the parsed
+// fields without rendering anything. The profile is kept as history, and the
+// frame name in it will not be found in the tree.
 //
 // The measurement remains the deliverable of rstudio/package-manager#18651. The
 // two optimizations now in the module (#19713's set algebra, and the parsed memo

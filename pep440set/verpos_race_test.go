@@ -15,15 +15,24 @@ import (
 //
 // ⚠️ WHAT A GREEN RUN HERE DOES AND DOES NOT PROVE. This test demonstrates
 // that concurrent Contains calls on a shared Set are race-free ON THIS PATH.
-// It does NOT cover the known upstream hazard -- rstudio/go-version v0.0.2's
-// Parts.Padding appending into shared spare capacity in place (go-version
-// PR #5, unmerged) -- because on this path that hazard is UNREACHABLE:
-// reaching pub.Compare requires cmpSegments(p.release, bk.release) == 0, and
-// releaseKey's trailing-zero stripping yields the same segment count as gpp's
-// Parts.Normalize, so Padding always sees a zero-length difference and never
-// appends. Do not read a green run here as evidence the padding race is
-// covered; resolver/concurrency_test.go is the test that reaches it, through
-// cross-group Compare in ranking.
+// It does NOT cover the historical upstream hazard -- rstudio/go-version
+// v0.0.2's Parts.Padding appending into shared spare capacity in place
+// (go-version PR #5, unmerged). Two independent reasons, and the first now
+// dominates:
+//
+//   - gpp no longer calls Parts.Padding AT ALL. compareVersions pads through
+//     padParts, into fresh slices. Parts.Padding is still defined in
+//     go-version v0.0.2 and has no caller anywhere in the graph, so there is
+//     nothing left in this module's dependencies to race on.
+//   - On this path it was unreachable even before that: reaching pub.Compare
+//     requires the two release keys to tie, and version.ReleaseKey strips a
+//     trailing segment exactly when Parts.Normalize does (both drop a segment
+//     whose big.Int is zero), so a tie means equal segment counts and Padding
+//     would have seen a zero-length difference.
+//
+// Do not read a green run here as evidence about that hazard either way. The
+// ".0" probe shapes below are kept because they are what makes this test
+// descend to pub.Compare at all, which is the path it does cover.
 //
 // The probes still end in ".0" (the spare-capacity shape) and share the
 // bounds' release group so the ladder genuinely descends to pub.Compare --
@@ -72,9 +81,7 @@ func TestContainsConcurrent(t *testing.T) {
 					continue
 				}
 				bk := b.pos()
-				if cmpDigits(p.epoch, bk.epoch) != 0 ||
-					cmpSegments(p.release, bk.release) != 0 ||
-					b.tier() != 1 {
+				if p.rel.Compare(bk.rel) != 0 || b.tier() != 1 {
 					continue
 				}
 				if p.public != bk.public && p.pubOK && bk.pubOK {

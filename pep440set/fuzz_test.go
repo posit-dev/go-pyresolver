@@ -85,7 +85,8 @@ func fuzzVersions() []string {
 //	>99999999999999999999.0
 //	~=1.0.99999999999999999999
 //
-// bound.go's releaseKey built its comparison key with strconv.Atoi and BROKE
+// bound.go's release-group key -- then a local `releaseKey` helper, since
+// replaced by gpp's version.ReleaseKey -- was built with strconv.Atoi and BROKE
 // out of the loop on error, so a release segment at or above 2^63
 // (9223372036854775808) was dropped along with every segment after it. The
 // key became a PREFIX of the real release -- for the first seed, the empty key
