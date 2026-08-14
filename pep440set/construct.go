@@ -431,6 +431,23 @@ func compatibleUpperBound(operand string) (hi bound, ok bool, err error) {
 	}
 }
 
+// isDigits reports whether s is a non-empty run of ASCII digits.
+//
+// It lived in bound.go while the release-group key was derived from rendered
+// text. That derivation is gone -- the key comes from gpp's parsed fields now
+// -- and this is the only remaining caller, so it lives here.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // incrementLastSegment turns "1.2" into version 1.3, preserving any epoch.
 //
 // ⚠️ The arithmetic is done on the DIGIT STRING, not through strconv. A

@@ -125,41 +125,44 @@ func TestBoundOrderingPastInt64(t *testing.T) {
 	}
 }
 
-// TestCanonDigits exercises the leading-zero stripping DIRECTLY, because
-// nothing else does.
+// TestLeadingZeroSpellings replaces the leading-zero stripping this package
+// used to do for itself.
 //
-// releaseKey's only caller feeds it BaseVersion(), which renders every segment
-// through big.Int.String() and so is already leading-zero-free -- no bound
-// built from a parsed version can reach the stripping below. That makes
-// canonDigits defensive code against a future caller that hands releaseKey a
-// spelling gpp has not normalized, and defensive code with no test is how a
-// "simplification" that drops it passes review. cmpDigits compares
-// length-first, so an unstripped run would sort "007" above "7".
-func TestCanonDigits(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"7", "7"},
-		{"007", "7"},
-		{"0", "0"},
-		{"000", "0"},
-		{"0100", "100"},
-		{"10", "10"},
-		{"", ""},
-		{"00000000000000000001", "1"},
+// It stripped because it built its key out of DIGIT RUNS, compared
+// length-first, where "007" would have sorted above "7". The key now comes from
+// gpp's parsed release segments, which are math/big integers: "007" and "7" are
+// the same integer before a key exists, and there is no run to strip. The
+// concern is gone rather than moved, but the BEHAVIOUR it protected is not
+// optional, so it is asserted here through the real path instead of through a
+// helper.
+//
+// Every pair below must occupy one position: same value, different spelling,
+// at widths on both sides of int64 and uint64.
+func TestLeadingZeroSpellings(t *testing.T) {
+	pairs := [][2]string{
+		{"1.7", "1.007"},
+		{"1.100", "1.0100"},
+		{"1.1", "1.00000000000000000001"},
+		{"1.099999999999999999990", "1.0099999999999999999990"},
+		{"0!1.0", "00!1.0"},
+		{"7!1.0", "007!1.0"},
 	}
-	for _, tc := range cases {
-		if got := canonDigits(tc.in); got != tc.want {
-			t.Errorf("canonDigits(%q) = %q, want %q", tc.in, got, tc.want)
+	for _, p := range pairs {
+		a := bound{v: mustV(t, p[0]), edge: edgeAt}
+		b := bound{v: mustV(t, p[1]), edge: edgeAt}
+		if got := cmpBound(a, b); got != 0 {
+			t.Errorf("cmpBound(at(%s), at(%s)) = %d, want 0", p[0], p[1], got)
 		}
 	}
 
-	// The point of stripping: the canonical runs must compare equal, and the
-	// unstripped ones would not.
-	if got := cmpDigits(canonDigits("007"), canonDigits("7")); got != 0 {
-		t.Errorf("cmpDigits(canon 007, canon 7) = %d, want 0", got)
-	}
-	if got := cmpDigits("007", "7"); got == 0 {
-		t.Error("cmpDigits compares length first, so unstripped runs should NOT " +
-			"compare equal; this test no longer shows what canonDigits is for")
+	// ...and the spelling must not have flattened a real difference either:
+	// 1.007 is 1.7, NOT 1.70 or 1.0.7.
+	for _, p := range [][2]string{{"1.007", "1.70"}, {"1.007", "1.0.7"}} {
+		a := bound{v: mustV(t, p[0]), edge: edgeAt}
+		b := bound{v: mustV(t, p[1]), edge: edgeAt}
+		if got := cmpBound(a, b); got == 0 {
+			t.Errorf("cmpBound(at(%s), at(%s)) = 0; the two are different releases", p[0], p[1])
+		}
 	}
 }
 

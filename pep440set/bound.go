@@ -50,21 +50,22 @@ type bound struct {
 
 // posKey is everything cmpBound needs from a bound's version.
 //
-// ⚠️ DERIVE IT AT CONSTRUCTION, NOT PER COMPARISON. Every field here costs at
-// least one string render: version.Version holds its release as big.Ints and
-// its public spelling only as something String() builds, and Public() then
-// needs a re-parse to be comparable. cmpBound runs in the innermost loop of the
-// set algebra, which is itself in the solver's hot loop, so it is called orders
-// of magnitude more often than a bound is built. One resolution against a
-// curated-shaped index -- packages present, transitive dependencies absent --
-// took 17.5 s and allocated 25 GB CUMULATIVELY with this work on the comparison
-// side. Cumulatively, not concurrently: peak heap stayed under 120 MB, so what
-// the churn bought was garbage collection. The cost is latency, not footprint.
+// ⚠️ DERIVE IT AT CONSTRUCTION, NOT PER COMPARISON. version.Version holds its
+// public spelling only as something String() builds, and Public() then needs a
+// re-parse to be comparable, so the public fields below cost a render each.
+// cmpBound runs in the innermost loop of the set algebra, which is itself in
+// the solver's hot loop, so it is called orders of magnitude more often than a
+// bound is built. One resolution against a curated-shaped index -- packages
+// present, transitive dependencies absent -- took 17.5 s and allocated 25 GB
+// CUMULATIVELY with this work on the comparison side. Cumulatively, not
+// concurrently: peak heap stayed under 120 MB, so what the churn bought was
+// garbage collection. The cost is latency, not footprint.
 type posKey struct {
-	// epoch and release are the canonical (leading-zero-free, trailing-zero-
-	// stripped) decimal digit runs releaseKey produces.
-	epoch   string
-	release []string
+	// rel is v's release group: its epoch and its trailing-zero-stripped
+	// release segments, ignoring the pre/post/dev/local suffix. gpp derives it
+	// from the parsed fields, so unlike the rest of this struct it costs no
+	// render -- see the note above cmpBound.
+	rel version.ReleaseKey
 	// public is v.Public(), and pub is that spelling parsed, which is v with
 	// any local label removed. pubOK is false when the spelling does not parse,
 	// which leaves the public comparison out entirely, exactly as it was when
@@ -76,8 +77,7 @@ type posKey struct {
 
 // newPosKey derives the key for v.
 func newPosKey(v version.Version) *posKey {
-	epoch, release := releaseKey(v)
-	k := &posKey{epoch: epoch, release: release, public: v.Public()}
+	k := &posKey{rel: v.ReleaseKey(), public: v.Public()}
 	if k.public == "" {
 		// An uninitialized Version. Parsing its (empty) public spelling failed
 		// when cmpBound did it inline, so it stays out of the comparison.
@@ -134,102 +134,50 @@ func (b bound) tier() int {
 	}
 }
 
-// isDigits reports whether s is a non-empty run of ASCII digits.
-func isDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// canonDigits strips leading zeros from a digit run, keeping one digit for an
-// all-zero segment, so "007" and "7" produce the same key component.
-func canonDigits(s string) string {
-	i := 0
-	for i < len(s)-1 && s[i] == '0' {
-		i++
-	}
-	return s[i:]
-}
-
-// releaseKey returns the (epoch, release) of b's version, with trailing zeros
-// stripped so 1.0 and 1.0.0.0 share a key. BaseVersion renders "1!3.4.5" for
-// an epoch, so the epoch is split off here.
-//
-// ⚠️ THE KEY COMPONENTS ARE DECIMAL STRINGS, NOT ints. DO NOT "SIMPLIFY" THIS
-// BACK TO strconv.Atoi.
-//
-// PEP 440 puts no ceiling on an epoch or a release segment -- the grammar is
-// `[0-9]+` -- and gpp stores both as arbitrary-precision part.BigInt, so it
-// orders 1.99999999999999999999 above 1.5 correctly. The earlier key parsed
-// each segment with strconv.Atoi and BROKE out of the loop on error, so a
-// segment at or above 2^63 was dropped along with every segment AFTER it: the
-// key became a PREFIX of the real release, and 99999999999999999999.0 keyed as
-// the empty release, sorting below every version in existence. That made
-// `>99999999999999999999.0` admit everything while Check admitted nothing, and
-// `<1.5` admit 1.99999999999999999999. Comparing the digit runs directly
-// (length first, then byte-wise) is exact at every magnitude and needs no
-// math/big.
-func releaseKey(v version.Version) (epoch string, release []string) {
-	base := v.BaseVersion()
-	epoch = "0"
-	if i := strings.Index(base, "!"); i >= 0 {
-		// A non-numeric epoch cannot come out of BaseVersion; if one ever did,
-		// treating it as 0 keeps this a total order rather than a panic.
-		if isDigits(base[:i]) {
-			epoch = canonDigits(base[:i])
-		}
-		base = base[i+1:]
-	}
-	for _, part := range strings.Split(base, ".") {
-		if !isDigits(part) {
-			break
-		}
-		release = append(release, canonDigits(part))
-	}
-	for len(release) > 0 && release[len(release)-1] == "0" {
-		release = release[:len(release)-1]
-	}
-	return epoch, release
-}
-
-// cmpDigits orders two canonical (leading-zero-free) digit runs by value. The
-// shorter run is the smaller number, and equal-length runs compare byte-wise,
-// which for ASCII digits is the same as comparing values.
-func cmpDigits(a, b string) int {
-	switch {
-	case len(a) < len(b):
-		return -1
-	case len(a) > len(b):
-		return 1
-	}
-	return strings.Compare(a, b)
-}
-
-// cmpSegments orders two release keys segment by segment, the shorter being
-// smaller when it is a prefix of the longer. releaseKey has already stripped
-// trailing zeros, so a shorter key means a genuinely shorter release.
-func cmpSegments(a, b []string) int {
-	for i := 0; i < len(a) && i < len(b); i++ {
-		if c := cmpDigits(a[i], b[i]); c != 0 {
-			return c
-		}
-	}
-	switch {
-	case len(a) < len(b):
-		return -1
-	case len(a) > len(b):
-		return 1
-	}
-	return 0
-}
-
 // cmpBound reports whether a is before (-1), at (0) or after (+1) b.
+//
+// # Where the release group key comes from, and why it is not derived here
+//
+// The (epoch, release) group key is version.ReleaseKey, derived by gpp from the
+// parsed Version's own epoch and release fields.
+//
+// ⚠️ DO NOT REDERIVE IT FROM A RENDERED STRING. This package used to: it called
+// BaseVersion(), which renders "1!3.4.5" through a bytes.Buffer with one
+// math/big decimal conversion PER SEGMENT, and then split the result back into
+// digit runs -- once per candidate version per Contains call.
+//
+// That derivation was 82% of Set.Contains on the warm app-set resolution and
+// 74% on wide-versions, measured with pprof against the production snapshot.
+//
+// ⚠️ Measured as a share of resolver.Resolve, NOT as a share of total samples.
+// The denominator has to be something the change does not move: removing this
+// allocation shrinks the profile's garbage-collection share too, so "% of
+// samples" would credit this change with that as well. Against Resolve,
+// Contains falls from 41% to 24% on app-set and from 33% to 14% on
+// wide-versions -- 3.1x and 3.8x fewer samples in absolute terms.
+//
+// End to end that is 1.39x warm on app-set and 1.20x on wide-versions, with
+// 2.27x fewer allocations. BenchmarkContains/cross-group -- the common case,
+// probing a span that anchors some other release -- went from 304 ns and 8
+// allocations to 104 ns and none.
+//
+// ⚠️ strings.Split leaves the profile entirely, but writeRelease and
+// math/big.nat.itoa DO NOT: ensurePub still renders the public spelling, which
+// this change deliberately does not touch. They drop from 2.3% and 1.6% of
+// samples under Contains to below the sampling floor, which is not the same as
+// gone. What is left inside Contains is mostly verPos.init, and most of that is
+// the two Version copies it makes rather than the key.
+//
+// ⚠️ AND DO NOT REPLACE IT WITH ints. An even earlier key parsed each segment
+// with strconv.Atoi and BROKE out of the loop on error, so a segment at or
+// above 2^63 was dropped along with every segment AFTER it: the key became a
+// PREFIX of the real release, and 99999999999999999999.0 keyed as the empty
+// release, sorting below every version in existence. That made
+// `>99999999999999999999.0` admit everything while Check admitted nothing, and
+// `<1.5` admit 1.99999999999999999999. PEP 440 puts no ceiling on an epoch or a
+// release segment -- the grammar is `[0-9]+` -- and ReleaseKey is exact at
+// every magnitude, comparing arbitrary-precision integers for the keys that do
+// not fit its packed fast path.
 func cmpBound(a, b bound) int {
 	if a.inf != 0 || b.inf != 0 {
 		switch {
@@ -242,10 +190,7 @@ func cmpBound(a, b bound) int {
 	}
 
 	ak, bk := a.pos(), b.pos()
-	if c := cmpDigits(ak.epoch, bk.epoch); c != 0 {
-		return c
-	}
-	if c := cmpSegments(ak.release, bk.release); c != 0 {
+	if c := ak.rel.Compare(bk.rel); c != 0 {
 		return c
 	}
 

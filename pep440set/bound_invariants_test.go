@@ -83,6 +83,18 @@ func ascendingPositions(t *testing.T) []orderEntry {
 		below("1.0.1"),
 		at("1.0.1"),
 		aboveRelease("1.0.1"),
+
+		// ⚠️ A pair differing ONLY past the sixth release segment. gpp packs a
+		// release into six 32-bit fields and falls back to arbitrary-precision
+		// comparison beyond that, so these two straddle the fast path's edge:
+		// a packer that silently truncated at six segments, or whose fields
+		// overlapped, would order them EQUAL and nothing else in this module
+		// would notice. gpp has its own tests for the layout; this is the row
+		// that makes a regression in it fail HERE, where the consequence is a
+		// resolver picking the wrong version.
+		at("1.0.1.2.3.4.5"),
+		at("1.0.1.2.3.4.6"),
+
 		below("1.1"),
 		at("1.1"),
 		below("1.5"),
@@ -177,15 +189,14 @@ func TestBoundEqualPositions(t *testing.T) {
 			bound{v: v("1!1.0"), edge: edgeAt}, bound{v: v("01!1.0"), edge: edgeAt}},
 		{"at(0!1.0) == at(1.0)",
 			bound{v: v("0!1.0"), edge: edgeAt}, bound{v: v("1.0"), edge: edgeAt}},
-		// ⚠️ THESE TWO DO NOT REACH canonDigits' STRIPPING, so do not read them
-		// as its guard. releaseKey derives from BaseVersion(), which renders
-		// each segment through big.Int.String() and is therefore already
-		// leading-zero-free: "1.00000000000000000001" arrives here as "1.1".
-		// What they guard is the layer above -- that a segment past 2^63
-		// survives the parse at full precision, and that cmpDigits orders two
-		// runs by VALUE (length first) rather than truncating to an int or
-		// comparing rendered text. canonDigits is covered directly by
-		// TestCanonDigits.
+		// ⚠️ THESE TWO ARE NOT ABOUT LEADING ZEROS, so do not read them as that
+		// guard. The group key comes from gpp's parsed release segments, which
+		// are math/big integers: "1.00000000000000000001" is the integer 1
+		// before a key exists, and no zero-stripping runs at all. What they
+		// guard is the layer above -- that a segment past 2^63 survives the
+		// parse at full precision, and that the key orders it by VALUE rather
+		// than truncating to an int or comparing rendered text. Leading-zero
+		// spellings are covered directly by TestLeadingZeroSpellings.
 		{"at(1.00000000000000000001) == at(1.1)",
 			bound{v: v("1.00000000000000000001"), edge: edgeAt},
 			bound{v: v("1.1"), edge: edgeAt}},

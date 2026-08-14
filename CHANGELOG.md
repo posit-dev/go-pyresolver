@@ -13,6 +13,78 @@ served it.
 
 ## [Unreleased]
 
+### Changed
+
+- **`pep440set` no longer renders a version back to text to find its release
+  group.** Warm resolution is **1.19x to 1.39x faster and allocates 1.25x to
+  2.27x less** on the six corpus entries that resolve anything; cold is 1.11x to
+  1.28x. The seventh, `unsatisfiable`, does not move — see below. No resolution
+  this module produces changes.
+
+  `Contains` needs each candidate version's `(epoch, release)` position, and it
+  derived that by calling `BaseVersion()` — which renders the version through a
+  `bytes.Buffer` with one `math/big` decimal conversion **per segment** — and
+  then splitting the result back into digit runs. Once per candidate version per
+  `Contains` call. It now asks go-python-packaging for
+  `version.ReleaseKey` instead, which reads the parsed `Version`'s own epoch and
+  release fields: ~16 ns and no allocation, against ~220 ns and 10 allocations
+  for the render-and-split.
+
+  Medians of three interleaved rounds, ten iterations, against the production
+  snapshot (932,861 packages, dated 2026-08-04), on an Apple M4 Max:
+
+  | entry | warm before | warm after | | warm allocs before | after | |
+  |---|---|---|---|---|---|---|
+  | `single-no-deps` | 0.21 ms | 0.15 ms | 1.38x | 3,637 | 2,260 | 1.61x |
+  | `small-tree` | 1.06 ms | 0.80 ms | 1.32x | 19,393 | 10,908 | 1.78x |
+  | `extras` | 1.45 ms | 1.08 ms | 1.35x | 29,391 | 15,102 | 1.95x |
+  | `app-set` | 4.54 ms | 3.27 ms | 1.39x | 96,318 | 42,415 | 2.27x |
+  | `wide-versions` | 8.11 ms | 6.74 ms | 1.20x | 197,228 | 127,659 | 1.54x |
+  | `backtracking` | 2.78 ms | 2.33 ms | 1.19x | 43,304 | 21,015 | 2.06x |
+  | `unsatisfiable` | 0.33 ms | 0.31 ms | 1.07x | 6,448 | 5,168 | 1.25x |
+
+  | entry | cold before | cold after | | cold allocs before | after | |
+  |---|---|---|---|---|---|---|
+  | `single-no-deps` | 0.27 ms | 0.23 ms | 1.17x | 4,365 | 2,982 | 1.46x |
+  | `small-tree` | 1.41 ms | 1.10 ms | 1.28x | 23,609 | 15,107 | 1.56x |
+  | `extras` | 1.82 ms | 1.46 ms | 1.25x | 34,630 | 20,354 | 1.70x |
+  | `app-set` | 5.94 ms | 4.70 ms | 1.26x | 118,465 | 64,533 | 1.84x |
+  | `wide-versions` | 13.14 ms | 11.86 ms | 1.11x | 276,776 | 207,206 | 1.34x |
+  | `backtracking` | 6.22 ms | 5.26 ms | 1.18x | 89,097 | 66,832 | 1.33x |
+  | `unsatisfiable` | 0.55 ms | 0.51 ms | 1.08x | 9,256 | 7,974 | 1.16x |
+
+  **The allocation column is the one to read.** The saving is not the arithmetic
+  — it is the garbage. `app-set` allocates 2.27x less warm while running 1.39x
+  faster.
+
+  In a CPU profile of the warm resolution, `Set.Contains` falls from **41% of
+  `resolver.Resolve` to 24%** on `app-set`, and from 33% to 14% on
+  `wide-versions` — 3.1x and 3.8x fewer samples in absolute terms. Measured
+  against `Resolve` rather than against total samples deliberately: removing
+  this allocation shrinks the profile's garbage-collection share too, so a
+  "% of samples" figure would credit the change with that as well.
+
+  `strings.Split` leaves the profile entirely. `writeRelease` and
+  `math/big.nat.itoa` do **not** — `ensurePub` still renders the public
+  spelling, which this change deliberately does not touch — but they fall from
+  2.3% and 1.6% of samples under `Contains` to below the sampling floor.
+
+  ⚠️ **`unsatisfiable` is not measurably faster.** Its 1.07x is the median of
+  three rounds, and a fourth confirmation round put it at **0.96x** — slower.
+  Read it as no change, not as a small win. That is the predicted result rather
+  than a disappointment: it fails before enumerating many candidates, so it
+  makes the fewest `Contains` calls of the corpus and has the least to gain.
+  Its allocations do fall, by 1.25x, which is the effect showing up where the
+  mechanism says it should.
+
+  ⚠️ The measurement is against `v0.6.0` **without** the parsed-version memo. The
+  two are not additive — after this change the largest remaining warm cost is
+  `version.Parse` inside `index.Versions` (16.9% of samples on `wide-versions`),
+  which is exactly what that memo removes.
+
+- **go-python-packaging is now `v0.7.0`**, for `version.ReleaseKey`. Purely
+  additive; nothing else in this module changed with the pin.
+
 ## [0.6.0] - 2026-08-14
 
 ### Changed
