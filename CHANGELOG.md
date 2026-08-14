@@ -15,6 +15,62 @@ served it.
 
 ### Changed
 
+- **Resolution is 1.4x to 8.9x faster warm**, with no change to any resolution it
+  produces. `Provider.Candidates` no longer re-ranks a package's versions on every
+  call, and `candidate.Rank` no longer sorts a list that is already ordered.
+
+  Ranking was **83–86% of a `Candidates` call** — measured warm against a production
+  snapshot, against 1.7% and 0.6% for the usability walk the previous release had just
+  optimized. Two independent causes:
+
+  - The solver re-asks about a package on every round it reconsiders it, and every
+    call re-sorted from scratch. `Provider` now memoizes the ranked **full** version
+    list per package for the life of one resolution. Ranking the superset rather than
+    the in-range list is what makes it memoizable at all: the in-range list is a
+    function of the caller's allowed set, and a memo keyed by that would be keyed on
+    caller-supplied input and grow without bound.
+  - `index.RSFIndex` returns versions **ascending** while the default `Newest` policy
+    wants them descending, so `sort.SliceStable` was handed its worst case on
+    essentially every call. `candidate.Rank` now classifies the input in one linear
+    pass and reverses it, or returns it untouched, when it can.
+
+  | entry | warm before | warm after | |
+  |---|---|---|---|
+  | `single-no-deps` | 1.68 ms | 0.32 ms | 5.2x |
+  | `small-tree` | 4.38 ms | 1.58 ms | 2.8x |
+  | `extras` | 9.77 ms | 2.55 ms | 3.8x |
+  | `app-set` | 72.44 ms | 8.14 ms | 8.9x |
+  | `wide-versions` | 83.16 ms | 17.13 ms | 4.9x |
+  | `backtracking` | 25.27 ms | 3.78 ms | 6.7x |
+  | `unsatisfiable` | 0.75 ms | 0.54 ms | 1.4x |
+
+  `Metadata` calls are **unchanged**: this reads no less data, it stops re-sorting it.
+  What falls is `candvers` — 6,040 to 943 on `app-set`, 2,495 to 351 on `backtracking`
+  — which the previous release's change did not move at all. Allocations fall with it,
+  `app-set` from 70.7 MB / 1,496,571 to 12.2 MB / 176,128.
+
+  ⚠️ The memo lives on the `Provider`, **not** on the index, and that is
+  correctness-bearing rather than stylistic. A `version.Version` cannot be shared
+  between goroutines even for reads — `Version.Compare` pads a release segment with
+  `append` into spare capacity a by-value copy still shares, the upstream defect in
+  `rstudio/go-version` that `index.RSFIndex` documents and declines to memoize parsed
+  versions because of. A `Provider` serves one resolution and is documented as unsafe
+  for concurrent use, so nothing here is read from two goroutines; concurrent
+  resolutions get one `Provider` and therefore one memo each. On a shared index this
+  would reintroduce that race in full.
+
+  ⚠️ `candidate.Rank`'s fast path **leans on** `Policy.Less` being transitive where
+  `sort.SliceStable` merely benefits from it. `Policy` already requires transitivity in
+  as many words, so this is not a new demand on an embedder — but it is a new place
+  where breaking it goes unnoticed, because an intransitive `Less` yields the input
+  order or its reverse instead of an arbitrary sort. `Newest` is verified to be a
+  genuine strict weak ordering on production data: 124,918 ordered triples and 749,465
+  equivalence triples, no violation.
+
+  Equivalence is measured, not argued: **4,007 resolutions against the production
+  snapshot produce byte-identical transcripts** — same pins, same decision order, same
+  activated extras, and the same failure report text on the 1,605 that fail.
+
 - The benchmark corpus's `backtracking` entry is `pandas, numpy<1.26` rather than
   `pandas, numpy<2`, and **actually backtracks again**. Under the old bound pandas had
   relaxed its floor, so the newest pandas satisfied `numpy<2` on its own: the entry
@@ -72,6 +128,44 @@ served it.
   that requires examining all of it, so every reason is still recorded. That is the
   case a failure report needs, it is asserted in three doc comments and a changelog
   entry, and until now it was an argument rather than a test.
+
+- `TestCandidatesAgreeAcrossRepeatedCallsWithDifferentRanges`, the differential for the
+  ranked-list memo. The existing `TestCandidatesAgreeWithAnExactCountOnTheRealIndex`
+  structurally cannot reach it: it asks each package **once**, always with
+  `pep440set.All()`, and a memo only does anything on the second call with a
+  **different** allowed set. This asks each package many times with ranges built from
+  its own published versions — 82,634 calls over 14,540 production packages, 68,094 of
+  them served from a warm memo — against a reference that re-reads the index and sorts
+  from scratch each time.
+
+  ⚠️ It earns its place by mutation: poisoning the memo with the range-filtered list,
+  which is exactly the "keyed by caller-supplied input" bug, fails **this test and no
+  other in the module**. The pre-existing differential passes, and so does the entire
+  resolver suite.
+
+- `candidate` differentials for `Rank`'s fast path against a sort-only reference: 13
+  hand-built shapes including the tie cases the reversed branch claims are impossible,
+  20,000 random lists, and every version list of 200,000 production packages
+  (1,623,115 versions; 103,358 lists take the reversed branch, 42,609 the ordered one,
+  none fall through to the sort). Plus `TestNewestIsAStrictWeakOrdering`, which checks
+  all four properties on real published version strings.
+
+  ⚠️ Its equivalence half needs both **injected** equal spellings and **biased**
+  sampling to be non-vacuous, and the reason is worth recording:
+  `index.RSFIndex.Versions` collapses each PEP 440 equality class to one
+  representative, so on real index output no two versions are ever equivalent. Under
+  the default policy the order is **total** and the stability `Rank` provides is
+  vacuous there. Three million uniformly drawn triples produced zero equivalent ones.
+
+- `provider.TestInRangeIsNotContiguous` and `TestRSFIndexVersionsAreAscending`, which
+  measure rather than assume the two facts the design rests on. 12.38% of production
+  versions are pre-releases and 4.18% of packages have their admitted set **split** by
+  one, so an intersection by binary search would need a fallback; and across 51,521
+  multi-version packages `Versions` has 0 adjacent inversions, so the fast path's
+  branch is the one real data takes. ⚠️ The second is a check on the **implementation**
+  — `MetadataIndex` promises no ordering, which is why `Rank` detects the shape rather
+  than assuming it — and exists so that if `RSFIndex` ever stops being sorted, the
+  reason the fast path went quiet is discoverable rather than mysterious.
 
 ## [0.5.0] - 2026-08-13
 

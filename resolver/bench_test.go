@@ -82,41 +82,54 @@
 //     classifies the input in one linear pass and reverses it when it can.
 //
 // Warm, ten iterations, full snapshot. MEDIAN OF THREE RUNS per side, both sides
-// measured back to back in one session on an otherwise idle machine; the three
-// runs of each agreed within 3% everywhere except small-tree (8%):
+// measured back to back in one session on an otherwise idle machine. The three
+// runs of each agreed within 4% except one app-set baseline run that came in at
+// 118.79 ms against 72.44 and 69.22 -- a transient, and the reason this reports
+// medians rather than means.
+//
+// ⚠️ These are measured against the CORRECTED backtracking entry from #38, the
+// one that genuinely backs out. An earlier draft of this table carried the
+// retired `pandas, numpy<2` entry and its numbers are not comparable.
 //
 //	entry            warm ms            candvers      Metadata
 //	                 before   after     before after  before after
-//	single-no-deps      1.64    0.30      130    65      3     3    5.5x faster
-//	small-tree          4.29    1.42      984   254     30    30    3.0x
-//	extras              9.74    2.31     1658   321     43    43    4.2x
-//	app-set            68.49    7.19     6040   943    105   105    9.5x
-//	wide-versions      82.50   16.38     7206  4647     24    24    5.0x
-//	backtracking        6.67    1.29      769   264     13    13    5.2x
-//	unsatisfiable       0.77    0.51      124   124      3     3    1.5x
+//	single-no-deps      1.68    0.32      130    65      3     3    5.2x faster
+//	small-tree          4.38    1.58      984   254     30    30    2.8x
+//	extras              9.77    2.55     1658   321     43    43    3.8x
+//	app-set            72.44    8.14     6040   943    105   105    8.9x
+//	wide-versions      83.16   17.13     7206  4647     24    24    4.9x
+//	backtracking       25.27    3.78     2495   351     42    42    6.7x
+//	unsatisfiable       0.75    0.54      124   124      3     3    1.4x
 //
 // candvers is the metric the found/rank change did not move AT ALL, and this is
 // what moves it: it sums len(Versions()) over calls, so it falls exactly when a
 // package stops being asked twice. Metadata calls are UNCHANGED, which is the
 // point -- this change reads no less data, it just stops re-sorting it.
 //
+// ⚠️ THE BACKTRACKING ENTRY IS THE ONE TO READ. It is the only entry whose whole
+// purpose is that the solver reconsiders the same package repeatedly, which is
+// precisely what the memo targets, and it has both the largest candvers drop of
+// the corpus (7.1x, 2,495 to 351) and the largest Versions() drop (30 calls to
+// 6). Its 6.7x is above the 5.2x the retired entry showed, which is what one
+// would predict and is now measured rather than predicted.
+//
 // Warm allocations fell with the time, and by more:
 //
 //	entry            warm B/op          warm allocs/op
 //	                 before    after    before      after
-//	single-no-deps     1.6 MB   0.5 MB      41,412      6,879
-//	small-tree         6.0 MB   2.9 MB      94,126     34,323
-//	extras            11.5 MB   4.2 MB     210,647     52,046
-//	app-set           70.7 MB  12.2 MB   1,496,570    176,133
-//	wide-versions     85.0 MB  24.1 MB   1,714,384    414,544
-//	backtracking       6.9 MB   2.6 MB     145,158     32,075
-//	unsatisfiable      1.2 MB   1.1 MB      16,532     11,222
+//	single-no-deps     1.6 MB   0.5 MB      41,409      6,880
+//	small-tree         6.0 MB   2.9 MB      94,135     34,328
+//	extras            11.5 MB   4.2 MB     210,638     52,043
+//	app-set           70.7 MB  12.2 MB   1,496,571    176,128
+//	wide-versions     85.1 MB  24.1 MB   1,714,386    414,552
+//	backtracking      26.9 MB   8.8 MB     538,414     75,876
+//	unsatisfiable      1.2 MB   1.1 MB      16,531     11,222
 //
 // ⚠️ The <1 ms warm gate is now met by TWO entries rather than one --
-// single-no-deps at 0.30 ms joins unsatisfiable at 0.51 ms, and small-tree at
-// 1.42 ms is close. The other four still miss, by 2.3x (extras), 1.3x
-// (backtracking), 7.2x (app-set) and 16.4x (wide-versions), against 9.7x, 6.7x,
-// 68x and 83x before. The gate is still not met, and what stands between is no
+// single-no-deps at 0.32 ms joins unsatisfiable at 0.54 ms, and small-tree at
+// 1.58 ms is close. The other four still miss, by 2.6x (extras), 3.8x
+// (backtracking), 8.1x (app-set) and 17.1x (wide-versions), against 9.8x, 25x,
+// 72x and 83x before. The gate is still not met, and what stands between is no
 // longer this package -- see "Where the cost is now".
 //
 // # The mechanism, isolated
@@ -230,7 +243,8 @@
 //
 // So: the 9.85 → 7.00 ms row is real, but it is a measurement of an ordinary resolve,
 // not of backtracking. Re-run the benchmark for a backtracking figure; do not read
-// one out of the table above.
+// one out of the table above. The RANKING table at the top of this file is measured
+// against the corrected entry and is the one to read for a backtracking figure.
 //
 // # Everything below predates the found/rank change
 //
