@@ -15,6 +15,190 @@ served it.
 
 ### Changed
 
+- **`index.RSFIndex` memoizes PARSED versions, not just version keys. Warm
+  resolution is 1.13x to 3.23x faster and allocates 41% to 94% fewer objects**,
+  with no change to any resolution this module produces.
+
+  `RSFIndex.Versions` memoized the sorted order of a package's version keys and
+  re-parsed every one of them on every call. It held strings rather than parsed
+  values because it had to: until go-python-packaging v0.6.0, a `version.Version`
+  could not be shared between goroutines. That was fixed upstream in 0.6.0, and
+  this takes the memo the fix unblocks.
+
+  Re-parsing was worth taking. Profiled against the production snapshot as a
+  share of `resolver.Resolve`'s own cumulative cost, `parseKeys` was **22.7% of a
+  warm `app-set` resolution and 69.1% of a warm `wide-versions` one**, and
+  **58.4% and 94.8% of the objects** those resolutions allocated.
+
+  Medians of **nine** interleaved rounds, 500 iterations, against the production
+  snapshot (932,861 packages, dated 2026-08-04), on an Apple M4 Max, base
+  `11da678`:
+
+  | entry | warm before | warm after | | allocs/op before | after | |
+  |---|---|---|---|---|---|---|
+  | `single-no-deps` | 0.164 ms | 0.090 ms | 1.82x | 2,258 | 542 | −76.0% |
+  | `small-tree` | 0.795 ms | 0.555 ms | 1.43x | 10,901 | 4,634 | −57.5% |
+  | `extras` | 1.110 ms | 0.836 ms | 1.33x | 15,114 | 7,143 | −52.7% |
+  | `app-set` | 3.164 ms | 2.318 ms | 1.37x | 42,400 | 18,906 | −55.4% |
+  | `wide-versions` | 6.271 ms | 1.944 ms | 3.23x | 127,661 | 7,181 | −94.4% |
+  | `backtracking` | 2.235 ms | 1.985 ms | 1.13x | 21,020 | 12,395 | −41.0% |
+  | `unsatisfiable` | 0.325 ms | 0.221 ms | 1.47x | 5,170 | 2,054 | −60.3% |
+
+  ⚠️ **These figures are LARGER than the same change measured against `6c13230`,
+  and that is not a mistake in either.** Measured before 0.7.0 landed, this was
+  1.24x on `app-set` and 2.27x on `wide-versions`. 0.7.0 removed a render-and-split
+  from `pep440set.Contains`, which does not make the parse cheaper — it makes the
+  parse a **bigger share of what is left**, and a proportional saving is worth
+  more against a smaller denominator. `parseKeys` went from 47.4% of
+  `wide-versions`' `Resolve` to 69.1% on exactly that account. The two changes
+  are not additive in either direction, and neither figure is quotable against the
+  other's base.
+
+  Amdahl reconciles almost exactly on the entry where the parse dominates:
+  removing 69.1% predicts 3.24x and `wide-versions` measures 3.23x. On `app-set`
+  it under-predicts — 22.7% predicts 1.29x against a measured 1.37x — because the
+  change also removes 58.4% of the objects allocated and the collector's share
+  goes with them.
+
+  **Cold does not improve**, 0.96x to 1.01x with allocation flat to four
+  significant figures. That is the expected shape: the first call per package
+  already parsed its keys in order to sort them, so there is nothing to save, and
+  what remains is the copy this now makes on the way out. `wide-versions`
+  (botocore, over ten thousand releases) gains most warm for the same reason it
+  gained most from the packed comparison key — one package dominates its own
+  version list.
+
+  ⚠️ **`unsatisfiable` moves here (1.47x) and 0.7.0's note that it "is not
+  measurably faster" still stands.** That note is about `Contains` calls, which
+  this entry makes few of. It makes version-key parses like everything else, and
+  that is what this removes. Two different mechanisms, and the earlier caveat is
+  not superseded.
+
+  The RFD 0001 Phase 3 warm gate (under 1 ms) is now met by **4 of 7** corpus
+  entries against 3 of 7 at the base: `extras` crosses at 0.836 ms.
+
+  `candvers`, `metadata` and the pin set are **identical** on every entry. A memo
+  changes what a call costs, never how many calls there are or what they answer.
+
+  ⚠️ **The cost is RETAINED HEAP, and it is not small in the shape that matters.**
+  The parsed versions of every package ever asked about now live for the life of
+  the index, where they used to be transient garbage collected between calls.
+  Measured rather than estimated, by `TestIndexRetainedHeapAfterResolve` (new,
+  `GPR_RETAIN=1`), as the live heap one warmed `RSFIndex` keeps alive after a
+  resolution completes — medians of five interleaved rounds, which agreed to the
+  centibyte on every entry, and which came out **identical at both `6c13230` and
+  `11da678`**: this is a live-heap measurement, so unlike the timings it does not
+  move with the base or with machine load.
+
+  | entry | retained before | retained after | |
+  |---|---|---|---|
+  | `single-no-deps` | 0.01 MB | 0.06 MB | 6.0x |
+  | `small-tree` | 0.07 MB | 0.24 MB | 3.4x |
+  | `extras` | 0.09 MB | 0.30 MB | 3.3x |
+  | `app-set` | 0.35 MB | 0.99 MB | 2.8x |
+  | `wide-versions` | 1.31 MB | 4.41 MB | 3.4x |
+  | `backtracking` | 0.32 MB | 0.56 MB | 1.8x |
+  | `unsatisfiable` | 0.04 MB | 0.12 MB | 3.0x |
+
+  Roughly **triple**, on closures of seven to eighteen packages. Every caller in
+  this module builds an `RSFIndex` per resolve and drops it, so for them this is a
+  few megabytes that never accumulate, and the memo is left unbounded to match the
+  blob cache's existing rationale.
+
+  ⚠️ **For a long-lived server that rationale does not carry, and this change is
+  what makes the difference material.** "Bounded by the corpus" is a property of
+  the KEY SET, not of the memory: the corpus is 932,861 packages, and this memo
+  multiplies what each cached package costs. A bound over the index's caches is a
+  **prerequisite** for embedding this in a server process, not an optimization to
+  revisit later. That is written into `index/rsfindex.go` beside the memo rather
+  than left in a changelog, because the previous version of this rationale was
+  true of the CLI and quietly wrong for a server, twice.
+
+  **Equivalence**, since this changes which parsed values a resolution sees.
+  4,007 resolutions against the production snapshot — the seven corpus entries
+  plus 4,000 sampled package names, seed 1 — produce **byte-identical**
+  transcripts before and after: identical pins, identical decision ORDER,
+  identical activated extras, and identical failure report text on the 1,608 that
+  fail. 3,973 cases were compared, of which 2,365 pinned something. The 34 cases
+  excluded by the 8-second per-case deadline timed out on **both** sides, so
+  nothing was dropped from one build's column and not the other's.
+
+  **Concurrency.** Sharing one parsed `version.Version` across goroutines is the
+  thing 0.6.0 made legal, and `index/shared_memo_test.go` is new and pins it:
+  eight goroutines share a warmed memo and compare the same parsed value, across
+  four fixtures covering **both** of 0.6.0's independent safety arguments (the
+  packed integer key, and the `padParts` fallback that a local label, a non-zero
+  epoch or a long release segment forces). Each was confirmed to report
+  `WARNING: DATA RACE` with the dependency pinned back to v0.5.0, 20 fresh
+  processes each, 80 for 80. It also drives `version.ReleaseKey`, which
+  `pep440set` made a second reader of a shared parsed version in 0.7.0.
+
+  **These run in CI**, on the `Race` step the entry below adds. That matters more
+  than it sounds: without `-race` they assert nothing about the hazard, because
+  the racing writes store the same bytes at the same address. Measured on a tree
+  with the defensive copy deleted — the pre-existing concurrency test detects it
+  8 times in 20 under `-race` and **0 times in 20 without it**.
+
+  ⚠️ Two claims corrected here after review, both of which had been stated as
+  measured. Under a v0.5.0 pin these are **not** the only tests that object:
+  `TestMemoIsSafeUnderConcurrentUse` reports a race in **8 of 20** fresh
+  processes. The earlier claim came from a single process, which is exactly the
+  race-detector deduplication trap documented three paragraphs down. And the
+  general comparison path's allocations are **not** `padParts` copying — a pair
+  whose release lengths already match still allocates 17 per comparison — so the
+  allocation guard discriminates the two paths, but the count does not measure the
+  copy.
+
+  ⚠️ Three findings from doing that. First, the fixtures have to be chosen for the
+  hazard or the test is decorative: the shared operand must end in a stripped
+  trailing zero (that is where the spare capacity comes from) **and** be the
+  shorter of the pair. `3.11` is immune; `3.11.0` races. Second, the pre-existing
+  `TestMemoIsSafeUnderConcurrentUse` does **not** reliably cover this: every
+  goroutine there calls `Versions` once against a COLD memo, so most build their
+  own plan and share nothing, and with the defensive copy deleted it notices
+  **8 runs in 20** against **20 in 20** for the warm-memo test. Third, Go's race
+  detector deduplicates by stack within a process, so verifying the four subtests
+  with `-count=8` in one process makes fixtures that detect the race every time
+  look one-in-eight flaky. Each verification run must be its own process.
+
+  **The returned slice is a copy.** `cmd/pyresolve`'s `versions` subcommand sorts
+  the result of `Versions` in place, so handing back the memo's own slice would
+  have been a silent breaking change. Its cost is measured, warm, medians of nine
+  interleaved rounds against a variant that returns the memo's own slice: **−0.3%
+  to +9.7%**, worst on `wide-versions` (+9.7%) and `backtracking` (+8.1%), where
+  one package carries over ten thousand releases and a `version.Version` is a
+  large struct. That cost is already inside every figure in the table above.
+
+  ⚠️ That is **not** the "effectively free, under 2%" this change was scoped with,
+  and the difference is the base rather than the copy: against `6c13230` it
+  measured −0.1% to +4.0%. The copy costs the same microseconds; warm resolution
+  got faster, so the same microseconds are a larger fraction. A cost quoted as a
+  percentage has a denominator, and this one moved.
+  `TestVersionsMemoIsNotAliasedByTheCaller` was written for this day and could not
+  fail until now.
+
+  ⚠️ It is **redundant on the resolution path** — `provider` hands the result
+  straight to `candidate.Rank`, which copies unconditionally, so a resolution
+  copies twice. The copy is there for the **exported** contract: `cmd/pyresolve`'s
+  `versions` subcommand and external consumers.
+
+  ⚠️ That does **not** make an internal no-copy accessor free, which an earlier
+  draft of this entry implied. `FilteredIndex.Versions` and `MultiIndex.Versions`
+  also call it, and `FilteredIndex` returns the inner index's slice **by
+  reference** when its policy filters neither pre-releases nor files. Routing a
+  no-copy accessor through that fast path would hand the memo's own slice to an
+  arbitrary caller. The optimization is real and it has a prerequisite.
+
+  ⚠️ Deleting the copy is caught by three tests and **all three are in `index/`**.
+  Nothing outside that package notices, `cmd/pyresolve`'s own tests included — and
+  `cmd/pyresolve` is the caller that sorts the result in place. It gets away with
+  it only because one invocation calls `Versions` once.
+
+  Stale rationales asserting that a parsed `version.Version` cannot be shared are
+  swept from `index/rsfindex.go`, `index/mock.go`, `provider/provider.go` and
+  `resolver/bench_test.go`. Dated changelog sections are left alone: they were
+  accurate when written.
+
 - **CI now runs `go test -race`, and the shareability guarantee is a test rather
   than a paragraph.** No behaviour change; this is test and CI only.
 
@@ -64,6 +248,7 @@ served it.
   excluded from **both**: on this 139-package excerpt it failed to finish under
   bounds of 20 s, 60 s, 3 min and 10 min, so no deterministic transcript entry
   for it exists at any deadline.
+
 ## [0.7.0] - 2026-08-14
 
 ### Changed

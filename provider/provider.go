@@ -297,21 +297,41 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 // This one is keyed by package name and is bounded by the closure of a single
 // resolution.
 //
-// # ⚠️ Two hazards, and why neither bites here
+// # ⚠️ Why this memo is on the PROVIDER and not on the index
 //
-// A version.Version MUST NOT BE SHARED BETWEEN GOROUTINES even for reads --
-// Version.Compare pads a release segment with append into spare capacity that a
-// by-value copy still shares, an upstream defect in rstudio/go-version that
-// index.RSFIndex documents at length and declines to memoize parsed versions
-// because of. That is why this memo is on the PROVIDER and not on the index: a
-// Provider serves one resolution and is documented as unsafe for concurrent use,
-// so nothing here is read from two goroutines. Concurrent resolutions get one
-// Provider each and therefore one memo each. Moving this onto a shared index
-// would reintroduce the race in full.
+// ⚠️ HISTORICAL as of go-python-packaging v0.6.0. This used to read: a
+// version.Version must not be shared between goroutines even for reads, because
+// Version.Compare padded a release segment with append into spare capacity that a
+// by-value copy still shared -- so a memo of parsed versions had to sit on a
+// Provider, which serves one resolution and is documented as unsafe for
+// concurrent use, and moving it onto a shared index would reintroduce the race in
+// full.
 //
-// Second, the map is unbounded in principle. In practice it holds one entry per
-// package the resolution reaches, which is the same bound the unusable record set
-// already lives under, and the Provider is discarded when the resolve ends.
+// THAT IS NO LONGER TRUE. v0.6.0 pads into a fresh slice, index.RSFIndex now
+// memoizes parsed versions on the strength of it, and this memo COULD move onto
+// the index, where the ranked list would survive across resolutions rather than
+// only within one. It is deliberately not part of the parsed-version memo's
+// change, because a second effect would confound that one's measurement.
+//
+// candidate.Rank is the only work moving the memo up would save, and only ACROSS
+// resolutions, since within one this memo already runs it once per package. On
+// the tree that took the parsed-version memo, warm wide-versions against the
+// production snapshot, rankedVersions is 27.5% of resolver.Resolve's cumulative
+// cost and candidate.Rank inside it is 17.4% -- so that is the shape of the
+// opportunity and 17.4% is its ceiling.
+//
+// ⚠️ Treat that as a pointer, not a promise, and RE-PROFILE before acting on it.
+// An earlier draft of this comment quoted a residual profile naming a pep440set
+// frame that c006d47 then deleted, so it advertised a cost that no longer existed
+// in a function that no longer existed. A profile is a fact about one tree.
+//
+// ⚠️ Whoever takes it owns the retention question, and it is bigger here than for
+// the parsed list: a ranked list is per package too, and an index is long-lived
+// where a Provider is discarded.
+//
+// Until then the memo stays here, and being per-resolution it is bounded twice
+// over: one entry per package the resolution reaches, and the whole Provider is
+// discarded when the resolve ends.
 //
 // # ⚠️ Three things this narrows, none of them free
 //

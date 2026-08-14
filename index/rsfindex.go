@@ -65,9 +65,10 @@ type RSFIndex struct {
 	parsed map[PackageName]map[string]memoEntry
 
 	// versionList memoizes what Versions computed for a package: the winning
-	// stored key of each PEP 440 equality class, sorted, plus the alias index
-	// Metadata resolves through. Keys rather than parsed versions on purpose --
-	// see Versions. One entry per package, so it is bounded by the corpus.
+	// stored key of each PEP 440 equality class, sorted, the PARSED version of
+	// each of those keys, and the alias index Metadata resolves through. One
+	// entry per package, so its key set is bounded by the corpus -- but see the
+	// retention note above deps for what the parsed half costs per entry.
 	versionList map[PackageName]versionPlan
 }
 
@@ -209,10 +210,11 @@ func (idx *RSFIndex) deps(pkg PackageName) (map[string]pypirsf.VersionDeps, erro
 //     requirements at all (types.go: "re-parsing per candidate during resolution
 //     is pure waste").
 //
-//   - versionList holds only the ORDER Versions computed -- stored keys, as
-//     strings -- and every call re-parses them. It cannot hold the parsed
-//     versions, because a version.Version cannot be shared between goroutines.
-//     See Versions for the measurement behind that.
+//   - versionList holds the ORDER Versions computed -- the stored keys -- AND
+//     the parsed version of each. It held keys alone until go-python-packaging
+//     v0.6.0, because a version.Version could not then be shared between
+//     goroutines; that constraint is gone and the parsed half is memoized. See
+//     Versions for the measurement, and the retention note below for the cost.
 //
 // # What this does NOT change
 //
@@ -251,8 +253,31 @@ func (idx *RSFIndex) deps(pkg PackageName) (map[string]pypirsf.VersionDeps, erro
 // a deep copy of a parsed requirement graph would cost more than the parse it
 // replaces.
 //
-// Versions needs no such copy: it re-parses, so what it returns was never in the
-// memo.
+// Versions makes the same copy, and for the same caller. It used to need none,
+// because it re-parsed and so what it returned was never in the memo; now that
+// the memo holds the parsed values, handing back plan.versions would let
+// cmd/pyresolve's `versions` subcommand sort the cache.
+//
+// It is a memmove of already-parsed values, and its cost is measured rather than
+// waved away -- see the CHANGELOG for the warm figures against a variant that
+// hands back the memo's own slice.
+//
+// ⚠️ It is REDUNDANT on the RESOLUTION path specifically, and saying more than
+// that would be overclaiming. provider.Provider passes what it gets straight into
+// candidate.Rank, which copies unconditionally and never writes to its argument,
+// so a resolution copies twice. The copy is there for the EXPORTED contract:
+// cmd/pyresolve's `versions` subcommand, and whatever an external consumer does
+// with a slice an exported method handed it.
+//
+// ⚠️ AN INTERNAL NO-COPY ACCESSOR IS NOT THEREFORE FREE, and an earlier draft of
+// this note said it was, on the strength of "provider is the only library-side
+// caller". It is not the only one. FilteredIndex.Versions and MultiIndex.Versions
+// both call it, and FilteredIndex has a PASS-THROUGH fast path: with a policy
+// that filters neither pre-releases nor files it returns the inner index's slice
+// by reference (filtered.go). Wiring a no-copy accessor through it would hand the
+// memo's own slice to an arbitrary external caller -- the exact silent breaking
+// change this copy exists to prevent. MultiIndex is safe because it always
+// rebuilds. Whoever takes that optimization owns FilteredIndex's fast path first.
 //
 // # Bounded by the corpus, like the blob cache
 //
@@ -270,6 +295,28 @@ func (idx *RSFIndex) deps(pkg PackageName) (map[string]pypirsf.VersionDeps, erro
 // for. What a memo adds is the CONSTANT: parsed requirements alongside the raw
 // strings, for the subset of (package, version) actually asked about.
 //
+// ⚠️ A BOUNDED KEY SET IS NOT BOUNDED MEMORY, and versionList's parsed half is
+// where that distinction stops being academic. It holds a version.Version per
+// stored key where it used to hold a string header, and a version.Version is a
+// large struct. Measured rather than estimated, as the live heap one warmed index
+// keeps alive after a resolution finishes (resolver/peak_heap_test.go,
+// TestIndexRetainedHeapAfterResolve, medians of five interleaved rounds against
+// the production snapshot): app-set 0.35 MB -> 0.99 MB, wide-versions 1.31 MB ->
+// 4.41 MB. Roughly triple, on closures of seven to eighteen packages.
+//
+// For a CLI that builds an index per resolve and drops it, a few megabytes that
+// never accumulate is a rounding error. For a long-lived server holding one index
+// over the whole corpus it is not: a production PyPI snapshot carries 932,861
+// packages, so "bounded by the corpus" must not be read as "small".
+//
+// ⚠️ And the retention is not paid only by callers who benefit from it.
+// versionPlanFor builds the same plan on the Metadata path, so a consumer that
+// calls Metadata and never calls Versions pays the full increase and gets none of
+// the speedup -- findEqualKey still re-parses plan.order rather than probing
+// plan.versions. Taking that follow-up would close the gap; until then it is a
+// real asymmetry and it lands on exactly the long-lived consumer this note is
+// about.
+//
 // ⚠️ This did not come for free, and the earlier draft of this change did NOT
 // have the property. Keying parsed by the request's ver.String() -- the obvious
 // key -- made the memo unbounded by anything the corpus controls: 20,000
@@ -282,12 +329,19 @@ func (idx *RSFIndex) deps(pkg PackageName) (map[string]pypirsf.VersionDeps, erro
 // requests -- the exact consumer deps' own note says is out of scope -- would
 // have grown until it was restarted.
 //
-// The remaining growth, in both caches, is one entry per package and version a
-// process has genuinely been asked about, which for a long-lived server against
-// the whole corpus is still the corpus. A bound is one policy over the PAIR
-// rather than two, since bounding the memo alone would leave deps holding the
-// same package set in raw form. It is still not needed here: every caller in
-// this module creates an RSFIndex per resolve.
+// The remaining growth, in all three caches, is one entry per package and
+// version a process has genuinely been asked about, which for a long-lived
+// server against the whole corpus is still the corpus. A bound is one policy over
+// the SET rather than three, since bounding one would leave the others holding
+// the same package set in another form.
+//
+// ⚠️ It is not needed by any caller IN THIS MODULE -- each creates an RSFIndex
+// per resolve -- and that sentence has now been true of a claim that was
+// nonetheless wrong for a server twice over (see the ver.String() keying above).
+// So, plainly: the parsed-version memo MULTIPLIES the per-package retention, and
+// a bound is a prerequisite for embedding this index in a long-lived server
+// process, not an optimization to consider later. Whoever does that integration
+// owns it before the first resolve, not after the first out-of-memory.
 
 // lookupMetadata reads the parsed memo. key is a STORED version key, not a
 // caller's rendering -- see memoEntry. ok is false when nothing is memoized for
@@ -323,26 +377,25 @@ func (idx *RSFIndex) storeMetadata(pkg PackageName, key string, entry memoEntry)
 // from ver. See the memo notes above for why the copy is made and why it is
 // shallow.
 //
-// ⚠️ Version is overwritten with the CALLER'S OWN value rather than served from
-// the memo, and that is a concurrency requirement, not a tidiness one. A
-// version.Version must not be shared between goroutines: Version.Compare pads
-// the shorter release segment with append, into spare capacity a by-value copy
-// shares, so two goroutines comparing two copies write to the same memory. See
-// Versions for the full account. The memo would otherwise hand the FIRST
-// caller's Version to every later caller on every goroutine. ver is a value the
-// caller already owns, so returning it shares nothing new.
+// Version is overwritten with the CALLER'S OWN value rather than served from the
+// memo. That WAS a concurrency requirement: under go-python-packaging v0.5.0 and
+// earlier a version.Version could not be shared between goroutines at all, so
+// handing the first caller's Version to every later caller was a data race. It is
+// no longer one -- v0.6.0 pads into a fresh slice, and Versions now memoizes
+// parsed versions on the strength of that -- so this substitution survives on its
+// SECOND reason alone, which is the one that was always sufficient.
 //
-// The substitution is not observable, and not because the two render alike --
-// they need not, since the memo is keyed by the STORED key and a caller may have
-// spelled the version differently. It is not observable because there is no
-// other value on offer: Metadata zeroes Version before storing, so the memo has
-// never held one. Returning the caller's own value is the only thing this can
-// do, and it is what buildMetadata did before the memo existed.
+// That reason: there is no other value on offer. Metadata zeroes Version before
+// storing, so the memo has never held one. Returning the caller's own value is
+// the only thing this can do, and it is what buildMetadata did before the memo
+// existed. Nor is the substitution observable through a rendering difference --
+// the memo is keyed by the STORED key and a caller may have spelled the version
+// differently, so the two need not render alike.
 //
-// Nothing else in PackageMetadata carries a version.Version. Requirement and
-// Marker store their operands as strings and parse per call, verified against
-// go-python-packaging v0.5.0, which is why the parsed requirements CAN be
-// shared.
+// ⚠️ Do not now "simplify" this by storing the first caller's Version and serving
+// it: that is safe from a data-race standpoint today, and it would still tell the
+// second caller a different version string than it asked about. See unusableErr,
+// which declines to memoize a finished message for exactly the same reason.
 //
 // # The copy policy, field by field
 //
@@ -418,56 +471,62 @@ func cloneMetadata(m PackageMetadata, ver version.Version) PackageMetadata {
 // meant is unknowable from the snapshot, and a caller still cannot detect that a
 // class was collapsed.
 //
-// # Memoized per package -- as KEYS, not as parsed versions
+// # Memoized per package -- the order AND the parsed versions
 //
-// What is memoized is the ORDER: the winning stored key of each equality class,
-// already sorted and deduped. Each call still parses those keys into fresh
-// version.Version values.
+// What is memoized is the ORDER (the winning stored key of each equality class,
+// already sorted and deduped) and the PARSED version of each of those keys. A
+// call after the first neither sorts nor parses; it copies.
 //
-// That looks like leaving the obvious win on the table, and it is not. The sort
-// is where the time went -- 0.84 s of the 0.91 s this method cost on the
-// corpus's app-set entry -- because sorting n versions is O(n log n) PEP 440
-// comparisons while parsing them is n parses. Memoizing the order removes the
-// comparisons and keeps the parses.
+// Memoizing the order came first and bought the larger share: sorting n versions
+// is O(n log n) PEP 440 comparisons while parsing them is n parses, and the sort
+// was 0.84 s of the 0.91 s this method cost on the corpus's app-set entry. What
+// remained was the n parses, and by 0.7.0 they were most of what was left:
+// profiled as a share of resolver.Resolve's own cumulative cost, re-parsing the
+// stored keys was 22.7% of a warm app-set resolution and 69.1% of a warm
+// wide-versions one, and 58.4% and 94.8% of the objects those resolutions
+// allocated. Memoizing them is worth 1.37x and 3.23x end to end.
 //
-// Metadata reads the same memo, binary-searching it to turn a caller's version
-// into the stored key it names. That is not an incidental reuse: it is what
-// makes "the version Versions hands out" and "the record Metadata resolves for
-// it" the same choice by construction rather than by two call sites agreeing on
-// preferKey. See resolveStoredKey.
+// ⚠️ Those shares are of THIS tree. The same memo measured against 0.6.0 was
+// 1.24x and 2.27x, because 0.7.0's pep440set change shrank the denominator rather
+// than the parse. A percentage-of-Resolve figure is a fact about one base; see
+// the CHANGELOG, which records both and why they differ.
 //
-// ⚠️ UPDATE, go-python-packaging v0.6.0: the upstream defect this whole section
-// rests on is FIXED. Compare now pads into a fresh slice, so a parsed Version is
-// safe to share and memoizing parsed values IS available. Re-verified against both
-// pins: v0.5.0 races under eight goroutines, v0.6.0 is clean.
+// ⚠️ THIS COULD NOT BE DONE BEFORE go-python-packaging v0.6.0, and the reason is
+// worth keeping because it is the reason the memo has the shape it has. Under
+// v0.5.0 and earlier a version.Version could not be shared between goroutines at
+// all: Version.Compare padded the shorter operand's release segment with
+// `append`, and cmpkey built that segment by RESLICING away trailing zeros, so
+// "3.0.0" carried a Parts of len 1 and cap 3 and padding it back wrote into spare
+// capacity in the backing array. A by-value copy of a Version copies the slice
+// HEADER, so two goroutines comparing two copies wrote to the same memory. v0.6.0
+// removes that two ways over: a packable version never touches part.Parts at all,
+// and the fallback pads by copying. The defect was upstream, in rstudio/go-version
+// v0.0.2, and was never fixable here -- key.release is unexported.
 //
-// This code still memoizes KEYS. That remains correct -- it is now a choice rather
-// than a requirement -- and taking the memo is a performance change with its own
-// measurement, not something to ride along with a dependency bump. Tracked
-// separately; the account below is kept because it explains the current shape.
+// So the parsed values are safe to share, and this memo shares them WITHIN the
+// index. It does not hand them out: see the copy below.
 //
-// A version.Version MUST NOT BE SHARED BETWEEN GOROUTINES under v0.5.0 and earlier,
-// so memoizing the parsed values was not available. Version.Compare pads the shorter operand's
-// release segment with `append`, and cmpkey builds that segment by RESLICING
-// away trailing zeros -- so "3.0.0" carries a Parts of len 1 and cap 3, and
-// padding it back to three segments writes into spare capacity in the backing
-// array rather than reallocating. A by-value copy of a Version copies the slice
-// HEADER, so two goroutines comparing two copies write to the same memory.
+// ⚠️ The returned slice is a COPY of the memo's, and that is not defensive
+// tidiness. Before this memo existed every call built a fresh slice, so a caller
+// has always been free to sort what it was given, and this module has such a
+// caller -- cmd/pyresolve's `versions` subcommand sorts the result in place.
+// Returning plan.versions would make that call reorder the cache for every later
+// caller, permanently, with nothing at the mutation site to suggest it: a silent
+// breaking change dressed as an optimization. Its cost was measured rather than
+// waved away -- see the copy note above deps -- and it is inside the figures
+// quoted here.
 //
-// Verified, not inferred: a memo holding parsed versions makes eight concurrent
-// resolutions against one shared RSFIndex fail `go test -race`, and the same
-// test passes both without the memo and with the memo holding keys. The writes
-// happen to store the same value at the same address, so the corruption is
-// benign in practice today -- but it is a data race the Go memory model gives
-// no guarantee about, and this type documents itself as safe for concurrent use.
+// Metadata reads the same memo, binary-searching plan.order to turn a caller's
+// version into the stored key it names. That is not an incidental reuse: it is
+// what makes "the version Versions hands out" and "the record Metadata resolves
+// for it" the same choice by construction rather than by two call sites agreeing
+// on preferKey. See resolveStoredKey.
 //
-// The defect was upstream, in rstudio/go-version v0.0.2 (part.Parts.Padding
-// appending into shared capacity) as reached through go-python-packaging v0.5.0
-// (version.Version.Compare). It was not introduced here and was not fixable
-// here: key.release is unexported, so this module cannot hand out a Version
-// whose backing array it has clipped. go-python-packaging v0.6.0 sidesteps it by
-// padding into a fresh slice, so the condition in the note at the top of this
-// comment is now met and the parsed-version memo is available to be taken.
+// ⚠️ The parsed half is RETENTION, not just churn traded away, and it is retained
+// for the life of the index rather than of a resolution. See the retention note
+// above deps: for this module's callers, which build an index per resolve, it is
+// a rounding error; for a long-lived server it is the thing that needs a bound
+// before the integration, not after it.
 func (idx *RSFIndex) Versions(ctx context.Context, pkg PackageName) ([]version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -476,21 +535,26 @@ func (idx *RSFIndex) Versions(ctx context.Context, pkg PackageName) ([]version.V
 	idx.memoMu.RLock()
 	plan, ok := idx.versionList[pkg]
 	idx.memoMu.RUnlock()
-	if ok {
-		return parseKeys(plan.order)
+	if !ok {
+		decoded, err := idx.deps(pkg)
+		if err != nil {
+			return nil, err
+		}
+		plan = computeVersionOrder(decoded)
+		idx.storePlan(pkg, plan)
 	}
 
-	decoded, err := idx.deps(pkg)
-	if err != nil {
-		return nil, err
-	}
-
-	plan, parsed := computeVersionOrder(decoded)
-	idx.storePlan(pkg, plan)
-
-	// The freshly parsed values, not a re-parse of what was just stored: the
-	// first call should not pay twice.
-	return parsed, nil
+	// Never plan.versions itself. See the copy note above -- and note that the
+	// FIRST call copies too: it holds the same slice it just stored, so returning
+	// it directly would leave exactly one caller per package able to corrupt the
+	// memo, which is the worst of both arrangements to debug.
+	//
+	// make, not slices.Clone: a package whose every key is unparseable must come
+	// back as an empty NON-NIL slice, which is what it returned before any memo
+	// existed, and slices.Clone propagates nil.
+	out := make([]version.Version, len(plan.versions))
+	copy(out, plan.versions)
+	return out, nil
 }
 
 // versionPlan is what Versions computed for one package, and what Metadata
@@ -501,6 +565,15 @@ type versionPlan struct {
 	// equal. That makes it binary-searchable with the same comparator that
 	// sorted it.
 	order []string
+
+	// versions is order, parsed, element for element: versions[i] is
+	// version.Parse(order[i]). Same length, same order, always.
+	//
+	// ⚠️ SHARED, and only inside the index. Versions returns a copy; nothing here
+	// or in Metadata writes to it. Sharing it at all became legal in
+	// go-python-packaging v0.6.0 and would have been a data race before -- see
+	// Versions.
+	versions []version.Version
 
 	// alias maps a class winner's CANONICAL RENDERING to its stored key, for the
 	// classes where the two differ. Nil when every winner is already spelled
@@ -533,7 +606,7 @@ func (idx *RSFIndex) versionPlanFor(pkg PackageName, decoded map[string]pypirsf.
 		return plan
 	}
 
-	plan, _ = computeVersionOrder(decoded)
+	plan = computeVersionOrder(decoded)
 	idx.storePlan(pkg, plan)
 	return plan
 }
@@ -549,24 +622,33 @@ func (idx *RSFIndex) storePlan(pkg PackageName, plan versionPlan) {
 	idx.memoMu.Lock()
 	defer idx.memoMu.Unlock()
 
-	// Clipped to its length. computeVersionOrder sizes order for every candidate
-	// and appends only the class representatives, so a package with a collapsed
-	// equality class leaves spare capacity behind -- and a cached slice with
-	// len < cap is the shape that lets an append by one holder overwrite what
-	// another holder is reading. Nothing appends to this today; the clip is what
-	// keeps that from becoming load-bearing.
+	// Clipped to their length. computeVersionOrder sizes both slices for every
+	// candidate and appends only the class representatives, so a package with a
+	// collapsed equality class leaves spare capacity behind -- and a cached slice
+	// with len < cap is the shape that lets an append by one holder overwrite
+	// what another holder is reading. Nothing appends to either today; the clip
+	// is what keeps that from becoming load-bearing.
+	//
+	// ⚠️ The clip does NOT reclaim the spare capacity -- the backing array is
+	// unchanged and only a later append would reallocate. It is not a retention
+	// measure and should not be read as one; equality classes collapse in 59
+	// classes across the whole production snapshot, so there is nothing there to
+	// reclaim. What it buys is that an append by one holder cannot grow IN PLACE
+	// into memory another holder is reading.
 	plan.order = plan.order[:len(plan.order):len(plan.order)]
+	plan.versions = plan.versions[:len(plan.versions):len(plan.versions)]
 	idx.versionList[pkg] = plan
 }
 
 // computeVersionOrder does the parse, sort and dedup behind both Versions and
-// versionPlanFor, returning the plan and the parsed versions of its order, in
-// the same order.
+// versionPlanFor.
 //
-// The two returns are parallel by construction, which is what lets Versions
-// serve its first call from the parsed half without re-parsing the keys it just
-// stored.
-func computeVersionOrder(decoded map[string]pypirsf.VersionDeps) (versionPlan, []version.Version) {
+// plan.order and plan.versions are filled in one pass and are parallel by
+// construction, which is the invariant everything above relies on: it is what
+// lets Versions serve from the parsed half while resolveStoredKey binary-searches
+// the key half, without either needing to check that the two still agree. Keep
+// the two appends adjacent.
+func computeVersionOrder(decoded map[string]pypirsf.VersionDeps) versionPlan {
 	type candidate struct {
 		key       string
 		parsed    version.Version
@@ -605,16 +687,20 @@ func computeVersionOrder(decoded map[string]pypirsf.VersionDeps) (versionPlan, [
 			candidates[j].key, candidates[j].canonical)
 	})
 
-	out := make([]version.Version, 0, len(candidates))
-	plan := versionPlan{order: make([]string, 0, len(candidates))}
+	// Both non-nil even for a package whose every key is unparseable: Versions has
+	// always answered that with an empty slice rather than a nil one.
+	plan := versionPlan{
+		order:    make([]string, 0, len(candidates)),
+		versions: make([]version.Version, 0, len(candidates)),
+	}
 	for i, c := range candidates {
 		if i > 0 && candidates[i-1].parsed.Equal(c.parsed) {
 			// A later member of a class already represented. See the dedup note in
 			// the method doc.
 			continue
 		}
-		out = append(out, c.parsed)
 		plan.order = append(plan.order, c.key)
+		plan.versions = append(plan.versions, c.parsed)
 
 		// Only the non-canonical winners need an alias entry: for a canonical
 		// key the caller's ver.String() IS the key, and decoded resolves it
@@ -627,29 +713,7 @@ func computeVersionOrder(decoded map[string]pypirsf.VersionDeps) (versionPlan, [
 		}
 	}
 
-	return plan, out
-}
-
-// parseKeys re-parses a memoized version order.
-//
-// Every key here parsed successfully when the order was built, so a failure now
-// would mean version.Parse is not a function of its input. Treated as a
-// programming error rather than skipped, because silently dropping a version
-// would make the memoized answer differ from the first one.
-//
-// Always non-nil, matching what Versions returned before the memo existed: the
-// slice was built with make, so a package whose every key is unparseable came
-// back as an empty non-nil slice rather than nil.
-func parseKeys(order []string) ([]version.Version, error) {
-	out := make([]version.Version, len(order))
-	for i, key := range order {
-		v, err := version.Parse(key)
-		if err != nil {
-			return nil, fmt.Errorf("index: memoized version key %q no longer parses: %w", key, err)
-		}
-		out[i] = v
-	}
-	return out, nil
+	return plan
 }
 
 // UnparseableVersionKeys returns the stored version keys for pkg that PEP 440
@@ -775,10 +839,18 @@ func (idx *RSFIndex) resolveStoredKey(
 // findEqualKey binary-searches a sorted, deduped version order for the key whose
 // version is PEP 440-equal to ver.
 //
-// Each probe is parsed fresh and discarded, which is the point: the order holds
-// strings precisely because a version.Version cannot be shared between
-// goroutines (see Versions), so the comparison has to re-parse. Only log2(n) of
-// them are parsed.
+// Each probe is parsed fresh and discarded. That USED to be forced -- the order
+// held strings because a version.Version could not be shared between goroutines
+// -- and it no longer is: plan.versions now holds the parsed value of every
+// element of plan.order, at the same index, so this search could probe those
+// directly and parse nothing.
+//
+// ⚠️ It deliberately does not, YET. Only log2(n) probes are parsed -- about 14
+// against a package with ten thousand releases -- so this is not where the parse
+// cost was, and folding it into the parsed-version memo's change would have
+// confounded that memo's measurement with a second effect. It is a real follow-up
+// with a real (small) win, not an oversight. Whoever takes it: pass the plan
+// rather than the order, and the error return goes away with the parse.
 //
 // A parse failure here would mean version.Parse is not a function of its input,
 // since every key in the order parsed when the order was built. Reported rather
