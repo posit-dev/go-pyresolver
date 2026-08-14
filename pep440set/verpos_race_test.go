@@ -34,6 +34,20 @@ import (
 // ".0" probe shapes below are kept because they are what makes this test
 // descend to pub.Compare at all, which is the path it does cover.
 //
+// ⚠️ CORRECTION, and it outlived the rewrite above. This note used to name
+// resolver/concurrency_test.go as the test that DOES reach the padding hazard,
+// "through cross-group Compare in ranking". It does not, and until recently
+// nothing in this repository did: pinned back to go-python-packaging v0.5.0,
+// with the hazard live, the entire suite passed under -race. The tests that
+// reach it are TestSharedParsedVersionIsRaceFree and
+// TestSupportsPythonSharedTargetIsRaceFree in the index package, each confirmed
+// individually to report WARNING: DATA RACE at v0.5.0 and to be clean at the
+// pinned version.
+//
+// ⚠️ The first reason above is a property of the CURRENT dependency pin, not a
+// theorem. Those index tests are what would notice if the pin moved back, which
+// makes them more load-bearing since that rewrite rather than less.
+//
 // The probes still end in ".0" (the spare-capacity shape) and share the
 // bounds' release group so the ladder genuinely descends to pub.Compare --
 // asserted below, not assumed -- which keeps this test honest about the path
