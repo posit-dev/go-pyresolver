@@ -27,8 +27,14 @@ served it.
   then splitting the result back into digit runs. Once per candidate version per
   `Contains` call. It now asks go-python-packaging for
   `version.ReleaseKey` instead, which reads the parsed `Version`'s own epoch and
-  release fields: ~16 ns and no allocation, against ~220 ns and 10 allocations
-  for the render-and-split.
+  release fields: **no allocation, against 10** for the render-and-split, and
+  roughly an order of magnitude less time.
+
+  ⚠️ The allocation counts are exact and machine-independent; the times are
+  not. gpp's `BenchmarkReleaseKeyVsBaseVersionSplit` reads 16 ns vs 213 ns on
+  an idle M4 Max and 23 ns vs 520 ns on a loaded one — the ratio survives, a
+  quoted nanosecond figure does not. Run the benchmark rather than trusting a
+  number written down here.
 
   Medians of three interleaved rounds, ten iterations, against the production
   snapshot (932,861 packages, dated 2026-08-04), on an Apple M4 Max:
