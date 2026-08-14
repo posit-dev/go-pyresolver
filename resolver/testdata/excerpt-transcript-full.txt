@@ -1,0 +1,530 @@
+# gpr-transcript v2
+=== certifi
+FAILED lines=1 bytes=136 sha256=aad22c7fc37789a96ebd0cd3bd14486dd3b7fb467145d26b8bddcd34cfe6134e
+  So, because certifi has no versions and the root project 0 depends on certifi, the requirements of the root project cannot be satisfied.
+=== flask
+  flask 3.1.3
+  itsdangerous 2.2.0
+  blinker 1.9.0
+  jinja2 3.1.6
+  werkzeug 3.1.8
+  markupsafe 3.0.3
+  click 8.4.2
+=== flask[async]
+  flask 3.1.3 [async]
+  itsdangerous 2.2.0
+  blinker 1.9.0
+  jinja2 3.1.6
+  werkzeug 3.1.8
+  markupsafe 3.0.3
+  click 8.4.2
+  asgiref 3.12.1
+=== flask requests sqlalchemy gunicorn python-dotenv
+FAILED lines=1 bytes=138 sha256=bdb2a7f303e226247fad9359fc58833fd06c1e4e9c1c558b12b653db598b0a1f
+  So, because gunicorn has no versions and the root project 0 depends on gunicorn, the requirements of the root project cannot be satisfied.
+=== boto3
+FAILED lines=1 bytes=132 sha256=68808372122aea8b86fc4dbe781ff0d1b07007341cdd62df072e19864f7e1290
+  So, because boto3 has no versions and the root project 0 depends on boto3, the requirements of the root project cannot be satisfied.
+=== pandas numpy<1.26
+FAILED lines=64 bytes=70868 sha256=21fce5c55ba1edc1d186a76b0c42ebcf92630272f4d66ce15bd05b9190b27c75
+  So, because the root project 0 depends on pandas, the requirements of the root project cannot be satisfied.
+=== flask==3.0.0 werkzeug<2
+FAILED lines=1 bytes=199 sha256=a44ce1c47cbfec0b638b6a931965d36e95f471701f1beeece7db31df56997725
+  So, because flask 3.0.0 depends on werkzeug >=3.0.0, the root project 0 depends on flask 3.0.0 and the root project 0 depends on werkzeug <2, the requirements of the root project cannot be satisfied.
+=== 0
+  0 0.0.0
+=== aad-token-verify
+FAILED lines=2 bytes=312 sha256=7d7294a33dc6ffa22079f91a7497072eefb62ef802971698f9ebbbf0cced3544
+  So, because the root project 0 depends on aad-token-verify, the requirements of the root project cannot be satisfied.
+=== accessible-pygments
+  accessible-pygments 0.0.5
+  pygments 2.20.0
+=== admobilize-malos
+FAILED lines=3 bytes=491 sha256=e9701a4005e555d9913c48f7d744b2acd80dec5b3c287713b5bfb4cf4c750664
+  So, because the root project 0 depends on admobilize-malos, the requirements of the root project cannot be satisfied.
+=== alabaster
+  alabaster 1.0.0
+=== anpy
+FAILED lines=16 bytes=4779 sha256=84c1c632100cffc0efd34165d5f208e8ebe345f3f8391acc18f1097f675e51ce
+  So, because the root project 0 depends on anpy, the requirements of the root project cannot be satisfied.
+=== argcomplete
+  argcomplete 3.7.0
+=== asgiref
+  asgiref 3.12.1
+=== ast-serialize
+  ast-serialize 0.6.0
+=== attrs
+  attrs 26.1.0
+=== autocommand
+  autocommand 2.2.2
+=== babel
+  babel 2.18.0
+=== backports-asyncio-runner
+  backports-asyncio-runner 1.0.0
+=== backports-zoneinfo
+  backports-zoneinfo 0.2.1
+=== beautifulsoup4
+  beautifulsoup4 4.6.3
+=== big-o
+FAILED lines=1 bytes=132 sha256=6f4f5d4870177817817afad0af4dbf5ea73d726cba32f4693b5ac37c6a18c959
+  So, because big-o has no versions and the root project 0 depends on big-o, the requirements of the root project cannot be satisfied.
+=== black
+FAILED lines=38 bytes=25043 sha256=b0c9dbc88bc1b51ec1067e435f3d652e775d065d36bdd53624f98d08d1cf0f6d
+  So, because the root project 0 depends on black, the requirements of the root project cannot be satisfied.
+=== blinker
+  blinker 1.9.0
+=== build
+FAILED lines=40 bytes=27366 sha256=c5903aa6b9db9a4fa9c323ec77a520ef07cf27dde27efb7f87ee98d6a81f3475
+  So, because the root project 0 depends on build, the requirements of the root project cannot be satisfied.
+=== click
+  click 8.4.2
+=== colorama
+  colorama 0.4.6
+=== coverage
+  coverage 7.15.3
+=== curio
+FAILED lines=1 bytes=132 sha256=f3d616b64744cbd97e2ee8c30a0baba977c83de8bf604e38d14717f8047214b8
+  So, because curio has no versions and the root project 0 depends on curio, the requirements of the root project cannot be satisfied.
+=== database-connector
+  database-connector 1.0
+=== docrepr
+  docrepr 0.2.0
+  docutils 0.23
+  jinja2 3.1.6
+  markupsafe 3.0.3
+  sphinx 3.5.3
+  sphinxcontrib-jsmath 1.0.1
+  sphinxcontrib-devhelp 2.0.0
+  snowballstemmer 3.1.1
+  sphinxcontrib-qthelp 2.0.0
+  sphinxcontrib-applehelp 2.0.0
+  sphinxcontrib-serializinghtml 2.0.0
+  sphinxcontrib-htmlhelp 2.1.0
+  imagesize 2.0.0
+  alabaster 0.7.16
+  babel 2.18.0
+  pygments 2.20.0
+  packaging 26.2
+  requests 2.15.1
+  setuptools 83.0.0
+=== docutils
+  docutils 0.23
+=== domdf-python-tools
+  domdf-python-tools 0.2.6
+=== exceptiongroup
+  exceptiongroup 1.3.1
+  typing-extensions 4.16.0
+=== filelock
+  filelock 3.32.2
+=== flake8
+FAILED lines=77 bytes=92423 sha256=4f54714ae6737ce00785a9d0066987f79cad8d6633842a2ceb1c843dfd2c4c52
+  So, because the root project 0 depends on flake8, the requirements of the root project cannot be satisfied.
+=== flask
+  flask 3.1.3
+  itsdangerous 2.2.0
+  blinker 1.9.0
+  jinja2 3.1.6
+  werkzeug 3.1.8
+  markupsafe 3.0.3
+  click 8.4.2
+=== freezegun
+FAILED lines=32 bytes=18398 sha256=7367984a4818bbf6f732559501d430b8f009f826afd979b9a1352eefc8e52f27
+  So, because the root project 0 depends on freezegun, the requirements of the root project cannot be satisfied.
+=== furo
+  furo 2022.4.7
+  beautifulsoup4 4.6.3
+  sphinx 4.5.0
+  sphinxcontrib-jsmath 1.0.1
+  sphinxcontrib-serializinghtml 2.0.0
+  docutils 0.17.1
+  sphinxcontrib-htmlhelp 2.1.0
+  sphinxcontrib-devhelp 2.0.0
+  snowballstemmer 3.1.1
+  sphinxcontrib-qthelp 2.0.0
+  sphinxcontrib-applehelp 2.0.0
+  imagesize 2.0.0
+  alabaster 0.7.16
+  pygments 2.20.0
+  jinja2 3.1.6
+  markupsafe 3.0.3
+  babel 2.18.0
+  packaging 26.2
+  requests 2.15.1
+=== guessproj
+FAILED lines=5 bytes=665 sha256=f0d7da273a9d74e0c5176a7fcd0e399ac6758d572e4494ef3c0d9d8b4d4e51f0
+  So, because the root project 0 depends on guessproj, the requirements of the root project cannot be satisfied.
+=== holygrail
+FAILED lines=1 bytes=140 sha256=2317f1e8a0a4d0f7ccd4902c9258e1d212c850ab2c2d108647d04876d2ab4020
+  So, because holygrail has no versions and the root project 0 depends on holygrail, the requirements of the root project cannot be satisfied.
+=== imagesize
+  imagesize 2.0.0
+=== importlib-metadata
+  importlib-metadata 9.0.0
+  zipp 4.1.0
+=== importlib-resources
+  importlib-resources 7.1.0
+=== iniconfig
+  iniconfig 2.3.0
+=== intersphinx-registry
+  intersphinx-registry 0.2606.25
+=== ipykernel
+FAILED lines=130 bytes=292824 sha256=051c7599522ba5247f3a6b58387394d426b5ac4c2684e9c2889be7ae43a594e6
+  So, because the root project 0 depends on ipykernel, the requirements of the root project cannot be satisfied.
+=== ipython
+  ipython 3.2.3
+=== ipython-pygments-lexers
+  ipython-pygments-lexers 1.1.1
+  pygments 2.20.0
+=== itsdangerous
+  itsdangerous 2.2.0
+=== jaraco-compat
+  jaraco-compat 4.3.1
+=== jaraco-context
+  jaraco-context 5.1.0
+=== jaraco-functools
+  jaraco-functools 4.6.0
+  more-itertools 11.1.0
+=== jaraco-itertools
+FAILED lines=35 bytes=22398 sha256=21cca7412e4ebd4fc6b28c6b94e69b57ce81bc85762fe042f325b50d42428eee
+  So, because the root project 0 depends on jaraco-itertools, the requirements of the root project cannot be satisfied.
+=== jaraco-packaging
+  jaraco-packaging 8.2.1
+  setuptools 83.0.0
+=== jaraco-test
+  jaraco-test 5.3.0
+  jaraco-context 5.1.0
+  jaraco-functools 4.6.0
+  more-itertools 11.1.0
+=== jaraco-text
+  jaraco-text 4.1.0
+  jaraco-context 5.1.0
+  autocommand 2.2.2
+  jaraco-functools 4.6.0
+  more-itertools 11.1.0
+=== jaraco-tidelift
+  jaraco-tidelift 1.5.1
+  autocommand 2.2.2
+  requests-toolbelt 1.0.0
+  requests 2.15.1
+  importlib-resources 7.1.0
+  keyring 9.1
+=== jaraco-vcs
+FAILED lines=13 bytes=3282 sha256=1f62b44e2912d2e38246af87304e9ba4be2975d1ac3b4477a5685233e1b01d9e
+  So, because the root project 0 depends on jaraco-vcs, the requirements of the root project cannot be satisfied.
+=== jedi
+  jedi 0.10.2
+=== jinja2
+  jinja2 3.1.6
+  markupsafe 3.0.3
+=== jupyter-ai
+FAILED lines=102 bytes=177462 sha256=a23729b70f97a5bb1f507590ecd441165bc55123835f0e44c722d19c97cfcb9c
+  So, because the root project 0 depends on jupyter-ai, the requirements of the root project cannot be satisfied.
+=== keyring
+  keyring 9.1
+=== librt
+  librt 0.13.0
+=== lxml
+  lxml 6.1.1
+=== markupsafe
+  markupsafe 3.0.3
+=== matplotlib
+FAILED lines=79 bytes=109981 sha256=cfaee1da5c02d3688f7840df613b7ba55efd383dcf402908a52bd426e7c03017
+  So, because the root project 0 depends on matplotlib, the requirements of the root project cannot be satisfied.
+=== matplotlib-inline
+  matplotlib-inline 0.2.2
+  traitlets 5.16.1
+=== memery
+  memery 0.0.2
+=== mock
+  mock 5.2.0
+=== more-itertools
+  more-itertools 11.1.0
+=== mypy
+  mypy 2.3.0
+  librt 0.13.0
+  ast-serialize 0.6.0
+  mypy-extensions 1.1.0
+  pathspec 1.1.1
+  typing-extensions 4.16.0
+=== mypy-extensions
+  mypy-extensions 1.1.0
+=== myst-parser
+FAILED lines=78 bytes=89072 sha256=8cb9c581520ea3f164b89895f63930b8aaeef52d8ce0f533c5a9cc981a52a31f
+  So, because the root project 0 depends on myst-parser, the requirements of the root project cannot be satisfied.
+=== nbclient
+FAILED lines=47 bytes=38022 sha256=4c57120c9816a33dfab7db5f1ebef02fa6698ecd99eddde2a393550559264d3e
+  So, because the root project 0 depends on nbclient, the requirements of the root project cannot be satisfied.
+=== nbformat
+FAILED lines=38 bytes=25829 sha256=e974aeaa8b903e9d1f698f68b0fd9f8c9ea16b74881cd6bde36b9c9d15245263
+  So, because the root project 0 depends on nbformat, the requirements of the root project cannot be satisfied.
+=== numpy
+  numpy 2.4.6
+=== orjson
+  orjson 3.11.9
+=== packaging
+  packaging 26.2
+=== pandas
+FAILED lines=64 bytes=70631 sha256=e3a7bcffa8522d0f0fa19f13339814bc4ebc989fd2470243205a72d128a49cb6
+  So, because the root project 0 depends on pandas, the requirements of the root project cannot be satisfied.
+=== path
+  path 17.1.1
+=== pathspec
+  pathspec 1.1.1
+=== pexpect
+FAILED lines=12 bytes=3118 sha256=9bc4fbce121329031943edcd4ac1f7f5aa0a6ed6101de51e20ba06d260f8612a
+  So, because the root project 0 depends on pexpect, the requirements of the root project cannot be satisfied.
+=== pip
+  pip 26.2
+=== pip-run
+  pip-run 9.2.1
+  jaraco-context 5.1.0
+  autocommand 2.2.2
+  path 17.1.1
+  more-itertools 11.1.0
+  jaraco-text 4.1.0
+  jaraco-functools 4.6.0
+  packaging 26.2
+  pip 26.2
+=== pluggy
+  pluggy 1.6.0
+=== polib
+  polib 1.2.0
+=== process-tests
+  process-tests 3.0.0
+=== prompt-toolkit
+FAILED lines=112 bytes=227238 sha256=7678f456359f1a54b7371e96a592d462b5a42adcd44112f27c84e1c605ed4ca8
+  So, because the root project 0 depends on prompt-toolkit, the requirements of the root project cannot be satisfied.
+=== psutil
+  psutil 7.2.2
+=== pyfakefs
+  pyfakefs 6.2.0
+=== pygments
+  pygments 2.20.0
+=== pytest
+  pytest 9.1.1
+  pluggy 1.6.0
+  iniconfig 2.3.0
+  packaging 26.2
+  pygments 2.20.0
+=== pytest-asyncio
+  pytest-asyncio 1.4.0
+  pytest 9.1.1
+  pluggy 1.6.0
+  iniconfig 2.3.0
+  typing-extensions 4.16.0
+  packaging 26.2
+  pygments 2.20.0
+=== pytest-black
+FAILED lines=41 bytes=24791 sha256=7cc48491e26c34c81d9b63e97cc72037f97da9311d8432c9ebd9fefaf9541997
+  So, because the root project 0 depends on pytest-black, the requirements of the root project cannot be satisfied.
+=== pytest-checkdocs
+  pytest-checkdocs 2.3.0
+  docutils 0.23
+  more-itertools 11.1.0
+=== pytest-cov
+  pytest-cov 7.1.0
+  pluggy 1.6.0
+  coverage 7.15.3 [toml]
+  pytest 9.1.1
+  iniconfig 2.3.0
+  packaging 26.2
+  pygments 2.20.0
+=== pytest-enabler
+  pytest-enabler 3.4.0
+  toml 0.10.2
+  jaraco-context 5.1.0
+  importlib-resources 7.1.0
+  jaraco-functools 4.6.0
+  more-itertools 11.1.0
+=== pytest-flake8
+FAILED lines=97 bytes=48099 sha256=74ad135066b622338dc5b5f018c4419eb1ebd5009f748e2957d4b070c2ed4f83
+  So, because the root project 0 depends on pytest-flake8, the requirements of the root project cannot be satisfied.
+=== pytest-ignore-flaky
+  pytest-ignore-flaky 2.2.1
+  pytest 9.1.1
+  pluggy 1.6.0
+  iniconfig 2.3.0
+  packaging 26.2
+  pygments 2.20.0
+=== pytest-mypy
+  pytest-mypy 1.0.1
+  pytest 9.1.1
+  pluggy 1.6.0
+  iniconfig 2.3.0
+  packaging 26.2
+  pygments 2.20.0
+  mypy 2.3.0
+  librt 0.13.0
+  ast-serialize 0.6.0
+  mypy-extensions 1.1.0
+  pathspec 1.1.1
+  typing-extensions 4.16.0
+  filelock 3.32.2
+=== pytest-perf
+  pytest-perf 0.15.0
+  pip-run 9.2.1
+  jaraco-context 5.1.0
+  tempora 5.6.0
+  autocommand 2.2.2
+  more-itertools 11.1.0
+  jaraco-functools 4.6.0
+  path 17.1.1
+  jaraco-text 4.1.0
+  packaging 26.2
+  pip 26.2
+=== pytest-ruff
+  pytest-ruff 0.5
+  pytest 9.1.1
+  pluggy 1.6.0
+  iniconfig 2.3.0
+  packaging 26.2
+  pygments 2.20.0
+  ruff 0.16.1
+=== pytest-subprocess
+  pytest-subprocess 1.6.0
+  pytest 9.1.1
+  pluggy 1.6.0
+  iniconfig 2.3.0
+  packaging 26.2
+  pygments 2.20.0
+=== pytest-xdist
+FAILED lines=49 bytes=43334 sha256=32c104677439dccae1c7fe49b789ef6aa97d7bdd69a82091c48793a9416f8ad3
+  So, because the root project 0 depends on pytest-xdist, the requirements of the root project cannot be satisfied.
+=== python-dotenv
+  python-dotenv 1.2.2
+=== pytz
+  pytz 2026.3.post1
+=== pyyaml
+  pyyaml 6.0.3
+=== regex
+  regex 2026.7.19
+=== requests
+  requests 2.15.1
+=== requests-toolbelt
+  requests-toolbelt 1.0.0
+  requests 2.15.1
+=== roman-numerals
+  roman-numerals 4.1.0
+=== rst-linker
+  rst-linker 1.3.1
+=== ruff
+  ruff 0.16.1
+=== setuptools
+  setuptools 83.0.0
+=== snowballstemmer
+  snowballstemmer 3.1.1
+=== sphinx
+  sphinx 5.3.0
+  sphinxcontrib-jsmath 1.0.1
+  imagesize 2.0.0
+  sphinxcontrib-serializinghtml 2.0.0
+  sphinxcontrib-htmlhelp 2.1.0
+  sphinxcontrib-devhelp 2.0.0
+  snowballstemmer 3.1.1
+  sphinxcontrib-qthelp 2.0.0
+  sphinxcontrib-applehelp 2.0.0
+  docutils 0.19
+  jinja2 3.1.6
+  markupsafe 3.0.3
+  alabaster 0.7.16
+  pygments 2.20.0
+  packaging 26.2
+  babel 2.18.0
+  requests 2.15.1
+=== sphinx-basic-ng
+FAILED lines=1 bytes=152 sha256=d7ea3171df0fd329806d92545e4ccff06f70b2613d3c48d1ad79006cf1826dfd
+  So, because sphinx-basic-ng has no versions and the root project 0 depends on sphinx-basic-ng, the requirements of the root project cannot be satisfied.
+=== sphinx-lint
+  sphinx-lint 1.0.2
+  polib 1.2.0
+  regex 2026.7.19
+=== sphinx-rtd-theme
+  sphinx-rtd-theme 1.1.1
+  docutils 0.17.1
+  sphinx 5.3.0
+  sphinxcontrib-jsmath 1.0.1
+  imagesize 2.0.0
+  sphinxcontrib-serializinghtml 2.0.0
+  sphinxcontrib-htmlhelp 2.1.0
+  sphinxcontrib-devhelp 2.0.0
+  snowballstemmer 3.1.1
+  sphinxcontrib-qthelp 2.0.0
+  sphinxcontrib-applehelp 2.0.0
+  jinja2 3.1.6
+  markupsafe 3.0.3
+  alabaster 0.7.16
+  pygments 2.20.0
+  packaging 26.2
+  babel 2.18.0
+  requests 2.15.1
+=== sphinx-tabs
+  sphinx-tabs 3.4.7
+  docutils 0.23
+  pygments 2.20.0
+  sphinx 3.5.3
+  sphinxcontrib-jsmath 1.0.1
+  sphinxcontrib-devhelp 2.0.0
+  snowballstemmer 3.1.1
+  sphinxcontrib-qthelp 2.0.0
+  sphinxcontrib-applehelp 2.0.0
+  sphinxcontrib-serializinghtml 2.0.0
+  sphinxcontrib-htmlhelp 2.1.0
+  imagesize 2.0.0
+  alabaster 0.7.16
+  jinja2 3.1.6
+  markupsafe 3.0.3
+  babel 2.18.0
+  requests 2.15.1
+  packaging 26.2
+  setuptools 83.0.0
+=== sphinx-toml
+  sphinx-toml 0.0.1
+=== sphinxcontrib-applehelp
+  sphinxcontrib-applehelp 2.0.0
+=== sphinxcontrib-devhelp
+  sphinxcontrib-devhelp 2.0.0
+=== sphinxcontrib-htmlhelp
+  sphinxcontrib-htmlhelp 2.1.0
+=== sphinxcontrib-jsmath
+  sphinxcontrib-jsmath 1.0.1
+=== sphinxcontrib-qthelp
+  sphinxcontrib-qthelp 2.0.0
+=== sphinxcontrib-serializinghtml
+  sphinxcontrib-serializinghtml 2.0.0
+=== stack-data
+FAILED lines=16 bytes=5108 sha256=f9473988d80e0f09a7707eb155ca06e35e7d0ce370c8ca93b380fefd5be809da
+  So, because the root project 0 depends on stack-data, the requirements of the root project cannot be satisfied.
+=== tempora
+  tempora 5.6.0
+  jaraco-functools 4.6.0
+  more-itertools 11.1.0
+=== testpath
+  testpath 0.6.0
+=== toml
+  toml 0.10.2
+=== tomli
+  tomli 2.4.1
+=== traitlets
+  traitlets 5.16.1
+=== trio
+FAILED lines=42 bytes=33934 sha256=29ae34902628bae8456fdb370c98346d320315c35c4ea366d2b38942f3835503
+  So, because the root project 0 depends on trio, the requirements of the root project cannot be satisfied.
+=== types-docutils
+  types-docutils 0.22.3.20260724
+=== types-toml
+  types-toml 0.10.8.20260518
+=== typing-extensions
+  typing-extensions 4.16.0
+=== tzdata
+  tzdata 2026.3
+=== virtualenv
+  virtualenv 16.7.12
+=== watchdog
+  watchdog 6.0.0
+=== werkzeug
+  werkzeug 3.1.8
+  markupsafe 3.0.3
+=== xmlschema
+  xmlschema 0.9.23
+=== zipp
+  zipp 4.1.0

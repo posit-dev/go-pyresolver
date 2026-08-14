@@ -13,6 +13,57 @@ served it.
 
 ## [Unreleased]
 
+### Changed
+
+- **CI now runs `go test -race`, and the shareability guarantee is a test rather
+  than a paragraph.** No behaviour change; this is test and CI only.
+
+  `PackageMetadata.SupportsPython`'s doc comment was relaxed in 0.6.0 to say that
+  a parsed `version.Version` may be shared between goroutines. That was true, and
+  it was backed by prose and one manual reproduction. It is now backed by
+  `TestSharedParsedVersionIsRaceFree` and
+  `TestSupportsPythonSharedTargetIsRaceFree`, which share one parsed value across
+  eight goroutines and cover **both** of the paths 0.6.0 fixes separately: the
+  packed integer key that packable versions take, and the `padParts` fallback
+  that the other ~24% of distinct versions take. Each subtest was confirmed to
+  report `WARNING: DATA RACE` with the dependency pinned back to
+  go-python-packaging v0.5.0.
+
+  ⚠️ **Two findings from doing that, both corrections to what this repository
+  already claimed.** Pinned back to v0.5.0, with the padding race live, the
+  entire existing suite passed under `-race`: nothing in it shared a parsed
+  `version.Version` between goroutines. `resolver/concurrency_test.go` was named
+  in another test's comment as the test that reached the hazard and did not; and
+  `MockIndex.Versions` and `RSFIndex.Versions` both re-parse from stored keys, so
+  no index could have handed two goroutines an aliased value. Both comments are
+  corrected in place.
+
+- **The equivalence transcript runs in CI.** The 0.5.0 and 0.6.0 figures were
+  justified by a 4,007-resolution transcript diffed between two builds, run once
+  on a laptop against a 981 MB snapshot. `TestResolutionTranscriptMatchesGolden`
+  makes the same comparison reproducible: it resolves the committed excerpt
+  (`index/testdata/pypi-trimmed.rsf`) plus the benchmark corpus and diffs the
+  result against a checked-in golden file, failing rather than skipping if the
+  fixture is missing. The full-snapshot two-build tool stays env-gated, because
+  it genuinely cannot run on a CI runner.
+
+  It asserts a minimum count of **discriminating** cases -- resolutions that
+  pinned a dependency, that activated an extra, or that derived a real conflict
+  -- rather than a count of cases compared. A count of cases compared is what a
+  previous differential reported while covering none of its own subject.
+
+  ⚠️ **CI is slower**, measured on the runner rather than on a laptop, and quoted
+  as a RANGE because a hosted runner is noisy enough that any single figure is
+  partly luck. The build job goes from **22–31 s** (six runs on `main`) to
+  **143–186 s** (five runs on this branch). Per step: `go test ./...` 10–13 s →
+  17–23 s, a new `-race` step at 101–120 s, and a new equivalence step at 11–14 s.
+
+  To hold it there, 20 excerpt packages that account for nearly all of the
+  sweep's cost are held out of the per-pull-request run and covered by a new
+  nightly job against their own golden file. One package, `hypothesis`, is
+  excluded from **both**: on this 139-package excerpt it failed to finish under
+  bounds of 20 s, 60 s, 3 min and 10 min, so no deterministic transcript entry
+  for it exists at any deadline.
 ## [0.7.0] - 2026-08-14
 
 ### Changed

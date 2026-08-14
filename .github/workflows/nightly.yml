@@ -1,0 +1,66 @@
+name: Nightly
+
+# The slow half of the equivalence check.
+#
+# The full sweep of index/testdata/pypi-trimmed.rsf takes 95-110 s on an M4 Max,
+# against about 6 s for the subset the pull-request job runs -- so twenty of the
+# packages are essentially the entire cost. A single-package requirement whose
+# dependencies are largely absent from a 139-package excerpt puts the solver into
+# version-set algebra inside conflict resolution, which is a property of the
+# excerpt rather than of those packages.
+#
+# So the pull-request job runs 125 cases and this runs 145, against its own golden
+# file. See slowExcerptPackages in resolver/equivalence_test.go for the per-package
+# costs, unboundedExcerptPackages for the one package excluded from both, and both
+# comments for why the split is by NAME rather than by a wall clock.
+
+on:
+  schedule:
+    # 06:00 UTC daily.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# SERIALISES overlapping runs; it does not deduplicate them. A manual dispatch
+# issued while the scheduled run is going still executes, it just queues behind
+# it. That is the intent -- an on-demand run is usually asked for BECAUSE someone
+# wants a fresh answer -- and cancel-in-progress stays false so a dispatch never
+# kills a scheduled run that is most of the way through several minutes of work.
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  full-transcript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+      # Same must-not-skip shape as the pull-request job. A nightly that skips is
+      # worse than an absent one: nobody looks at a green scheduled run.
+      - name: Full equivalence transcript (must not skip)
+        shell: bash
+        env:
+          GPR_TRANSCRIPT_FULL: '1'
+        run: |
+          set -euo pipefail
+          go test ./resolver/ -run 'TestResolutionTranscriptMatchesGolden' -v -count=1 \
+            -timeout 60m | tee equivalence-full.log
+          if grep -q -e '--- SKIP' equivalence-full.log; then
+            echo "::error::The full equivalence transcript check skipped."
+            exit 1
+          fi
+          # ⚠️ The MODE is matched, not just the shape of the summary. If
+          # GPR_TRANSCRIPT_FULL above were ever dropped or misspelled, the test
+          # falls back to the fast set, compares against the fast golden, prints a
+          # perfectly plausible summary and passes -- running exactly the 125 cases
+          # the pull-request job already ran, and none of the 20 this job exists
+          # for. Matching "full" is what makes that fail instead.
+          if ! grep -qE 'transcript\[full\]: [0-9]+ cases = ' equivalence-full.log; then
+            echo "::error::The full equivalence check did not report a FULL-mode comparison. Did GPR_TRANSCRIPT_FULL survive?"
+            exit 1
+          fi

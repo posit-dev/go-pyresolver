@@ -20,8 +20,32 @@ jobs:
         run: go build ./...
       - name: Vet
         run: go vet ./...
+      # ⚠️ -timeout is explicit on every step that reaches
+      # TestResolutionTranscriptMatchesGolden, and it is not decoration. That test
+      # bounds each resolve with its own caseTimeout so a hang fails loudly with a
+      # useful message; a per-case guard is only reachable if the PACKAGE budget
+      # outlasts it. Leaving these at `go test`'s 10-minute default once made the
+      # guard unreachable, because the constant was also 10 minutes. Pinning the
+      # package budget here means the two can no longer collide by coincidence.
       - name: Test
-        run: go test ./...
+        run: go test -timeout 20m ./...
+      # ⚠️ The race detector, and it is not optional hygiene here.
+      #
+      # go-python-packaging shipped a race-safety fix whose regression test was
+      # INERT in its CI, because that CI ran plain `go test`: reverting the fix
+      # would have left the suite green. This repository had the same gap, and a
+      # worse version of it -- pinned back to go-python-packaging v0.5.0, with
+      # the shared-Version padding race live, the whole suite passed under -race
+      # because nothing in it shared a parsed Version between goroutines at all.
+      #
+      # index/shared_version_test.go now does, and index.PackageMetadata's
+      # documented concurrency contract depends on it: those tests are the only
+      # thing standing between a downgraded go.mod pin and a data race in a
+      # promise this module makes to its callers. Without -race they assert
+      # nothing, because the racing writes store the same bytes at the same
+      # address and are invisible to every other check.
+      - name: Race
+        run: go test -race -timeout 20m ./...
       # The tests that read PRODUCER output, run explicitly and verbosely so the
       # log shows they executed. They were env-var gated until
       # rstudio/package-manager#19466, so CI never ran the only tests reading what
@@ -41,6 +65,38 @@ jobs:
           fi
           if ! grep -q 'walked .* packages to depth' producer-output.log; then
             echo "::error::The real-file walk did not report its traversal, so it did not run."
+            exit 1
+          fi
+      # The equivalence check, run the same way and for the same reason.
+      #
+      # The 0.5.0 and 0.6.0 performance changes were justified by a
+      # 4,007-resolution transcript diffed between two builds. It ran once, on a
+      # laptop, against a 981 MB snapshot, and nothing re-ran it. This step runs
+      # the same comparison against the committed excerpt on every pull request.
+      #
+      # It fails on a SKIP for the same reason the step above does, and it fails
+      # if the summary line is absent. ⚠️ That second check is NOT what catches a
+      # run that compared nothing -- such a run prints "0 cases = 0 deep + ..."
+      # and is caught by the test's own minimums. It catches a run that never
+      # EXECUTED: mistype the -run pattern and `go test` matches no test, exits 0,
+      # prints "ok ... [no tests to run]", and the step passes while asserting
+      # nothing. See resolver/equivalence_test.go for why the count the test
+      # asserts on is DISCRIMINATING cases rather than cases compared.
+      - name: Equivalence transcript (must not skip)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./resolver/ -run 'TestResolutionTranscriptMatchesGolden' -v -count=1 -timeout 20m \
+            | tee equivalence.log
+          if grep -q -e '--- SKIP' equivalence.log; then
+            echo "::error::The equivalence transcript check skipped. It must run on every PR."
+            exit 1
+          fi
+          # The MODE is matched, not just the shape of the summary. See the same
+          # check in nightly.yml, where matching only the shape would let a run
+          # that lost GPR_TRANSCRIPT_FULL pass while covering nothing extra.
+          if ! grep -qE 'transcript\[fast\]: [0-9]+ cases = ' equivalence.log; then
+            echo "::error::The equivalence check did not report a fast-mode comparison, so it did not run."
             exit 1
           fi
       - name: Format check

@@ -4,9 +4,6 @@ package resolver_test
 
 import (
 	"bufio"
-	"context"
-	"errors"
-	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -18,7 +15,6 @@ import (
 
 	"github.com/posit-dev/go-pyresolver/index"
 	"github.com/posit-dev/go-pyresolver/pypirsf"
-	"github.com/posit-dev/go-pyresolver/resolver"
 	"github.com/posit-dev/go-python-packaging/requirement"
 )
 
@@ -36,6 +32,17 @@ import (
 // It is skipped unless GPR_DUMP_OUT is set, because it is a tool rather than a
 // test: it asserts nothing on its own. ⚠️ Which also means it never runs in CI,
 // so a figure quoted from it is a figure from someone's laptop.
+//
+// # This is the FULL-SNAPSHOT mode, and it is the env-gated half on purpose
+//
+// The CI-reproducible half is TestResolutionTranscriptMatchesGolden in
+// equivalence_test.go: same transcript, excerpt-sized, compared against a
+// committed golden file, and it must not skip. This one keeps the production
+// snapshot and the two-build diff, which cannot be made to run on a CI runner.
+//
+// Both call writeTranscript, so the two cannot drift into rendering the same
+// resolution differently -- which would silently invalidate every published
+// figure produced by this tool.
 //
 // # The invocation behind the published figures, so they are reproducible
 //
@@ -62,9 +69,16 @@ import (
 //
 // The transcript carries the OBSERVABLE surface of a resolution and nothing
 // else: the pins, the order the solver decided them in, the activated extras,
-// and for a failure the full report text. Timings and call counts are
-// deliberately absent -- those are expected to differ, and including them would
-// make the diff useless for the question being asked.
+// and for a failure the report. Timings and call counts are deliberately absent
+// -- those are expected to differ, and including them would make the diff
+// useless for the question being asked.
+//
+// ⚠️ The failure report is now recorded as a SHA-256 plus its conclusion line
+// rather than inline, so a v2 transcript will differ from the v1 files behind
+// the published 0.6.0 figures on every failing case. See renderFailure for why,
+// and set GPR_TRANSCRIPT_REPORTS=full to get the old inline form back. Every
+// transcript carries a format header on its first line so the two cannot be
+// confused.
 func TestDumpResolutions(t *testing.T) {
 	out := os.Getenv("GPR_DUMP_OUT")
 	if out == "" {
@@ -101,8 +115,6 @@ func TestDumpResolutions(t *testing.T) {
 	defer func() { _ = f.Close() }()
 	w := bufio.NewWriter(f)
 	defer func() { _ = w.Flush() }()
-
-	ctx := context.Background()
 
 	// The committed corpus first: the seven entries the benchmark measures, so
 	// the transcript covers the same inputs the numbers do.
@@ -158,51 +170,18 @@ func TestDumpResolutions(t *testing.T) {
 		deadline = d
 	}
 
-	// A bufio.Writer defers every error to Flush, so the per-call returns carry
-	// no information worth branching on. Swallowed through one helper rather
-	// than at five call sites, and Flush is what actually reports.
-	pf := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
-
-	for _, reqStrings := range cases {
-		pf("=== %s\n", strings.Join(reqStrings, " "))
-
-		reqs, err := requirementsOrNil(reqStrings)
-		if err != nil {
-			pf("unparseable: %v\n", err)
-			continue
-		}
-
-		caseCtx, cancel := context.WithTimeout(ctx, deadline)
-		res, err := resolver.Resolve(caseCtx, reqs, idx, testOptions(t))
-		timedOut := caseCtx.Err() != nil
-		cancel()
-		if timedOut {
-			pf("TIMEOUT\n")
-			continue
-		}
-
-		var re *resolver.ResolutionError
-		switch {
-		case errors.As(err, &re):
-			// The full report text, which is the user-facing artifact of a
-			// failed resolve and the thing most likely to shift if search order
-			// changed.
-			pf("FAILED\n%s\n", re.Error())
-		case err != nil:
-			pf("ERROR %v\n", err)
-		default:
-			// Order is printed as the solver produced it, NOT sorted. Sorting it
-			// would hide exactly the kind of change this is looking for: a
-			// different search order that happens to reach the same pins.
-			for _, name := range res.Order {
-				pf("  %s %s", name, res.Pinned[name])
-				if extras := res.Extras[name]; len(extras) > 0 {
-					pf(" [%s]", strings.Join(extras, ","))
-				}
-				pf("\n")
-			}
-		}
-	}
+	// The per-case rendering lives in writeTranscript, shared with the CI check.
+	// The stats it returns are logged rather than asserted on: this is a tool,
+	// and the assertions belong to the test that runs on every pull request.
+	// haltOnTimeout stays false: here a TIMEOUT is the selection deadline doing
+	// its job, and excluding that case is the point.
+	stats := writeTranscript(t, w, transcriptRun{
+		idx:      idx,
+		cases:    cases,
+		mode:     "dump",
+		deadline: deadline,
+	})
+	t.Log(stats.String())
 
 	// ⚠️ Flush explicitly and FAIL on its error. The deferred Flush above cannot
 	// report one, and a transcript truncated by a write error would diff clean
