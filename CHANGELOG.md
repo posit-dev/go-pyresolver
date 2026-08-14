@@ -45,10 +45,32 @@ served it.
   1.2–1.9x rather than flat says those residual comparisons were still material after
   #39 and #40; that it is not larger says #40 had already removed most of them.
 
-  ⚠️ **This does not compose multiplicatively with #39 or #40** and was not assumed to.
-  #40 removed most comparisons and the packed key makes the remainder cheap, so they
-  contend for the same cost. The figures above are measured against `276fe91`, which
-  already contains both.
+  ⚠️ **This does not compose multiplicatively with #40 — the two CONTEND**, and that is
+  measured rather than assumed. #40 removed most comparisons; the packed key makes the
+  remainder cheap. Both attack the same cost, so each is worth less once the other has
+  landed. A 2×2 in one interleaved session, warm, medians of three:
+
+  | entry | packed gain BEFORE #40 | packed gain AFTER #40 | #40 gain at v0.5.0 | #40 gain at v0.6.0 |
+  |---|---|---|---|---|
+  | `single-no-deps` | 5.04x | 1.42x | 6.14x | 1.73x |
+  | `small-tree` | 2.37x | 1.32x | 3.26x | 1.81x |
+  | `extras` | 3.10x | 1.30x | 5.44x | 2.28x |
+  | `app-set` | 5.33x | 1.28x | 12.34x | 2.95x |
+  | `wide-versions` | 5.93x | 1.88x | 5.42x | 1.72x |
+  | `backtracking` | 4.01x | 1.23x | 7.49x | 2.29x |
+  | `unsatisfiable` | 1.99x | 1.48x | 1.43x | 1.07x |
+
+  Both directions shrink, which is what "substitutes" means. On `app-set`, multiplying
+  the two isolated headlines predicts 12.34 × 5.33 = **65.8x**; the measured end-to-end
+  from `73d820a` + v0.5.0 to `276fe91` + v0.6.0 is **15.7x**. ⚠️ This is the opposite of
+  the #39/#40 interaction, where `Contains` became *more* valuable after the rank memo
+  (1.02x → 1.29x) — so the sign of these interactions cannot be guessed and has to be
+  measured each time.
+
+  It also explains an apparent discrepancy with go-python-packaging's own release notes,
+  which claim 2.1–5.2x warm on this benchmark: that was measured at `73d820a`, before
+  #40 landed 46 minutes later. The pre-#40 column above reproduces it (1.99–5.93x). The
+  figures in the table at the top of this entry are the ones that apply to `main`.
 
   `candvers`, `metadata` and the pin set are **identical** on every entry, as they must
   be: this changes what a comparison costs, not what it answers. Allocation churn falls
