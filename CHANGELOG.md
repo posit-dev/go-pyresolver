@@ -15,6 +15,61 @@ served it.
 
 ### Changed
 
+- **go-python-packaging is now `v0.6.0`**, which brings a packed integer version
+  comparison key. **Cold resolution is 2.0x to 13.4x faster and warm 1.2x to 1.9x**,
+  with no change to any resolution this module produces.
+
+  Nothing in this repository changed but the dependency pin. `version.Version`
+  comparison now runs off a packed 4×uint64 order-preserving key rather than a
+  field-by-field walk, for the 97.3% of real versions that fit one.
+
+  Medians of five interleaved rounds, ten iterations, against the production
+  snapshot (932,861 packages, dated 2026-08-04), on an Apple M4 Max:
+
+  | entry | cold before | cold after | | warm before | warm after | |
+  |---|---|---|---|---|---|---|
+  | `single-no-deps` | 1.18 ms | 0.24 ms | 4.9x | 0.24 ms | 0.17 ms | 1.42x |
+  | `small-tree` | 4.87 ms | 1.21 ms | 4.0x | 1.22 ms | 0.91 ms | 1.34x |
+  | `extras` | 6.47 ms | 1.65 ms | 3.9x | 1.71 ms | 1.32 ms | 1.29x |
+  | `app-set` | 20.67 ms | 5.50 ms | 3.8x | 5.40 ms | 4.22 ms | 1.28x |
+  | `wide-versions` | 167.35 ms | 12.46 ms | 13.4x | 14.15 ms | 7.61 ms | 1.86x |
+  | `backtracking` | 11.16 ms | 5.61 ms | 2.0x | 3.10 ms | 2.59 ms | 1.20x |
+  | `unsatisfiable` | 2.33 ms | 0.47 ms | 4.9x | 0.45 ms | 0.30 ms | 1.50x |
+
+  **Cold gains far exceed warm, and that asymmetry is the whole story.** Building a
+  package's sorted version order is comparison-bound, and it happens once per package
+  per index — so it lands entirely in cold, where `wide-versions` (botocore, over ten
+  thousand releases) drops 13.4x. Warm reuses that order through the memo added in
+  0.5.0, so what the packed key can still reach warm is only the residual comparison
+  inside `pep440set` containment and candidate filtering. That the warm figure is
+  1.2–1.9x rather than flat says those residual comparisons were still material after
+  #39 and #40; that it is not larger says #40 had already removed most of them.
+
+  ⚠️ **This does not compose multiplicatively with #39 or #40** and was not assumed to.
+  #40 removed most comparisons and the packed key makes the remainder cheap, so they
+  contend for the same cost. The figures above are measured against `276fe91`, which
+  already contains both.
+
+  `candvers`, `metadata` and the pin set are **identical** on every entry, as they must
+  be: this changes what a comparison costs, not what it answers. Allocation churn falls
+  with the wall clock (`app-set` cold 23.1 MB / 475,428 allocs → 10.9 MB / 118,447).
+  Peak heap is flat to better — `wide-versions` 18.7 MB → 12.3 MB over baseline — with
+  one exception measured and kept rather than dropped: `backtracking` retains slightly
+  *more* (6.0 MB → 6.5 MB) and allocates slightly more bytes warm, while still
+  allocating fewer objects and finishing faster.
+
+  `pypirsf.Open` plus `NewRSFIndex` over the same snapshot is unchanged at ~220 ms
+  (220.0 ms → 216.6 ms, within noise): it builds a name-to-offset table and parses no
+  versions, so the key cannot reach it.
+
+  **Equivalence, since a comparison key change touches every ordering decision.**
+  4,007 resolutions against the production snapshot — the seven corpus entries plus
+  4,000 sampled package names, seed 1 — produce byte-identical transcripts before and
+  after: identical pins, identical decision ORDER, identical activated extras, and
+  identical failure report text on the 1,607 that fail. 36 cases where either side hit
+  an 8-second wall-clock deadline are excluded (35 on both sides, 1 on the baseline
+  only, 0 on the bumped side only).
+
 - **Resolution is 1.4x to 11.8x faster warm**, with no change to any resolution it
   produces. `Provider.Candidates` no longer re-ranks a package's versions on every
   call, and `candidate.Rank` no longer sorts a list that is already ordered.
