@@ -76,8 +76,10 @@ served it.
   as many words, so this is not a new demand on an embedder — but it is a new place
   where breaking it goes unnoticed, because an intransitive `Less` yields the input
   order or its reverse instead of an arbitrary sort. `Newest` is verified to be a
-  genuine strict weak ordering on production data: 124,918 ordered triples and 749,465
-  equivalence triples, no violation.
+  genuine strict weak ordering on production data: 124,918 ordered triples and 96,989
+  genuine incomparability witnesses, no violation — at `GPR_SAMPLE=3000
+  GPR_TRIPLES=3000000`, which is the configuration those figures come from and which
+  the default run (300,000 triples) does not reproduce.
 
   Equivalence is measured, not argued: **4,007 resolutions against the production
   snapshot produce byte-identical transcripts** — same pins, same decision order, same
@@ -154,12 +156,21 @@ served it.
   structurally cannot reach it: it asks each package **once**, always with
   `pep440set.All()`, and a memo only does anything on the second call with a
   **different** allowed set. This asks each package many times with ranges built from
-  its own published versions — 82,634 calls over 14,540 production packages — against a
-  reference that re-reads the index and sorts from scratch each time.
+  its own published versions — 109,564 calls over 14,540 production packages — against
+  a reference that re-reads the index and sorts from scratch each time.
 
   It reads through a **counting index** and asserts that the provider made exactly one
-  `Versions()` call per distinct package: 14,379 for 14,379, so 68,255 of the 82,634
-  calls (82.6%) were served from the memo.
+  `Versions()` call per distinct package: 14,379 for 14,379, so 95,185 of the 109,564
+  calls (86.9%) were served from the memo.
+
+  ⚠️ Its default sample is capped at 20,000 packages, unlike its siblings. Uncapped
+  against a full snapshot it swept 680,711 packages and ran 34 minutes without reaching
+  an assertion — wedged in its **own fixture builder**, not in the code under test:
+  `rangesOver` was unioning per-version singletons, which is quadratic in `cmpBound`.
+  Ranges are now built through specifiers (one or two spans regardless of version
+  count), the union-built gappy shape is kept only for lists of ≤64, and a bare
+  full-snapshot run takes 57 seconds. A knob whose documented use hangs is worse than
+  no knob.
 
   ⚠️ That assertion replaced a derived one, and the distinction is the point. An earlier
   version reported the memoized-call count as calls-minus-packages — arithmetic over the
@@ -181,22 +192,31 @@ served it.
   none fall through to the sort). Plus `TestNewestIsAStrictWeakOrdering`, which checks
   all four properties on real published version strings.
 
-  ⚠️ Its equivalence half needs both **injected** equal spellings and **biased**
-  sampling to be non-vacuous, and the reason is worth recording:
-  `index.RSFIndex.Versions` collapses each PEP 440 equality class to one
-  representative, so on real index output no two versions are ever equivalent. Under
-  the default policy the order is **total** and the stability `Rank` provides is
-  vacuous there. Three million uniformly drawn triples produced zero equivalent ones.
+  ⚠️ Its equivalence half needs **injected** equal spellings, **biased** sampling, and
+  classes of at least **three** members to be non-vacuous. `index.RSFIndex.Versions`
+  collapses each PEP 440 equality class to one representative, so on real index output
+  no two versions are ever equivalent: under the default policy the order is **total**
+  and the stability `Rank` provides is vacuous there. Three million uniformly drawn
+  triples produced zero equivalent ones.
+
+  And two injected spellings per class is not enough either — with classes of size 2,
+  every "mutually equivalent triple" must repeat an element, so the conclusion is
+  reflexive or the antecedent merely restated. 749,465 satisfied antecedents contained
+  **2** genuine witnesses while the vacuity guard reported 749,465. The guard now counts
+  witnesses (three pairwise-distinct spellings) rather than satisfied antecedents, and
+  a third spelling per class takes it to 96,989.
 
 - `provider.TestInRangeIsNotContiguous` and `TestRSFIndexVersionsAreAscending`, which
-  measure rather than assume the two facts the design rests on. 12.38% of production
-  versions are pre-releases and 4.18% of packages have their admitted set **split** by
-  one, so an intersection by binary search would need a fallback; and across 51,521
-  multi-version packages `Versions` has 0 adjacent inversions, so the fast path's
-  branch is the one real data takes. ⚠️ The second is a check on the **implementation**
-  — `MetadataIndex` promises no ordering, which is why `Rank` detects the shape rather
-  than assuming it — and exists so that if `RSFIndex` ever stops being sorted, the
-  reason the fast path went quiet is discoverable rather than mysterious.
+  measure rather than assume the two facts the design rests on. Over the **whole**
+  snapshot — 680,711 packages, 7,666,753 versions — 12.14% of versions are pre-releases
+  and **4.23% of packages have their admitted set split** by one, so an intersection by
+  binary search would need a fallback; and across 481,998 multi-version packages
+  `Versions` has 0 adjacent inversions and 0 adjacent PEP 440-equal pairs, so the fast
+  path's branch is the one real data takes. ⚠️ The second is a check on the
+  **implementation** — `MetadataIndex` promises no ordering, which is why `Rank`
+  detects the shape rather than assuming it — and exists so that if `RSFIndex` ever
+  stops being sorted, the reason the fast path went quiet is discoverable rather than
+  mysterious.
 
 ## [0.5.0] - 2026-08-13
 

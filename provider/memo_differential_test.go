@@ -65,7 +65,20 @@ func TestCandidatesAgreeAcrossRepeatedCallsWithDifferentRanges(t *testing.T) {
 	names := file.Packages()
 	sort.Strings(names)
 
-	limit := 0
+	// ⚠️ A DEFAULT CAP, unlike the sibling differentials, and it is not timidity.
+	//
+	// This test asks each package up to eight times and builds a fixture per
+	// package, so its cost per package is ~8x theirs. Left uncapped and pointed at
+	// a full snapshot -- which is the obvious way to run it, and what its own doc
+	// invited -- it swept 680,711 packages and ran for 34 minutes without reaching
+	// an assertion, failing the package on the 40-minute limit. A knob whose
+	// documented use hangs is worse than no knob.
+	//
+	// 20,000 is ~85 seconds against a production snapshot and comfortably more
+	// than enough: the assertions are about a per-package memo, so coverage grows
+	// with distinct packages and saturates early. GPR_SAMPLE=0 still means "all",
+	// for anyone who wants it and has the time.
+	limit := 20000
 	if s := os.Getenv("GPR_SAMPLE"); s != "" {
 		if limit, err = strconv.Atoi(s); err != nil {
 			t.Fatalf("GPR_SAMPLE=%q: %v", s, err)
@@ -123,7 +136,7 @@ func TestCandidatesAgreeAcrossRepeatedCallsWithDifferentRanges(t *testing.T) {
 		}
 		distinct[index.PackageName(name)] = true
 
-		for _, allowed := range rangesOver(rng, all) {
+		for _, allowed := range rangesOver(t, rng, all) {
 			gotBest, gotFound, gotRank, gotErr := p.Candidates(pkg, allowed)
 
 			// A fresh reference provider on the UNCOUNTED index, so nothing it
@@ -208,13 +221,32 @@ func TestCandidatesAgreeAcrossRepeatedCallsWithDifferentRanges(t *testing.T) {
 	}
 }
 
+// gappyLimit bounds the version-list size for which rangesOver builds a set by
+// repeated Union.
+//
+// ⚠️ Repeated Union is QUADRATIC and it is this test's own fixture cost, not the
+// cost of anything under test. Each Union re-canonicalizes a span list that has
+// grown by one, so building a gappy set over n versions is O(n^2) cmpBound calls,
+// and cmpBound reaches version.Compare, which in go-python-packaging v0.5.0
+// renders a string (see rstudio/package-manager#19713).
+//
+// Unbounded, that wedged the whole package: pointed at a full snapshot with no
+// sample cap, this test spent 34 minutes inside rangesOver on packages with
+// hundreds of versions and never reached the assertions. A profile of the hang
+// showed the stack in Union, not in Candidates. 64 keeps the gappy shape -- which
+// is the one no pair of binary searches can express, and therefore the one worth
+// having -- while making its cost irrelevant.
+const gappyLimit = 64
+
 // rangesOver builds allowed sets from a package's own published versions: the
 // full range, then several narrowings anchored on real versions.
 //
 // Anchoring on real versions is what makes the narrowings discriminating. A range
 // drawn from thin air mostly selects nothing, and a Candidates call that finds
 // nothing agrees with the reference trivially.
-func rangesOver(rng *rand.Rand, all []version.Version) []pep440set.Set {
+func rangesOver(t *testing.T, rng *rand.Rand, all []version.Version) []pep440set.Set {
+	t.Helper()
+
 	out := []pep440set.Set{pep440set.All()}
 	if len(all) == 0 {
 		return out
@@ -227,27 +259,30 @@ func rangesOver(rng *rand.Rand, all []version.Version) []pep440set.Set {
 	out = append(out, pep440set.Exactly(all[0]))
 	out = append(out, pep440set.Exactly(all[len(all)-1]))
 
-	// A half-open window: everything strictly below a version, expressed as the
-	// union of the exact sets below it. Built from Exactly and Union rather than
-	// from a specifier so this does not depend on specifier parsing.
-	if len(all) > 2 {
-		cut := 1 + rng.Intn(len(all)-1)
-		below := pep440set.Empty()
-		for _, v := range all[:cut] {
-			below = below.Union(pep440set.Exactly(v))
+	// Contiguous windows and an exclusion, built through specifiers so each is
+	// one or two spans regardless of how many versions the package has. `!=` is
+	// the interesting one: it is two spans, so it exercises a multi-span allowed
+	// set without costing anything.
+	pivot := all[rng.Intn(len(all))]
+	for _, spec := range []string{">=" + pivot.String(), "<" + pivot.String(), "!=" + pivot.String()} {
+		specs, err := version.NewSpecifiers(spec)
+		if err != nil {
+			// A published version whose canonical rendering is not a legal
+			// specifier operand would be a fact worth knowing, not something to
+			// skip past quietly.
+			t.Fatalf("NewSpecifiers(%q): %v", spec, err)
 		}
-		out = append(out, below)
-
-		// And its complement within the list: everything from cut up.
-		above := pep440set.Empty()
-		for _, v := range all[cut:] {
-			above = above.Union(pep440set.Exactly(v))
+		s, err := pep440set.FromSpecifiers(specs)
+		if err != nil {
+			t.Fatalf("FromSpecifiers(%q): %v", spec, err)
 		}
-		out = append(out, above)
+		out = append(out, s)
+	}
 
-		// A gappy set -- every other version -- which is the shape no contiguous
-		// span can express and the one an "intersection is two binary searches"
-		// optimization would have to handle.
+	// A gappy set -- every other version -- which is the shape no contiguous span
+	// can express and the one an "intersection is two binary searches"
+	// optimization would have to handle. Only for short lists; see gappyLimit.
+	if len(all) > 2 && len(all) <= gappyLimit {
 		gappy := pep440set.Empty()
 		for i := 0; i < len(all); i += 2 {
 			gappy = gappy.Union(pep440set.Exactly(all[i]))
