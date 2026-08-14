@@ -15,6 +15,83 @@ served it.
 
 ### Changed
 
+- **go-python-packaging is now `v0.6.0`**, which brings a packed integer version
+  comparison key. **Cold resolution is 2.0x to 13.4x faster and warm 1.2x to 1.9x**,
+  with no change to any resolution this module produces.
+
+  Nothing in this repository changed but the dependency pin. `version.Version`
+  comparison now runs off a packed 4×uint64 order-preserving key rather than a
+  field-by-field walk, for the 97.3% of real versions that fit one.
+
+  Medians of five interleaved rounds, ten iterations, against the production
+  snapshot (932,861 packages, dated 2026-08-04), on an Apple M4 Max:
+
+  | entry | cold before | cold after | | warm before | warm after | |
+  |---|---|---|---|---|---|---|
+  | `single-no-deps` | 1.18 ms | 0.24 ms | 4.9x | 0.24 ms | 0.17 ms | 1.42x |
+  | `small-tree` | 4.87 ms | 1.21 ms | 4.0x | 1.22 ms | 0.91 ms | 1.34x |
+  | `extras` | 6.47 ms | 1.65 ms | 3.9x | 1.71 ms | 1.32 ms | 1.29x |
+  | `app-set` | 20.67 ms | 5.50 ms | 3.8x | 5.40 ms | 4.22 ms | 1.28x |
+  | `wide-versions` | 167.35 ms | 12.46 ms | 13.4x | 14.15 ms | 7.61 ms | 1.86x |
+  | `backtracking` | 11.16 ms | 5.61 ms | 2.0x | 3.10 ms | 2.59 ms | 1.20x |
+  | `unsatisfiable` | 2.33 ms | 0.47 ms | 4.9x | 0.45 ms | 0.30 ms | 1.50x |
+
+  **Cold gains far exceed warm, and that asymmetry is the whole story.** Building a
+  package's sorted version order is comparison-bound, and it happens once per package
+  per index — so it lands entirely in cold, where `wide-versions` (botocore, over ten
+  thousand releases) drops 13.4x. Warm reuses that order through the memo added in
+  0.5.0, so what the packed key can still reach warm is only the residual comparison
+  inside `pep440set` containment and candidate filtering. That the warm figure is
+  1.2–1.9x rather than flat says those residual comparisons were still material after
+  #39 and #40; that it is not larger says #40 had already removed most of them.
+
+  ⚠️ **This does not compose multiplicatively with #40 — the two CONTEND**, and that is
+  measured rather than assumed. #40 removed most comparisons; the packed key makes the
+  remainder cheap. Both attack the same cost, so each is worth less once the other has
+  landed. A 2×2 in one interleaved session, warm, medians of three:
+
+  | entry | packed gain BEFORE #40 | packed gain AFTER #40 | #40 gain at v0.5.0 | #40 gain at v0.6.0 |
+  |---|---|---|---|---|
+  | `single-no-deps` | 5.04x | 1.42x | 6.14x | 1.73x |
+  | `small-tree` | 2.37x | 1.32x | 3.26x | 1.81x |
+  | `extras` | 3.10x | 1.30x | 5.44x | 2.28x |
+  | `app-set` | 5.33x | 1.28x | 12.34x | 2.95x |
+  | `wide-versions` | 5.93x | 1.88x | 5.42x | 1.72x |
+  | `backtracking` | 4.01x | 1.23x | 7.49x | 2.29x |
+  | `unsatisfiable` | 1.99x | 1.48x | 1.43x | 1.07x |
+
+  Both directions shrink, which is what "substitutes" means. On `app-set`, multiplying
+  the two isolated headlines predicts 12.34 × 5.33 = **65.8x**; the measured end-to-end
+  from `73d820a` + v0.5.0 to `276fe91` + v0.6.0 is **15.7x**. ⚠️ This is the opposite of
+  the #39/#40 interaction, where `Contains` became *more* valuable after the rank memo
+  (1.02x → 1.29x) — so the sign of these interactions cannot be guessed and has to be
+  measured each time.
+
+  It also explains an apparent discrepancy with go-python-packaging's own release notes,
+  which claim 2.1–5.2x warm on this benchmark: that was measured at `73d820a`, before
+  #40 landed 46 minutes later. The pre-#40 column above reproduces it (1.99–5.93x). The
+  figures in the table at the top of this entry are the ones that apply to `main`.
+
+  `candvers`, `metadata` and the pin set are **identical** on every entry, as they must
+  be: this changes what a comparison costs, not what it answers. Allocation churn falls
+  with the wall clock (`app-set` cold 23.1 MB / 475,428 allocs → 10.9 MB / 118,447).
+  Peak heap is flat to better — `wide-versions` 18.7 MB → 12.3 MB over baseline — with
+  one exception measured and kept rather than dropped: `backtracking` retains slightly
+  *more* (6.0 MB → 6.5 MB) and allocates slightly more bytes warm, while still
+  allocating fewer objects and finishing faster.
+
+  `pypirsf.Open` plus `NewRSFIndex` over the same snapshot is unchanged at ~220 ms
+  (220.0 ms → 216.6 ms, within noise): it builds a name-to-offset table and parses no
+  versions, so the key cannot reach it.
+
+  **Equivalence, since a comparison key change touches every ordering decision.**
+  4,007 resolutions against the production snapshot — the seven corpus entries plus
+  4,000 sampled package names, seed 1 — produce byte-identical transcripts before and
+  after: identical pins, identical decision ORDER, identical activated extras, and
+  identical failure report text on the 1,607 that fail. 36 cases where either side hit
+  an 8-second wall-clock deadline are excluded (35 on both sides, 1 on the baseline
+  only, 0 on the bumped side only).
+
 - **Resolution is 1.4x to 11.8x faster warm**, with no change to any resolution it
   produces. `Provider.Candidates` no longer re-ranks a package's versions on every
   call, and `candidate.Rank` no longer sorts a list that is already ordered.
@@ -153,6 +230,30 @@ served it.
   tests, a 33.9-million-pair differential against
   `version.Specifiers.Check` over 20,000 production packages, and 8.6M
   fuzz executions.
+
+### Fixed
+
+- **Sharing one parsed `version.Version` between goroutines is no longer a data
+  race**, which this module inherits from the go-python-packaging v0.6.0 bump above
+  rather than fixing itself. Upstream's `Compare` now pads into a fresh slice instead
+  of appending into spare capacity a by-value copy shares.
+
+  This matters here because the restriction was **documented on an exported API**:
+  `index.PackageMetadata.SupportsPython` told callers "DO NOT SHARE ONE PARSED target
+  BETWEEN GOROUTINES … give each goroutine its own `version.Parse`", and that guidance
+  is now unnecessary work. That doc and the canonical account in `RSFIndex.Versions`
+  are corrected; the historical explanation is kept, since it is still why several
+  types memoize version KEYS rather than parsed values.
+
+  Re-verified against both pins with the exact eight-goroutine repro those docs
+  specify (target `3.11.0`, constraint `>3.9.1`): v0.5.0 reports `WARNING: DATA RACE`,
+  v0.6.0 is clean.
+
+  ⚠️ **No behaviour in this module changed.** Memoizing parsed versions is now
+  *available* but is not taken here — that is a performance change owing its own
+  measurement, not something to ride along with a dependency bump. The remaining
+  internal rationales in `provider`, `index/mock.go` and `resolver/bench_test.go`
+  still describe the constraint as current and are swept with that work.
 
 ### Added
 

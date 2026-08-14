@@ -436,8 +436,18 @@ func cloneMetadata(m PackageMetadata, ver version.Version) PackageMetadata {
 // it" the same choice by construction rather than by two call sites agreeing on
 // preferKey. See resolveStoredKey.
 //
-// ⚠️ A version.Version MUST NOT BE SHARED BETWEEN GOROUTINES, so memoizing the
-// parsed values is not available. Version.Compare pads the shorter operand's
+// ⚠️ UPDATE, go-python-packaging v0.6.0: the upstream defect this whole section
+// rests on is FIXED. Compare now pads into a fresh slice, so a parsed Version is
+// safe to share and memoizing parsed values IS available. Re-verified against both
+// pins: v0.5.0 races under eight goroutines, v0.6.0 is clean.
+//
+// This code still memoizes KEYS. That remains correct -- it is now a choice rather
+// than a requirement -- and taking the memo is a performance change with its own
+// measurement, not something to ride along with a dependency bump. Tracked
+// separately; the account below is kept because it explains the current shape.
+//
+// A version.Version MUST NOT BE SHARED BETWEEN GOROUTINES under v0.5.0 and earlier,
+// so memoizing the parsed values was not available. Version.Compare pads the shorter operand's
 // release segment with `append`, and cmpkey builds that segment by RESLICING
 // away trailing zeros -- so "3.0.0" carries a Parts of len 1 and cap 3, and
 // padding it back to three segments writes into spare capacity in the backing
@@ -451,12 +461,13 @@ func cloneMetadata(m PackageMetadata, ver version.Version) PackageMetadata {
 // benign in practice today -- but it is a data race the Go memory model gives
 // no guarantee about, and this type documents itself as safe for concurrent use.
 //
-// The defect is upstream, in rstudio/go-version v0.0.2 (part.Parts.Padding
+// The defect was upstream, in rstudio/go-version v0.0.2 (part.Parts.Padding
 // appending into shared capacity) as reached through go-python-packaging v0.5.0
-// (version.Version.Compare). It is not introduced here and it is not fixable
+// (version.Version.Compare). It was not introduced here and was not fixable
 // here: key.release is unexported, so this module cannot hand out a Version
-// whose backing array it has clipped. When it is fixed upstream, memoizing the
-// parsed values becomes available and recovers the remaining parse cost.
+// whose backing array it has clipped. go-python-packaging v0.6.0 sidesteps it by
+// padding into a fresh slice, so the condition in the note at the top of this
+// comment is now met and the parsed-version memo is available to be taken.
 func (idx *RSFIndex) Versions(ctx context.Context, pkg PackageName) ([]version.Version, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

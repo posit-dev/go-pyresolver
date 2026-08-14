@@ -122,10 +122,22 @@ type PackageMetadata struct {
 // So the leniency the parser intends is only actually lenient if callers come
 // through here.
 //
-// # ⚠️ DO NOT SHARE ONE PARSED target BETWEEN GOROUTINES
+// # Sharing one parsed target between goroutines: FIXED as of go-python-packaging v0.6.0
 //
-// Parse the interpreter version once and fan the work out across goroutines and
-// this is a DATA RACE, in go-version rather than here. version.Version.Compare
+// ⚠️ This section described a real data race under go-python-packaging v0.5.0 and
+// earlier, and it told callers to give each goroutine its own version.Parse. That
+// restriction is LIFTED: v0.6.0's version.Compare pads into a fresh slice rather
+// than into shared spare capacity, so a parsed Version is safe to share. This
+// module requires v0.6.0, so callers of this method need do nothing.
+//
+// The account below is kept because it is the reason several types in this package
+// memoize version KEYS rather than parsed values -- those choices are still in the
+// code and still correct, they are simply no longer forced. Removing them, and the
+// parsed-version memo the fix now unblocks, is tracked separately.
+//
+// Under v0.5.0 and earlier, parse the interpreter version once and fan the work out
+// across goroutines and this was a DATA RACE, in go-version rather than here.
+// version.Version.Compare
 // pads the shorter operand's release segment with append, and cmpkey builds that
 // segment by reslicing trailing zeros away -- so "3.11.0" carries spare capacity
 // that a by-value copy shares, and two goroutines comparing two copies write to
@@ -144,13 +156,12 @@ type PackageMetadata struct {
 //
 // `>` and `<` use the prospective version directly; `>=`, `<=`, `==` and `!=`
 // re-parse it through Public() first and are immune. So a target of "3.11" or a
-// corpus that happens to use `>=` hides it completely, and it appears the day
-// someone passes "3.11.0" to a package pinned with `<`.
+// corpus that happens to use `>=` hides it completely, and it appeared the day
+// someone passed "3.11.0" to a package pinned with `<`.
 //
-// A fix is being filed upstream. Until it lands there is nothing this method can
-// do about it -- the padding happens inside a value it does not own -- so the
-// warning is the mitigation. The same reasoning is why RSFIndex memoizes version
-// KEYS rather than parsed values.
+// The fix landed upstream in go-python-packaging v0.6.0. Re-verified here against
+// both pins with the exact table above: v0.5.0 reports WARNING: DATA RACE under
+// eight goroutines, v0.6.0 is clean.
 func (m PackageMetadata) SupportsPython(target version.Version) bool {
 	if m.RequiresPython.String() == "" {
 		return true
