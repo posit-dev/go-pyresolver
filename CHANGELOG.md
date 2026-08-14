@@ -44,13 +44,15 @@ served it.
   case, never pay it.
 
   Measured on this code (Apple M4 Max, go1.26.4, production snapshot of
-  932,861 packages): `Contains` itself 567 → 287 ns/op, 800 → 232 B/op,
-  16 → 8 allocs/op; warm resolution 2–6% faster by entry (interleaved A/B,
-  medians of 3) with 3–8% fewer allocations per resolve. Answers are
-  unchanged: the fast path is held to the reference path by two agreement
-  tests, a 33.9-million-pair differential against
-  `version.Specifiers.Check` over 20,000 production packages, and 8.6M
-  fuzz executions.
+  932,861 packages), interleaved A/B against the corrected `backtracking`
+  corpus entry, medians of 3: `Contains` itself 567 → 287 ns/op,
+  800 → 232 B/op, 16 → 8 allocs/op; warm resolves allocate 5–9% fewer
+  bytes on every corpus entry (deterministic), and wall-clock is 3–5%
+  faster on the allocation-heavy entries (`small-tree`, `extras`,
+  `app-set`) and flat within noise on the rest. Answers are unchanged:
+  the fast path is held to the reference path by two agreement tests, a
+  33.9-million-pair differential against `version.Specifiers.Check` over
+  20,000 production packages, and 8.6M fuzz executions.
 
 ### Added
 
