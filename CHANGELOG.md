@@ -15,6 +15,95 @@ served it.
 
 ### Changed
 
+- **Resolution is 1.4x to 11.8x faster warm**, with no change to any resolution it
+  produces. `Provider.Candidates` no longer re-ranks a package's versions on every
+  call, and `candidate.Rank` no longer sorts a list that is already ordered.
+
+  Ranking was **83–86% of a `Candidates` call** — measured warm against a production
+  snapshot, against 1.7% and 0.6% for the usability walk the previous release had just
+  optimized. Two independent causes:
+
+  - The solver re-asks about a package on every round it reconsiders it, and every
+    call re-sorted from scratch. `Provider` now memoizes the ranked **full** version
+    list per package for the life of one resolution. Ranking the superset rather than
+    the in-range list is what makes it memoizable at all: the in-range list is a
+    function of the caller's allowed set, and a memo keyed by that would be keyed on
+    caller-supplied input and grow without bound.
+  - `index.RSFIndex` returns versions **ascending** while the default `Newest` policy
+    wants them descending, so `sort.SliceStable` was handed its worst case on
+    essentially every call. `candidate.Rank` now classifies the input in one linear
+    pass and reverses it, or returns it untouched, when it can.
+
+  Warm, ten iterations, medians of three interleaved runs, against base `73d820a`:
+
+  | entry | warm before | warm after | |
+  |---|---|---|---|
+  | `single-no-deps` | 1.77 ms | 0.28 ms | 6.3x |
+  | `small-tree` | 4.31 ms | 1.39 ms | 3.1x |
+  | `extras` | 9.68 ms | 1.90 ms | 5.1x |
+  | `app-set` | 67.10 ms | 5.67 ms | 11.8x |
+  | `wide-versions` | 80.33 ms | 15.02 ms | 5.3x |
+  | `backtracking` | 24.51 ms | 3.29 ms | 7.5x |
+  | `unsatisfiable` | 0.73 ms | 0.51 ms | 1.4x |
+
+  `Metadata` calls are **unchanged**: this reads no less data, it stops re-sorting it.
+  What falls is `candvers` — 6,040 to 943 on `app-set`, 2,495 to 351 on `backtracking`
+  — which the previous release's change did not move at all. Allocations fall with it,
+  `app-set` from 67.2 MB / 1,444,306 to 8.7 MB / 123,869.
+
+  **Peak heap falls too, 3.0x to 7.3x**, which is the number `B/op` cannot give:
+  `app-set`'s peak-over-baseline goes 53.9 MB → 7.4 MB and `wide-versions`' 56.2 MB →
+  18.6 MB, reproducible across three runs a side. ⚠️ This was worth measuring rather
+  than assuming, and it contradicts the obvious prediction: a memo holds version lists
+  for the whole resolve where they used to be garbage, so it *looks* like churn traded
+  for retention. It is not, because the churn was never short-lived — the old path
+  allocated a fresh in-range slice and a fresh `Rank` copy on each of `app-set`'s 87
+  calls, which pile up within a GC cycle, against 18 retained lists now and no in-range
+  slice at all. See `resolver.TestPeakHeapDuringOneResolve` (a *sampled* maximum, so a
+  floor on the true peak).
+
+  ⚠️ This is a delta from `73d820a`, which already contains the `pep440set.Contains`
+  change below, and the two are **not** independent — `Contains` sits inside
+  `Candidates`. Measured as a 2×2 in one interleaved session on the three largest
+  entries: `Contains` alone is 1.02x/1.12x/1.02x, this change alone is
+  9.19x/5.43x/6.90x, and `Contains` **on top of** this change is 1.29x/1.12x/1.11x.
+  It became more valuable, not less: `Contains` was 4.4% of a `Candidates` call before
+  the ranking work and 28.6% after, so the same absolute saving is a larger share of a
+  smaller total. Neither entry should be read as containing the other's win; the
+  decomposition is in `resolver/bench_test.go`.
+
+  ⚠️ The memo lives on the `Provider`, **not** on the index, and that is
+  correctness-bearing rather than stylistic. A `version.Version` cannot be shared
+  between goroutines even for reads — `Version.Compare` pads a release segment with
+  `append` into spare capacity a by-value copy still shares, the upstream defect in
+  `rstudio/go-version` that `index.RSFIndex` documents and declines to memoize parsed
+  versions because of. A `Provider` serves one resolution and is documented as unsafe
+  for concurrent use, so nothing here is read from two goroutines; concurrent
+  resolutions get one `Provider` and therefore one memo each. On a shared index this
+  would reintroduce that race in full.
+
+  ⚠️ `candidate.Rank`'s fast path **leans on** `Policy.Less` being transitive where
+  `sort.SliceStable` merely benefits from it. `Policy` already requires transitivity in
+  as many words, so this is not a new demand on an embedder — but it is a new place
+  where breaking it goes unnoticed, because an intransitive `Less` yields the input
+  order or its reverse instead of an arbitrary sort. `Newest` is verified to be a
+  genuine strict weak ordering on production data: 124,918 ordered triples and 96,989
+  genuine incomparability witnesses, no violation — at `GPR_SAMPLE=3000
+  GPR_TRIPLES=3000000`, which is the configuration those figures come from and which
+  the default run (300,000 triples) does not reproduce.
+
+  Equivalence is measured, not argued: **4,007 resolutions against the production
+  snapshot produce byte-identical transcripts** — same pins, same decision order, same
+  activated extras, and the same failure report text on the 1,605 that fail. A second
+  run of 1,007 against the current base agrees, 996 of 996 compared.
+
+  ⚠️ Every corpus figure in this entry comes from a **local run against the 981 MB
+  production snapshot**, which CI does not have. The snapshot-backed tests fall back to
+  the committed 1 MB excerpt (139 packages) when `PYPIRSF_TEST_FILE` is unset, and CI's
+  anti-skip guard covers `./index/` only — so CI verifies these tests *run and pass*, at
+  roughly 139 packages, not at the scale quoted here. The transcript harness does not
+  run in CI at all, by design.
+
 - The benchmark corpus's `backtracking` entry is `pandas, numpy<1.26` rather than
   `pandas, numpy<2`, and **actually backtracks again**. Under the old bound pandas had
   relaxed its floor, so the newest pandas satisfied `numpy<2` on its own: the entry
@@ -72,6 +161,73 @@ served it.
   that requires examining all of it, so every reason is still recorded. That is the
   case a failure report needs, it is asserted in three doc comments and a changelog
   entry, and until now it was an argument rather than a test.
+
+- `TestCandidatesAgreeAcrossRepeatedCallsWithDifferentRanges`, the differential for the
+  ranked-list memo. The existing `TestCandidatesAgreeWithAnExactCountOnTheRealIndex`
+  structurally cannot reach it: it asks each package **once**, always with
+  `pep440set.All()`, and a memo only does anything on the second call with a
+  **different** allowed set. This asks each package many times with ranges built from
+  its own published versions — 109,564 calls over 14,540 production packages — against
+  a reference that re-reads the index and sorts from scratch each time.
+
+  It reads through a **counting index** and asserts that the provider made exactly one
+  `Versions()` call per distinct package: 14,379 for 14,379, so 95,185 of the 109,564
+  calls (86.9%) were served from the memo.
+
+  ⚠️ Its default sample is capped at 20,000 packages, unlike its siblings. Uncapped
+  against a full snapshot it swept 680,711 packages and ran 34 minutes without reaching
+  an assertion — wedged in its **own fixture builder**, not in the code under test:
+  `rangesOver` was unioning per-version singletons, which is quadratic in `cmpBound`.
+  Ranges are now built through specifiers (one or two spans regardless of version
+  count), the union-built gappy shape is kept only for lists of ≤64, and a bare
+  full-snapshot run finishes in well under a minute. A knob whose documented use hangs
+  is worse than no knob.
+
+  ⚠️ That assertion replaced a derived one, and the distinction is the point. An earlier
+  version reported the memoized-call count as calls-minus-packages — arithmetic over the
+  test's own loop shape. With the memo lookup neutered so every call missed, it still
+  passed and still printed the same figure, and that figure had been quoted here as a
+  measurement. Counting index calls is what distinguishes a memo that is *read* from one
+  that is merely *written*.
+
+  ⚠️ It earns its place by mutation, twice over. Poisoning the memo with the
+  range-filtered list — the "keyed by caller-supplied input" bug — fails **this test and
+  no other in the module**; the pre-existing differential passes, and so does the entire
+  resolver suite. Making the memo lookup always miss fails it at 940 reads for 136
+  packages, which is the mutation the derived version slept through.
+
+- `candidate` differentials for `Rank`'s fast path against a sort-only reference: 13
+  hand-built shapes including the tie cases the reversed branch claims are impossible,
+  20,000 random lists, and every version list of 200,000 production packages
+  (1,623,115 versions; 103,358 lists take the reversed branch, 42,609 the ordered one,
+  none fall through to the sort). Plus `TestNewestIsAStrictWeakOrdering`, which checks
+  all four properties on real published version strings.
+
+  ⚠️ Its equivalence half needs **injected** equal spellings, **biased** sampling, and
+  classes of at least **three** members to be non-vacuous. `index.RSFIndex.Versions`
+  collapses each PEP 440 equality class to one representative, so on real index output
+  no two versions are ever equivalent: under the default policy the order is **total**
+  and the stability `Rank` provides is vacuous there. Three million uniformly drawn
+  triples produced zero equivalent ones.
+
+  And two injected spellings per class is not enough either — with classes of size 2,
+  every "mutually equivalent triple" must repeat an element, so the conclusion is
+  reflexive or the antecedent merely restated. 749,465 satisfied antecedents contained
+  **2** genuine witnesses while the vacuity guard reported 749,465. The guard now counts
+  witnesses (three pairwise-distinct spellings) rather than satisfied antecedents, and
+  a third spelling per class takes it to 96,989.
+
+- `provider.TestInRangeIsNotContiguous` and `TestRSFIndexVersionsAreAscending`, which
+  measure rather than assume the two facts the design rests on. Over the **whole**
+  snapshot — 680,711 packages, 7,666,753 versions — 12.14% of versions are pre-releases
+  and **4.23% of packages have their admitted set split** by one, so an intersection by
+  binary search would need a fallback; and across 481,998 multi-version packages
+  `Versions` has 0 adjacent inversions and 0 adjacent PEP 440-equal pairs, so the fast
+  path's branch is the one real data takes. ⚠️ The second is a check on the
+  **implementation** — `MetadataIndex` promises no ordering, which is why `Rank`
+  detects the shape rather than assuming it — and exists so that if `RSFIndex` ever
+  stops being sorted, the reason the fast path went quiet is discoverable rather than
+  mysterious.
 
 ## [0.5.0] - 2026-08-13
 

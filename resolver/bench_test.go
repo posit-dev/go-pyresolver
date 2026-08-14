@@ -51,7 +51,197 @@
 //
 // # Measured, 2026-08-13, on the machine above
 //
-// # ⚠️ THE found/rank RESULT, measured 2026-08-13 — READ THIS FIRST
+// # ⚠️ THE RANKING RESULT, measured 2026-08-13 — READ THIS FIRST
+//
+// The section below this one says "whatever is left is not index calls" and asks
+// what it is. It is the SORT, and it was 83-86% of a Candidates call.
+//
+// Two independent causes, and the fix for each is in this repository:
+//
+//   - The solver re-asks about a package on every round it reconsiders it, and
+//     every call re-ranked that package's versions from scratch. app-set's
+//     ranking work spans 87 Versions() calls over 18 distinct packages, and
+//     wide-versions' spans 17 calls over 7 -- reuse factors of 4.8 and 2.4.
+//     Provider now memoizes the ranked FULL version list per package for the
+//     life of the resolution; see provider.rankedVersions. The distinct counts
+//     are measured, not estimated: after the memo, versions/op below IS the
+//     number of distinct package names.
+//
+//     ⚠️ Equivalence for this one is not an argument. 4,007 resolutions against
+//     the production snapshot -- the seven corpus entries plus 4,000 sampled
+//     package names -- produce byte-identical transcripts before and after:
+//     identical pins, identical decision ORDER, identical activated extras, and
+//     identical failure report text on the 1,605 that fail. 48 cases where either
+//     side hit an 8-second deadline are excluded, because the deadline is wall
+//     clock and the two builds do not share one.
+//
+//   - index.RSFIndex returns versions ASCENDING and the default Newest policy
+//     wants them descending, so sort.SliceStable was handed its worst case on
+//     essentially every call: about 7 Policy.Less calls per element, 43,709 of
+//     them to order app-set's 6,040 candidate versions. candidate.Rank now
+//     classifies the input in one linear pass and reverses it when it can.
+//
+// Warm, ten iterations, full snapshot, against base 73d820a. MEDIAN OF THREE
+// RUNS per side, and the two sides INTERLEAVED round by round rather than run in
+// two blocks, so ambient load lands on both.
+//
+// ⚠️ Medians, not means, and this run shows why: another process was busy during
+// the first round, putting the baseline's small-tree at 8.10 ms against 4.31 and
+// 4.22, and extras at 15.63 against 9.65 and 9.68. A mean would have carried
+// those into the published figures. The optimized side's three runs agreed within
+// 12% throughout.
+//
+// ⚠️ Measured against the CORRECTED backtracking entry from #38, the one that
+// genuinely backs out. An earlier draft of this table carried the retired
+// `pandas, numpy<2` entry and its numbers are not comparable.
+//
+//	entry            warm ms            candvers      Metadata
+//	                 before   after     before after  before after
+//	single-no-deps      1.77    0.28      130    65      3     3    6.3x faster
+//	small-tree          4.31    1.39      984   254     30    30    3.1x
+//	extras              9.68    1.90     1658   321     43    43    5.1x
+//	app-set            67.10    5.67     6040   943    105   105   11.8x
+//	wide-versions      80.33   15.02     7206  4647     24    24    5.3x
+//	backtracking       24.51    3.29     2495   351     42    42    7.5x
+//	unsatisfiable       0.73    0.51      124   124      3     3    1.4x
+//
+// Cross-checked against the independent 2x2 below, which measured the same three
+// large entries in a separate interleaved session: 11.69x, 5.40x and 7.55x
+// against 11.8x, 5.3x and 7.5x here.
+//
+// candvers is the metric the found/rank change did not move AT ALL, and this is
+// what moves it: it sums len(Versions()) over calls, so it falls exactly when a
+// package stops being asked twice. Metadata calls are UNCHANGED, which is the
+// point -- this change reads no less data, it just stops re-sorting it.
+//
+// ⚠️ THE BACKTRACKING ENTRY IS THE ONE TO READ. It is the only entry whose whole
+// purpose is that the solver reconsiders the same package repeatedly, which is
+// precisely what the memo targets, and it has both the largest candvers drop of
+// the corpus (7.1x, 2,495 to 351) and the largest Versions() drop (30 calls to
+// 6). Its 7.5x is above the 6.3x single-no-deps shows and above what the retired
+// entry showed, which is what one would predict of the entry built to provoke
+// repeated candidacy queries, and is now measured rather than predicted.
+//
+// Warm allocations fell with the time, and by more:
+//
+//	entry            warm B/op          warm allocs/op
+//	                 before    after    before      after
+//	single-no-deps     1.6 MB   0.5 MB      40,110      5,579
+//	small-tree         5.4 MB   2.4 MB      86,227     26,419
+//	extras            10.6 MB   3.3 MB     197,257     38,670
+//	app-set           67.2 MB   8.7 MB   1,444,306    123,869
+//	wide-versions     80.9 MB  20.0 MB   1,645,844    346,002
+//	backtracking      25.5 MB   7.4 MB     517,430     55,015
+//	unsatisfiable      1.2 MB   1.0 MB      15,534     10,221
+//
+// ⚠️ The "before" allocation column is LOWER than the one an earlier draft
+// carried (app-set 1,496,571) because the base moved: #39 took roughly 3.5% of
+// app-set's allocations out on its own. That is #39's win, not this one's, and it
+// is why the base column had to be re-measured rather than carried forward.
+//
+// ⚠️ The <1 ms warm gate is now met by TWO entries rather than one --
+// single-no-deps at 0.28 ms joins unsatisfiable at 0.51 ms, and small-tree at
+// 1.39 ms is close. The other four still miss, by 1.9x (extras), 3.3x
+// (backtracking), 5.7x (app-set) and 15.0x (wide-versions), against 9.7x, 24.5x,
+// 67x and 80x before. The gate is still not met, and what stands between is no
+// longer this package -- see "Where the cost is now".
+//
+// # ⚠️ Attribution against #39, because the two wins are NOT separable by subtraction
+//
+// #39 (pep440set.Contains probing with a stack-held position instead of
+// materializing a bound) landed between the two measurements above, and it sits
+// INSIDE Candidates. Its own merged claim is deliberately conservative: a
+// deterministic allocation reduction and 3-5% wall clock on a few entries. That is
+// its effect on the code as it then was.
+//
+// The two interact, so the 2x2 was measured rather than inferred -- all four cells
+// interleaved in ONE session, medians of three, so no cell is compared across
+// sittings:
+//
+//	cell                          app-set   wide-versions   backtracking
+//	A  00e608e  neither             69.15           89.34          25.25
+//	B  73d820a  #39 only            68.04           79.47          24.84
+//	C  58f90fd  ranking only         7.53           16.44           3.66
+//	D  both                          5.82           14.73           3.29
+//
+//	#39 alone            A -> B      1.02x           1.12x          1.02x
+//	ranking alone        A -> C      9.19x           5.43x          6.90x
+//	#39 on top of both   C -> D      1.29x           1.12x          1.11x
+//	ranking on top of #39  B -> D   11.69x           5.40x          7.55x
+//	both                 A -> D     11.88x           6.07x          7.68x
+//
+// ⚠️ Read the third row. #39 is worth 1.02x on app-set alone and 1.29x once the
+// sort is gone -- it got MORE valuable, and the reason is mechanical rather than
+// lucky: Contains was 4.4% of a Candidates call before the ranking work and 28.6%
+// after, so the same absolute saving is a much larger share of a much smaller
+// total. Neither change should be credited with the other's contribution, and the
+// combined figure decomposes as above rather than as a product of two independent
+// wins.
+//
+// The table at the top of this section is the ranking change measured as a delta
+// from B, the current base, which is the honest number for it today.
+//
+// # The mechanism, isolated
+//
+// From BenchmarkPolicyLessCalls and BenchmarkSelectFirst in candidate/, which
+// count Policy.Less calls rather than timing a whole resolution.
+//
+// On an ASCENDING input -- what index.RSFIndex actually returns -- the detection
+// pass replaces about 9.8 comparisons per element with exactly one:
+//
+//	n        detect   sort     ratio
+//	    64       63      604    9.6x
+//	 4,096    4,095   40,188    9.8x
+//	14,000   13,999  137,387    9.8x
+//
+// ⚠️ And on a SHUFFLED input, where detection fails and the sort has to run
+// anyway, it costs 2 or 3 extra comparisons TOTAL -- 243,629 against 243,626 at
+// n=14,000 -- because the pass breaks at the first pair that rules both shapes
+// out. The regression case is not a tradeoff; it is free.
+//
+// BenchmarkSelectFirst answers the other obvious idea, partial selection, by
+// measuring it: one linear max-scan finds the top-ranked version in n-1
+// comparisons, 9.8x to 10.0x faster than sorting and allocating nothing. Real,
+// and strictly dominated. The memo answers the same question in 2.7 to 3.8 ns
+// with no comparisons at all, because after the first call the list is already
+// ranked -- and the solver asks 2.4 to 4.8 times per package per resolution.
+// A per-call algorithm cannot beat not running.
+//
+// ⚠️ The scan number is a LOWER bound on a real partial-selection implementation,
+// not an estimate of one: it finds only the single best element and cannot
+// produce the second-best, which Candidates needs whenever the best version turns
+// out to be unusable.
+//
+// # Where the cost is now
+//
+// From `pprof -peek Candidates` on the warm app-set and wide-versions entries
+// after the change. Candidates is 32.7% of samples, down from 45-47%:
+//
+//	Candidates                        100%
+//	  rankedVersions                 64.0%   once per PACKAGE now, not per call
+//	    candidate.Rank               31.3%     the linear detection pass
+//	    index.Versions               32.7%     version.Parse of the memoized keys
+//	  pep440set.Set.Contains         28.6%   per version per call
+//	    pep440set.atBound            23.8%     BUILDING the probe bound
+//	    containsBound                 4.1%     comparing it to the spans
+//	  usable                          6.8%
+//
+// Two things to read off that. First, the detection pass and the key parse are
+// both once-per-package costs now, so they scale with the closure rather than
+// with the search. Second, the remaining per-call cost is not the span walk that
+// an "intersect by binary search" idea would remove -- it is CONSTRUCTING the
+// bound for each version, 83% of Contains and 37.8% of the resolution's
+// allocations. A probe memoized alongside the ranked list would remove it
+// without needing versions to be contiguous, which
+// provider.TestInRangeIsNotContiguous measures they are not: 4.18% of production
+// packages have their admitted set split by a pre-release.
+//
+// ⚠️ What dominates the resolution as a whole is now garbage collection --
+// gcDrain is 30.6% of samples -- and the solver's own set algebra, not this
+// module's provider. The next honest measurement is of go-pubgrub's conflict
+// resolution, not of Candidates.
+//
+// # ⚠️ THE found/rank RESULT, measured 2026-08-13
 //
 // Both sides below were measured in ONE session on this machine, warm, ten
 // iterations, against the full snapshot: origin/main immediately before the
@@ -79,6 +269,12 @@
 // and version comparison — not in reading metadata. That is the next thing to
 // measure, and rstudio/package-manager#19713 is about exactly that path.
 //
+// ⚠️ ANSWERED, and half wrong. It was version COMPARISON, in candidate.Rank's sort,
+// at 83-86% of a Candidates call — see the ranking section at the top. It was NOT
+// the set algebra: pep440set.Set.Contains, the whole intersection step, was 4.4% on
+// app-set and 5.2% on wide-versions. This paragraph named two suspects and the
+// profile convicted one of them.
+//
 // ⚠️ The `backtracking` row above measured NO BACKTRACKING. The entry was
 // `pandas, numpy<2`, which pinned pandas 3.0.5 — the newest published pandas — so
 // nothing was backed out of and it was an ordinary resolve under a misleading name.
@@ -96,7 +292,8 @@
 //
 // So: the 9.85 → 7.00 ms row is real, but it is a measurement of an ordinary resolve,
 // not of backtracking. Re-run the benchmark for a backtracking figure; do not read
-// one out of the table above.
+// one out of the table above. The RANKING table at the top of this file is measured
+// against the corrected entry and is the one to read for a backtracking figure.
 //
 // # Everything below predates the found/rank change
 //
