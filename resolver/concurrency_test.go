@@ -111,11 +111,15 @@ func concurrentIndex(t *testing.T) index.MetadataIndex {
 //     shares a backing array. No fixture edit here could have changed that.
 //
 // The tests that DO cover it are TestSharedParsedVersionIsRaceFree and
-// TestSupportsPythonSharedTargetIsRaceFree in the index package, plus
-// TestConcurrentResolutionsShareOneParsedInterpreter below, which is this test
-// with the one thing a real caller shares -- its parsed interpreter version --
-// actually shared. All of them were confirmed to fail under v0.5.0 and pass
-// under v0.6.0.
+// TestSupportsPythonSharedTargetIsRaceFree in the index package, each confirmed
+// individually to fail at go-python-packaging v0.5.0 and pass at the pinned
+// version -- re-checked at v0.6.0 and again at v0.7.0.
+//
+// ⚠️ NOT TestConcurrentResolutionsShareOneParsedInterpreter below, which an
+// earlier draft of this paragraph listed here. That test shares the one thing a
+// real caller shares, which makes it worth having, but it measures ZERO races at
+// v0.5.0 and does not cover the hazard either. Its own doc comment says so at
+// length; this sentence contradicted it for several commits.
 //
 // What this test still earns its place for is everything the index-layer tests
 // cannot reach: ranking, version-set mapping, marker evaluation and interpreter

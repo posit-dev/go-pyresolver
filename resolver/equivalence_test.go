@@ -116,27 +116,39 @@ const transcriptFormat = "# gpr-transcript v2"
 //
 // # Why a split at all
 //
-// The full sweep -- 145 cases, every excerpt package except the one in
-// unboundedExcerptPackages, plus the benchmark corpus -- takes 95-110 s on an
-// M4 Max. The 125-case subset the pull-request job runs takes about 6 s, so the
-// twenty packages below are essentially the entire cost. Adding them to every
-// pull request would take the transcript check itself from 6 s to 95-110 s
-// locally, so about 89-104 s of extra sweep.
+// The full sweep is 145 cases -- every excerpt package except the one in
+// unboundedExcerptPackages, plus the benchmark corpus. The pull-request subset is
+// 125 of them, and the twenty held out below are essentially the entire cost:
 //
-// ⚠️ Scaling that to the runner needs a ratio measured on THIS workload, and two
-// earlier drafts each got it wrong in a different direction. The first added the
-// LAPTOP delta straight onto a RUNNER baseline and said "four or five times". The
-// second scaled it by 3.2x -- but that ratio came from `go test ./...`, 7.1 s
-// locally against 17-23 s on the runner, which is substantially a COMPILE-cost
-// ratio, and the marginal cost of twenty more resolutions contains no compile at
-// all. Applying a compile-inclusive ratio to compile-free work is the same
-// species of error as the first draft, and it produced "about 13x".
+//	                idle M4 Max   same machine at load average 63
+//	fast (125)          5.6-6.0 s                         21.6 s
+//	full (145)           95-110 s                          231 s
+//	ratio                  16-19x                          10.7x
 //
-// The like-for-like number is available and is now used: the equivalence step
-// runs with -v, so CI logs the test BODY. Across four runs it is 11.2-14.1 s,
-// against 5.6-6.0 s locally -- a ratio of 1.9x to 2.5x. So the extra sweep is
-// 169-260 s on the runner, taking `go test ./...` from 17-23 s to roughly
-// 190-280 s: an order of magnitude, stated as such rather than to two figures.
+// ⚠️ QUOTED WITH THE LOAD BECAUSE NEITHER COLUMN REPRODUCES THE OTHER, and an
+// earlier draft of this comment gave only the idle figures as though they were
+// the number. The absolute times move by more than 2x with machine load, and the
+// ratio moves too -- fixed overhead grows proportionally more for the small set.
+// The one thing stable across both columns is what the split decision actually
+// rests on: the twenty held-out packages are an order of magnitude more work than
+// the other 125 put together.
+//
+// ⚠️ SCALING ANY OF THIS TO THE RUNNER is where two earlier drafts each went wrong
+// in a different direction, and the lesson is worth more than the number. The
+// first added a LAPTOP delta straight onto a RUNNER baseline ("four or five
+// times"). The second scaled by 3.2x -- a ratio taken from `go test ./...`, which
+// on the runner compiles every package, applied to marginal work that contains no
+// compile at all ("about 13x"). Same species of error, opposite direction.
+//
+// The like-for-like number is in CI's own logs, because the equivalence step runs
+// with -v and so records the test BODY: 11.2-14.1 s across four runs against
+// 5.6-6.0 s idle locally, a ratio of roughly 2x. On that basis adding the twenty
+// would put the repository's test time somewhere around a few hundred seconds
+// rather than the current 17-23 s -- an order of magnitude, which is as precise
+// as a figure derived this way deserves to be stated.
+//
+// The nightly job measures the full sweep on a runner directly, every night. That
+// is the number to believe over anything extrapolated here.
 //
 // So the default run is everything else, and
 // GPR_TRANSCRIPT_FULL=1 -- which CI runs nightly against its own golden file --
@@ -146,17 +158,19 @@ const transcriptFormat = "# gpr-transcript v2"
 //
 // One methodology for all twenty, re-measured together rather than patched
 // entry by entry: a COLD single-package resolve, with a freshly opened fixture
-// and a fresh RSFIndex each time, on an M4 Max. Cold is the honest number for
-// the decision this list encodes -- "is this package worth holding out?" -- and
-// it is an UPPER bound on what the package adds to a sweep, because a sweep
-// warms the index memo as it goes and a package measured after its neighbours
-// costs slightly less.
+// and a fresh RSFIndex each time, on an IDLE M4 Max -- the same conditions as the
+// idle column above, which is the only reason the two can be compared at all.
+// Cold is the honest number for the decision this list encodes -- "is this
+// package worth holding out?" -- and it is an UPPER bound on what the package
+// adds to a sweep, because a sweep warms the index memo as it goes and a package
+// measured after its neighbours costs slightly less.
 //
-// They do approximately account for the sweep, and the like-for-like comparison
-// is against the sweep's MARGINAL cost rather than its total: the twenty sum to
-// 106 s, against (full 95-110 s minus fast 6 s) = 89-104 s of marginal cost. So
-// cold over-counts by roughly 2-19%, which is the warming. Comparing 106 s
-// against the full total instead would understate that gap.
+// They do approximately account for the sweep, compared against its MARGINAL cost
+// rather than its total: the twenty sum to 106 s, against (idle full 95-110 s
+// minus idle fast ~6 s) = 89-104 s. So cold over-counts by roughly 2-19%, which
+// is the warming. ⚠️ Both sides of that comparison have to come from the same
+// load conditions or it means nothing -- the loaded column would put the sweep's
+// marginal cost near 210 s against the same 106 s table.
 //
 // ⚠️ Do not read two of them summed as one of them doubled -- an earlier draft of
 // this file quoted `ipykernel` + `ipython` as "38 s each" when 38 s is the pair.

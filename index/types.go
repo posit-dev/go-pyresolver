@@ -128,7 +128,17 @@ type PackageMetadata struct {
 // earlier, and it told callers to give each goroutine its own version.Parse. That
 // restriction is LIFTED: v0.6.0's version.Compare pads into a fresh slice rather
 // than into shared spare capacity, so a parsed Version is safe to share. This
-// module requires v0.6.0, so callers of this method need do nothing.
+// module requires at least that, so callers of this method need do nothing. (The
+// pin has since moved to v0.7.0 for an unrelated reason; the guarantee is
+// re-verified against whatever it is, see below.)
+//
+// ⚠️ This paragraph is a PROMISE ABOUT A DEPENDENCY PIN, which is why it is no
+// longer only a paragraph. index/shared_version_test.go shares one parsed Version
+// across eight goroutines and covers both of the paths the fix takes -- the
+// packed integer key and the padParts fallback -- and CI runs -race. Downgrade
+// the pin and those tests fail. Before they existed, nothing in this repository
+// would have noticed: pinned back to v0.5.0 with the race live, the entire suite
+// passed.
 //
 // The account below is kept because it is the reason several types in this package
 // memoize version KEYS rather than parsed values -- those choices are still in the

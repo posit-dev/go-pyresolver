@@ -2,9 +2,12 @@ name: Nightly
 
 # The slow half of the equivalence check.
 #
-# The full sweep of index/testdata/pypi-trimmed.rsf takes 95-110 s on an M4 Max,
-# against about 6 s for the subset the pull-request job runs -- so twenty of the
-# packages are essentially the entire cost. A single-package requirement whose
+# The full sweep of index/testdata/pypi-trimmed.rsf takes 95-110 s on an idle M4
+# Max and 231 s on the same machine under load, against 5.6-6.0 s and 21.6 s for
+# the subset the pull-request job runs -- so twenty of the packages are an order
+# of magnitude more work than the other 125 put together, on either machine.
+# This job is also the only DIRECT measurement of that sweep on a runner; the
+# figures in resolver/equivalence_test.go are local or extrapolated. A single-package requirement whose
 # dependencies are largely absent from a 139-package excerpt puts the solver into
 # version-set algebra inside conflict resolution, which is a property of the
 # excerpt rather than of those packages.
