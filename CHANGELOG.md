@@ -231,6 +231,30 @@ served it.
   `version.Specifiers.Check` over 20,000 production packages, and 8.6M
   fuzz executions.
 
+### Fixed
+
+- **Sharing one parsed `version.Version` between goroutines is no longer a data
+  race**, which this module inherits from the go-python-packaging v0.6.0 bump above
+  rather than fixing itself. Upstream's `Compare` now pads into a fresh slice instead
+  of appending into spare capacity a by-value copy shares.
+
+  This matters here because the restriction was **documented on an exported API**:
+  `index.PackageMetadata.SupportsPython` told callers "DO NOT SHARE ONE PARSED target
+  BETWEEN GOROUTINES … give each goroutine its own `version.Parse`", and that guidance
+  is now unnecessary work. That doc and the canonical account in `RSFIndex.Versions`
+  are corrected; the historical explanation is kept, since it is still why several
+  types memoize version KEYS rather than parsed values.
+
+  Re-verified against both pins with the exact eight-goroutine repro those docs
+  specify (target `3.11.0`, constraint `>3.9.1`): v0.5.0 reports `WARNING: DATA RACE`,
+  v0.6.0 is clean.
+
+  ⚠️ **No behaviour in this module changed.** Memoizing parsed versions is now
+  *available* but is not taken here — that is a performance change owing its own
+  measurement, not something to ride along with a dependency bump. The remaining
+  internal rationales in `provider`, `index/mock.go` and `resolver/bench_test.go`
+  still describe the constraint as current and are swept with that work.
+
 ### Added
 
 - `TestEveryReasonIsRecordedWhenNOTHINGIsUsable`, pinning the claim the whole
