@@ -41,18 +41,29 @@ served it.
   test, and the resolver tests membership once per candidate version per
   `Candidates` call. The public spelling is now derived lazily, only when a
   comparison descends into a release group — cross-group probes, the common
-  case, never pay it.
+  case, never pay it — and the scan stops at the first span whose floor is
+  above the probe, which the old path did not (spans are sorted and
+  disjoint, so nothing later can match; below-range and `!=`-hole probes,
+  the shapes a backtracking solve produces, stop early).
 
   Measured on this code (Apple M4 Max, go1.26.4, production snapshot of
-  932,861 packages), interleaved A/B against the corrected `backtracking`
-  corpus entry, medians of 3: `Contains` itself 567 → 287 ns/op,
-  800 → 232 B/op, 16 → 8 allocs/op; warm resolves allocate 5–9% fewer
-  bytes on every corpus entry (deterministic), and wall-clock is 3–5%
-  faster on the allocation-heavy entries (`small-tree`, `extras`,
-  `app-set`) and flat within noise on the rest. Answers are unchanged:
-  the fast path is held to the reference path by two agreement tests, a
-  33.9-million-pair differential against `version.Specifiers.Check` over
-  20,000 production packages, and 8.6M fuzz executions.
+  932,861 packages). Micro, `BenchmarkContains`, same-session pairs,
+  medians of 5: the cross-group probe — the common case, which never
+  renders — 588 → 329 ns/op, 800 → 232 B/op, 16 → 8 allocs/op; the
+  same-group probe — the worst case, which pays the render and the full
+  ladder — 1612 → 1559 ns/op (flat within noise), 1582 → 1169 B/op.
+  End-to-end, `BenchmarkResolveWarm` interleaved A/B ×3 rounds, medians
+  of 3, against the corrected `backtracking` corpus entry: warm resolves
+  allocate 5–9% fewer bytes on every corpus entry (deterministic), and
+  wall-clock is 3–5% faster on the allocation-heavy entries
+  (`small-tree`, `extras`, `app-set`) and flat within noise on the rest;
+  with the early exit added, the branch won all 21 of 21 within-round
+  entry comparisons, but the exit's own end-to-end contribution is below
+  this machine's noise floor and is kept for the micro win. Answers are
+  unchanged: the fast path is held to the reference path by two agreement
+  tests, a 33.9-million-pair differential against
+  `version.Specifiers.Check` over 20,000 production packages, and 8.6M
+  fuzz executions.
 
 ### Added
 
