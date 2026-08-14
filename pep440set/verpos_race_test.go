@@ -11,16 +11,25 @@ import (
 
 // TestContainsConcurrent probes ONE shared Set from several goroutines, with
 // versions chosen to reach the pub.Compare arm of cmpVerBound against the
-// set's shared posKeys.
+// set's shared posKeys. Run under -race.
 //
-// Run under -race. The hazard it watches for is upstream: rstudio/go-version
-// v0.0.2's Parts.Normalize reslices a release's trailing zeros off, leaving
-// len < cap, and Parts.Padding appends into that spare capacity IN PLACE, so
-// two goroutines comparing against copies that share the backing array can
-// race. Every version below therefore ends in ".0" (the spare-capacity shape,
-// same reasoning as resolver/concurrency_test.go), and the probes share the
-// bounds' release group so the comparison actually descends to pub.Compare
-// rather than stopping at the group key.
+// ⚠️ WHAT A GREEN RUN HERE DOES AND DOES NOT PROVE. This test demonstrates
+// that concurrent Contains calls on a shared Set are race-free ON THIS PATH.
+// It does NOT cover the known upstream hazard -- rstudio/go-version v0.0.2's
+// Parts.Padding appending into shared spare capacity in place (go-version
+// PR #5, unmerged) -- because on this path that hazard is UNREACHABLE:
+// reaching pub.Compare requires cmpSegments(p.release, bk.release) == 0, and
+// releaseKey's trailing-zero stripping yields the same segment count as gpp's
+// Parts.Normalize, so Padding always sees a zero-length difference and never
+// appends. Do not read a green run here as evidence the padding race is
+// covered; resolver/concurrency_test.go is the test that reaches it, through
+// cross-group Compare in ranking.
+//
+// The probes still end in ".0" (the spare-capacity shape) and share the
+// bounds' release group so the ladder genuinely descends to pub.Compare --
+// asserted below, not assumed -- which keeps this test honest about the path
+// it exercises and lets it catch any FUTURE change that makes padding
+// reachable from here.
 //
 // The exposure is NOT new to the verPos path: containsBound reached the same
 // Compare through cmpBound with the same shared posKey on the bound side. Both

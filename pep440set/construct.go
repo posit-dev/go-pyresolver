@@ -42,7 +42,17 @@ func (s Set) Contains(v version.Version) bool {
 	var p verPos
 	p.init(v)
 	for _, sp := range s.spans {
-		if cmpVerBound(&p, sp.lo) >= 0 && cmpVerBound(&p, sp.hi) < 0 {
+		if cmpVerBound(&p, sp.lo) < 0 {
+			// Spans are canonical -- sorted by lo, disjoint -- so a probe
+			// below this span's floor is below every later span too. The
+			// pre-verPos containsBound scanned the tail anyway; this exit is
+			// an addition, and it is worth the most exactly where the
+			// resolver hurts: a backtracking solve grows `!=` holes, and
+			// every probe below the range (or in a hole, which stops at the
+			// next span's floor) now stops early.
+			return false
+		}
+		if cmpVerBound(&p, sp.hi) < 0 {
 			return true
 		}
 	}

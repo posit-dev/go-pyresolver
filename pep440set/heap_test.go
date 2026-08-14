@@ -55,6 +55,12 @@ func TestRetainedHeapPerSet(t *testing.T) {
 	// Signed arithmetic on purpose: the live heap can shrink across the run
 	// (other tests' garbage collected between the two reads), and a uint64
 	// subtraction would log that as ~1.8e19 rather than as negative.
+	//
+	// ⚠️ The reading is GLOBAL MemStats, so anything else allocating in the
+	// process -- parallel tests, a loaded machine's timer-driven work --
+	// lands in the delta. The number is only meaningful from a solo run on
+	// an otherwise idle machine (`-run TestRetainedHeapPerSet -count=1`);
+	// do not quote it from a full-suite run.
 	delta := int64(m1.HeapAlloc) - int64(m0.HeapAlloc)
 	t.Logf("live heap for %d Sets: %d bytes (%.1f B/Set)",
 		n, delta, float64(delta)/n)

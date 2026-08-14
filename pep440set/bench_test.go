@@ -106,18 +106,32 @@ func BenchmarkComplementAll(b *testing.B) {
 	}
 }
 
-// BenchmarkContains is a bound compared against a set's bounds with no set
-// built in the middle: the closest thing to a direct cmpBound measurement the
-// exported surface offers.
+// BenchmarkContains is a version probed against a set's bounds with no set
+// built in the middle: the closest thing to a direct comparison-ladder
+// measurement the exported surface offers.
+//
+// The two cases bound the lazy public derivation from both ends. cross-group
+// probes 1.4.2, whose release group ties NO bound of the set, so ensurePub
+// never runs -- the BEST case for the verPos path, and also the common one.
+// same-group probes 1.0.post1, which ties 1.0's group and descends to the
+// public comparison, so the render (and the ladder's full depth) is paid --
+// the WORST case. Quote them together or not at all.
 func BenchmarkContains(b *testing.B) {
 	s := benchSet(b, ">=1.0,<2.0,!=1.5")
-	v, err := version.Parse("1.4.2")
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = s.Contains(v)
+	for _, tc := range []struct{ name, probe string }{
+		{"cross-group", "1.4.2"},
+		{"same-group", "1.0.post1"},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			v, err := version.Parse(tc.probe)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = s.Contains(v)
+			}
+		})
 	}
 }
 

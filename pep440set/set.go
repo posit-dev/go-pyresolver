@@ -120,6 +120,10 @@ func (s Set) Equal(other Set) bool {
 	return true
 }
 
+// containsBound is the REFERENCE membership path: kept, with no production
+// caller, so the agreement tests can hold Contains' verPos fast path to it.
+// Do not delete it as dead code; `unused` stays quiet only because tests call
+// it, and the tests are the point.
 func (s Set) containsBound(b bound) bool {
 	for _, sp := range s.spans {
 		if cmpBound(sp.lo, b) <= 0 && cmpBound(b, sp.hi) < 0 {

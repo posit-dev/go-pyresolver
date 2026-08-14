@@ -37,8 +37,8 @@ func verPosVersions(t *testing.T) []version.Version {
 // general one: for every version above and every bound in the full ordering
 // grid, cmpVerBound must answer exactly as cmpBound does for the materialized
 // atBound. One verPos is reused across the whole row, as Contains reuses it
-// across a set's spans, so the lazy public derivation is exercised in every
-// order it can happen in.
+// across a set's spans, so every comparison runs in both pubDone states:
+// underived on the row's first group-tied bound, already-derived on the rest.
 func TestCmpVerBoundAgreesWithCmpBound(t *testing.T) {
 	entries := ascendingPositions(t)
 	for _, v := range verPosVersions(t) {
@@ -68,8 +68,9 @@ func TestVerPosReinit(t *testing.T) {
 		p.init(v)
 		materialized := atBound(v)
 		for _, e := range entries {
-			// Probe first WITHOUT re-initing, so p carries whatever pub state
-			// the previous version left behind if init failed to clear it.
+			// One init per VERSION, then every bound in the grid: if init
+			// failed to clear the lazily derived pub state, p would still be
+			// carrying the PREVIOUS version's public spelling here.
 			if got, want := cmpVerBound(&p, e.b), cmpBound(materialized, e.b); got != want {
 				t.Fatalf("reused verPos: cmpVerBound(at(%s), %s) = %d, want %d",
 					v.String(), e.name, got, want)
