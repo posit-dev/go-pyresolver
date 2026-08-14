@@ -81,25 +81,33 @@
 //     them to order app-set's 6,040 candidate versions. candidate.Rank now
 //     classifies the input in one linear pass and reverses it when it can.
 //
-// Warm, ten iterations, full snapshot. MEDIAN OF THREE RUNS per side, both sides
-// measured back to back in one session on an otherwise idle machine. The three
-// runs of each agreed within 4% except one app-set baseline run that came in at
-// 118.79 ms against 72.44 and 69.22 -- a transient, and the reason this reports
-// medians rather than means.
+// Warm, ten iterations, full snapshot, against base 73d820a. MEDIAN OF THREE
+// RUNS per side, and the two sides INTERLEAVED round by round rather than run in
+// two blocks, so ambient load lands on both.
 //
-// ⚠️ These are measured against the CORRECTED backtracking entry from #38, the
-// one that genuinely backs out. An earlier draft of this table carried the
-// retired `pandas, numpy<2` entry and its numbers are not comparable.
+// ⚠️ Medians, not means, and this run shows why: another process was busy during
+// the first round, putting the baseline's small-tree at 8.10 ms against 4.31 and
+// 4.22, and extras at 15.63 against 9.65 and 9.68. A mean would have carried
+// those into the published figures. The optimized side's three runs agreed within
+// 12% throughout.
+//
+// ⚠️ Measured against the CORRECTED backtracking entry from #38, the one that
+// genuinely backs out. An earlier draft of this table carried the retired
+// `pandas, numpy<2` entry and its numbers are not comparable.
 //
 //	entry            warm ms            candvers      Metadata
 //	                 before   after     before after  before after
-//	single-no-deps      1.68    0.32      130    65      3     3    5.2x faster
-//	small-tree          4.38    1.58      984   254     30    30    2.8x
-//	extras              9.77    2.55     1658   321     43    43    3.8x
-//	app-set            72.44    8.14     6040   943    105   105    8.9x
-//	wide-versions      83.16   17.13     7206  4647     24    24    4.9x
-//	backtracking       25.27    3.78     2495   351     42    42    6.7x
-//	unsatisfiable       0.75    0.54      124   124      3     3    1.4x
+//	single-no-deps      1.77    0.28      130    65      3     3    6.3x faster
+//	small-tree          4.31    1.39      984   254     30    30    3.1x
+//	extras              9.68    1.90     1658   321     43    43    5.1x
+//	app-set            67.10    5.67     6040   943    105   105   11.8x
+//	wide-versions      80.33   15.02     7206  4647     24    24    5.3x
+//	backtracking       24.51    3.29     2495   351     42    42    7.5x
+//	unsatisfiable       0.73    0.51      124   124      3     3    1.4x
+//
+// Cross-checked against the independent 2x2 below, which measured the same three
+// large entries in a separate interleaved session: 11.69x, 5.40x and 7.55x
+// against 11.8x, 5.3x and 7.5x here.
 //
 // candvers is the metric the found/rank change did not move AT ALL, and this is
 // what moves it: it sums len(Versions()) over calls, so it falls exactly when a
@@ -117,20 +125,60 @@
 //
 //	entry            warm B/op          warm allocs/op
 //	                 before    after    before      after
-//	single-no-deps     1.6 MB   0.5 MB      41,409      6,880
-//	small-tree         6.0 MB   2.9 MB      94,135     34,328
-//	extras            11.5 MB   4.2 MB     210,638     52,043
-//	app-set           70.7 MB  12.2 MB   1,496,571    176,128
-//	wide-versions     85.1 MB  24.1 MB   1,714,386    414,552
-//	backtracking      26.9 MB   8.8 MB     538,414     75,876
-//	unsatisfiable      1.2 MB   1.1 MB      16,531     11,222
+//	single-no-deps     1.6 MB   0.5 MB      40,110      5,579
+//	small-tree         5.4 MB   2.4 MB      86,227     26,419
+//	extras            10.6 MB   3.3 MB     197,257     38,670
+//	app-set           67.2 MB   8.7 MB   1,444,306    123,869
+//	wide-versions     80.9 MB  20.0 MB   1,645,844    346,002
+//	backtracking      25.5 MB   7.4 MB     517,430     55,015
+//	unsatisfiable      1.2 MB   1.0 MB      15,534     10,221
+//
+// ⚠️ The "before" allocation column is LOWER than the one an earlier draft
+// carried (app-set 1,496,571) because the base moved: #39 took roughly 3.5% of
+// app-set's allocations out on its own. That is #39's win, not this one's, and it
+// is why the base column had to be re-measured rather than carried forward.
 //
 // ⚠️ The <1 ms warm gate is now met by TWO entries rather than one --
-// single-no-deps at 0.32 ms joins unsatisfiable at 0.54 ms, and small-tree at
-// 1.58 ms is close. The other four still miss, by 2.6x (extras), 3.8x
-// (backtracking), 8.1x (app-set) and 17.1x (wide-versions), against 9.8x, 25x,
-// 72x and 83x before. The gate is still not met, and what stands between is no
+// single-no-deps at 0.28 ms joins unsatisfiable at 0.51 ms, and small-tree at
+// 1.39 ms is close. The other four still miss, by 1.9x (extras), 3.3x
+// (backtracking), 5.7x (app-set) and 15.0x (wide-versions), against 9.7x, 24.5x,
+// 67x and 80x before. The gate is still not met, and what stands between is no
 // longer this package -- see "Where the cost is now".
+//
+// # ⚠️ Attribution against #39, because the two wins are NOT separable by subtraction
+//
+// #39 (pep440set.Contains probing with a stack-held position instead of
+// materializing a bound) landed between the two measurements above, and it sits
+// INSIDE Candidates. Its own merged claim is deliberately conservative: a
+// deterministic allocation reduction and 3-5% wall clock on a few entries. That is
+// its effect on the code as it then was.
+//
+// The two interact, so the 2x2 was measured rather than inferred -- all four cells
+// interleaved in ONE session, medians of three, so no cell is compared across
+// sittings:
+//
+//	cell                          app-set   wide-versions   backtracking
+//	A  00e608e  neither             69.15           89.34          25.25
+//	B  73d820a  #39 only            68.04           79.47          24.84
+//	C  58f90fd  ranking only         7.53           16.44           3.66
+//	D  both                          5.82           14.73           3.29
+//
+//	#39 alone            A -> B      1.02x           1.12x          1.02x
+//	ranking alone        A -> C      9.19x           5.43x          6.90x
+//	#39 on top of both   C -> D      1.29x           1.12x          1.11x
+//	ranking on top of #39  B -> D   11.69x           5.40x          7.55x
+//	both                 A -> D     11.88x           6.07x          7.68x
+//
+// ⚠️ Read the third row. #39 is worth 1.02x on app-set alone and 1.29x once the
+// sort is gone -- it got MORE valuable, and the reason is mechanical rather than
+// lucky: Contains was 4.4% of a Candidates call before the ranking work and 28.6%
+// after, so the same absolute saving is a much larger share of a much smaller
+// total. Neither change should be credited with the other's contribution, and the
+// combined figure decomposes as above rather than as a product of two independent
+// wins.
+//
+// The table at the top of this section is the ranking change measured as a delta
+// from B, the current base, which is the honest number for it today.
 //
 // # The mechanism, isolated
 //

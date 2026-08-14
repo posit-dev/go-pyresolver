@@ -125,12 +125,19 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 // (candidate.PrereleaseSet) and ranking (candidate.Policy) are separate types
 // rather than one predicate.
 //
-// Because it is existence and not cardinality, this stops at the FIRST usable
-// version. That is what keeps the cost proportional to the packages actually
-// decided rather than to every version in range: certifi has 65 published
-// versions and no dependencies at all, and an exact count read every one of them
-// on each of the two rounds the solver asked about it, 131 metadata reads in all.
-// Answering existence instead takes 3.
+// Because it is existence and not cardinality, this stops TESTING at the first
+// usable version. That is what keeps the METADATA cost proportional to the
+// packages actually decided rather than to every version in range: certifi has 65
+// published versions and no dependencies at all, and an exact count read every one
+// of them on each of the two rounds the solver asked about it, 131 metadata reads
+// in all. Answering existence instead takes 3.
+//
+// ⚠️ The WALK is a different matter and is not short-circuited: rank is the
+// in-range count, so every version is still tested against allowed even after best
+// is settled. That is O(all versions) per call by construction, and it is why
+// pep440set.Set.Contains is 28.6% of this call in the current profile. An earlier
+// draft of this paragraph said the cost was proportional to packages decided
+// without that qualification, which was true only of the metadata reads.
 //
 // # rank is the in-range count, taken BEFORE usability is tested
 //
@@ -194,7 +201,8 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 // sorting it. The second matters because index.RSFIndex returns versions
 // ASCENDING and the default Newest policy wants them descending, which is
 // sort.SliceStable's worst case. Together, warm resolution of the benchmark
-// corpus fell 1.3x to 9.6x. See resolver/bench_test.go.
+// corpus fell 1.4x to 11.8x. See resolver/bench_test.go, which carries the
+// per-entry table and is the single place those numbers are maintained.
 func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set, bool, int, error) {
 	switch pkg.Kind {
 	case KindRoot:
@@ -274,10 +282,14 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 // app-set provokes 87 Versions() calls across 18 distinct packages, a reuse
 // factor of 4.8 -- and every one of those calls used to re-sort. The distinct
 // count is not an estimate: after this memo, `versions/op` on the benchmark IS
-// the number of distinct names, because each one triggers exactly one call. Sorting is where the time went: measured
-// warm against a production snapshot, candidate.Rank was 83% of Candidates on
-// app-set and 85% on wide-versions, against 1.7% and 0.6% for the usability walk
-// the found/rank change had just optimized. See resolver/bench_test.go.
+// the number of distinct names, because each one triggers exactly one call, and
+// TestCandidatesAgreeAcrossRepeatedCallsWithDifferentRanges asserts that equality
+// through a counting index rather than deriving it.
+//
+// Sorting is where the time went: measured warm against a production snapshot,
+// candidate.Rank was 83% of Candidates on app-set and 85% on wide-versions,
+// against 1.7% and 0.6% for the usability walk the found/rank change had just
+// optimized. See resolver/bench_test.go.
 //
 // Ranking the FULL list rather than the in-range one is what makes it memoizable
 // at all: the in-range list is a function of the caller's allowed set, and a memo
@@ -300,6 +312,33 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 // Second, the map is unbounded in principle. In practice it holds one entry per
 // package the resolution reaches, which is the same bound the unusable record set
 // already lives under, and the Provider is discarded when the resolve ends.
+//
+// # ⚠️ Three things this narrows, none of them free
+//
+// Memoizing a call means the call stops happening, and three behaviours rode on
+// it. None is a correctness defect; all three are changes, and an undocumented
+// change is the one that surprises someone later.
+//
+//   - RETAINED MEMORY, traded for churn. This holds the parsed version list of
+//     every package the closure reaches for the whole resolution, where those
+//     were previously transient garbage. Allocation volume falls sharply -- the
+//     benchmark's app-set entry goes from 1.44M allocations to 124k -- but that
+//     is total allocation, not peak retention, and the two move in opposite
+//     directions here. For a server running concurrent resolutions this is a
+//     shift from high-churn/low-retention to lower-churn/higher-retention. It is
+//     bounded by the closure and is NOT measured at peak.
+//
+//   - CANCELLATION. index.Versions checks ctx.Err(), so before this every
+//     Candidates call had a cancellation checkpoint even when nothing was in
+//     range. Now a memoized call for a package with no in-range versions reaches
+//     no index method at all. Any call that gets as far as usable still checks,
+//     and the solver's loop is bounded by MaxRounds, so a cancelled resolve still
+//     terminates -- but it can now take longer to notice.
+//
+//   - A TRANSIENT Versions() FAILURE after a first success is unobservable for
+//     that package. This is a sibling of the caveat on Candidates about index
+//     failures on lower-ranked versions, and a different one: that caveat is
+//     about versions never examined, this is about a package never re-read.
 func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
 	if r, ok := p.ranked[pkg.Name]; ok {
 		return r, nil

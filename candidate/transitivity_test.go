@@ -102,8 +102,9 @@ func TestNewestIsAStrictWeakOrdering(t *testing.T) {
 		triples = n
 	}
 	var (
-		sawLessLess int
-		sawEquivPar int
+		sawLessLess  int
+		sawEquivPar  int
+		sawEquivReal int
 	)
 	for i := 0; i < triples; i++ {
 		a := draw(nil)
@@ -122,6 +123,15 @@ func TestNewestIsAStrictWeakOrdering(t *testing.T) {
 		}
 		if equiv(a, b) && equiv(b, c) {
 			sawEquivPar++
+			// ⚠️ A triple only WITNESSES transitivity when all three are
+			// pairwise distinct. If a == c the conclusion is reflexive and
+			// cannot fail; if a == b or b == c the triple restates its own
+			// antecedent. Counting satisfied antecedents instead of witnesses is
+			// how the equivalence half of this test was ~99.997% degenerate while
+			// its guard certified it.
+			if a.String() != b.String() && b.String() != c.String() && a.String() != c.String() {
+				sawEquivReal++
+			}
 			if !equiv(a, c) {
 				t.Fatalf("incomparability is not transitive: %s ~ %s and %s ~ %s but not %s ~ %s",
 					a, b, b, c, a, c)
@@ -129,13 +139,24 @@ func TestNewestIsAStrictWeakOrdering(t *testing.T) {
 		}
 	}
 
-	t.Logf("%d triples: %d exercised transitivity of Less, %d exercised transitivity of "+
-		"incomparability", triples, sawLessLess, sawEquivPar)
+	t.Logf("%d triples: %d exercised transitivity of Less; %d satisfied the incomparability "+
+		"antecedent, of which %d are genuine witnesses (three pairwise-distinct spellings)",
+		triples, sawLessLess, sawEquivPar, sawEquivReal)
 
 	// A run where no triple satisfied either antecedent would pass without
 	// checking anything.
 	if sawLessLess == 0 || sawEquivPar == 0 {
 		t.Errorf("vacuous: %d ordered triples, %d equivalent triples", sawLessLess, sawEquivPar)
+	}
+	// ⚠️ And the guard that the previous one was missing. Satisfied antecedents
+	// are cheap; witnesses are what can actually fail. A ceiling is put on how
+	// degenerate the sample may be rather than merely requiring one witness,
+	// because "at least 1 of 750,000" is how this passed while proving nothing.
+	if sawEquivReal < sawEquivPar/100 {
+		t.Errorf("only %d of %d incomparability triples have three pairwise-distinct "+
+			"spellings, so the conclusion was reflexive or the antecedent restated in "+
+			"almost every case. Equality classes need at least three members; see "+
+			"realVersions", sawEquivReal, sawEquivPar)
 	}
 }
 
@@ -217,19 +238,34 @@ func realVersions(t *testing.T) [][]version.Version {
 	// and neither is Newest on versions that did not come from this index. So the
 	// equality classes PEP 440 defines and the index removes are put back here:
 	// "1.2" and "1.2.0" are the same version and must be mutually incomparable.
+	// ⚠️ TWO alternates, not one, and the difference is the whole test.
+	//
+	// Transitivity of incomparability needs three PAIRWISE-DISTINCT mutually
+	// equivalent elements. With one alternate per class the largest class is 2,
+	// so every "equivalent triple" the sampler finds must repeat an element:
+	// either a == c, where the conclusion a ~ c is reflexive and cannot fail, or
+	// the triple restates the antecedent. Replayed against a one-alternate draw,
+	// 74,919 satisfied antecedents contained exactly 2 genuine witnesses -- and
+	// the vacuity guard below happily reported 74,919. Padding with a second
+	// trailing zero gives every class three distinct spellings of one version.
 	for i, cl := range out {
-		alt, err := version.Parse(cl[0].String() + ".0")
-		if err != nil || seen[alt.String()] {
-			continue
+		base := cl[0]
+		for _, suffix := range []string{".0", ".0.0"} {
+			alt, err := version.Parse(base.String() + suffix)
+			if err != nil || seen[alt.String()] {
+				continue
+			}
+			// Guard the premise rather than trusting it: a spelling that is not
+			// actually PEP 440-equal would make the "equivalence" half of this
+			// test check something else entirely.
+			if alt.Compare(base) != 0 {
+				t.Fatalf("%s and %s were expected to be PEP 440-equal and are not",
+					base, alt)
+			}
+			seen[alt.String()] = true
+			cl = append(cl, alt)
 		}
-		// Guard the premise rather than trusting it: a spelling that is not
-		// actually PEP 440-equal would make the "equivalence" half of this test
-		// check something else entirely.
-		if alt.Compare(cl[0]) != 0 {
-			t.Fatalf("%s and %s were expected to be PEP 440-equal and are not",
-				cl[0], alt)
-		}
-		out[i] = append(cl, alt)
+		out[i] = cl
 	}
 	return out
 }

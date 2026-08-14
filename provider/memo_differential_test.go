@@ -87,20 +87,33 @@ func TestCandidatesAgreeAcrossRepeatedCallsWithDifferentRanges(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	// ONE provider for the whole run: its memo is warm for every package after
-	// the first call, which is the state the change is about.
-	p := provider.New(ctx, idx, testOptions(t))
+
+	// ⚠️ The provider reads through a COUNTING index, and that is the difference
+	// between observing the memo and asserting arithmetic about this test's own
+	// loop.
+	//
+	// An earlier version of this test reported "N calls served from a warm memo"
+	// as calls-minus-packages. That number is a function of the loop shape and
+	// nothing else: with the memo lookup neutered so every call missed, the test
+	// still passed and still printed the same figure. It was quoted as evidence
+	// in a changelog. Counting index calls is what actually distinguishes a memo
+	// that is read from one that is merely written.
+	counting := newCountingIndex(idx)
+	p := provider.New(ctx, counting, testOptions(t))
 
 	var (
 		calls        int
 		repeat       int
 		available    int
-		narrowed     int
 		multiVersion int
 	)
+	distinct := map[index.PackageName]bool{}
 	for _, name := range sampled {
 		pkg := provider.Project(index.PackageName(name))
 
+		// Read through idx, NOT through counting: this is the test setting up its
+		// own ranges, not the provider doing its work, and counting it would
+		// corrupt the very number the assertion below rests on.
 		all, err := idx.Versions(ctx, index.PackageName(name))
 		if err != nil || len(all) == 0 {
 			continue
@@ -108,12 +121,14 @@ func TestCandidatesAgreeAcrossRepeatedCallsWithDifferentRanges(t *testing.T) {
 		if len(all) > 1 {
 			multiVersion++
 		}
+		distinct[index.PackageName(name)] = true
 
 		for _, allowed := range rangesOver(rng, all) {
 			gotBest, gotFound, gotRank, gotErr := p.Candidates(pkg, allowed)
 
-			// A fresh reference provider, so nothing it computed on the previous
-			// range is reused.
+			// A fresh reference provider on the UNCOUNTED index, so nothing it
+			// computed on the previous range is reused and its reads do not
+			// enter the count.
 			ref := provider.New(ctx, idx, testOptions(t))
 			wantBest, wantFound, wantCount, wantErr := ref.ExactCandidates(pkg, allowed)
 
@@ -149,26 +164,47 @@ func TestCandidatesAgreeAcrossRepeatedCallsWithDifferentRanges(t *testing.T) {
 		repeat++
 	}
 
-	// Every package after its first range answered from the memo; count the calls
-	// that could only have come from it.
-	narrowed = calls - repeat
+	// The MEASURED numbers: how many times the provider actually reached the
+	// index, against how many times it was asked.
+	indexCalls := int(counting.versions.Load())
 
 	t.Logf("snapshot %s: %d packages (%d with more than one version), %d Candidates calls, "+
-		"%d served after the package's first (memoized), %d with something available",
-		path, repeat, multiVersion, calls, narrowed, available)
+		"%d with something available", path, repeat, multiVersion, calls, available)
+	t.Logf("the provider made %d Versions() calls for %d distinct packages, so %d calls "+
+		"(%.1f%%) were served from the memo",
+		indexCalls, len(distinct), calls-indexCalls,
+		100*float64(calls-indexCalls)/float64(max(calls, 1)))
 
 	if calls == 0 {
 		t.Fatal("made no comparable calls, so this would have passed vacuously")
 	}
-	// ⚠️ The assertion that keeps this honest. If every package were asked once,
-	// the memo would never be READ and this would be the previous test with extra
-	// steps.
-	if narrowed <= 0 {
-		t.Errorf("no package was asked about more than once, so the memo was written and "+
-			"never read; %d calls over %d packages", calls, repeat)
-	}
 	if multiVersion == 0 {
 		t.Error("every sampled package had a single version, so no range could narrow anything")
+	}
+
+	// ⚠️ THE ASSERTION THAT MAKES THIS A MEMO TEST.
+	//
+	// One index read per distinct package is exactly what the memo promises, and
+	// it is not derivable from the loop: without the memo this is one read per
+	// CALL, which is several times larger. Asserting equality rather than an
+	// inequality is what makes it fail on a memo that is written and never read.
+	//
+	// ⚠️ Not <= either. Fewer reads than distinct packages would mean a package
+	// was answered without ever being looked up, which is a different bug and
+	// should not pass here.
+	if indexCalls != len(distinct) {
+		t.Errorf("the provider made %d Versions() calls for %d distinct packages; the memo "+
+			"promises exactly one per package, and %d calls were made in total. A count "+
+			"near the call count means the memo is being written and never read",
+			indexCalls, len(distinct), calls)
+	}
+
+	// ⚠️ And the memo must actually be EXERCISED, not merely correct on a corpus
+	// where every package was asked once. Without this the equality above is
+	// satisfied trivially by calls == indexCalls == len(distinct).
+	if calls <= indexCalls {
+		t.Errorf("%d calls over %d index reads: no package was asked about more than once, "+
+			"so the memo was never read", calls, indexCalls)
 	}
 }
 

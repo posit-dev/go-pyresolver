@@ -139,8 +139,19 @@ func TestRankFastPathAgreesWithTheSortOnRandomLists(t *testing.T) {
 // This is the one that matters, because the fast path exists for the shape real
 // data has: index.RSFIndex returns versions ascending and deduped, so nearly
 // every list here takes the reversed branch. The synthetic tests above prove the
-// branches are right; this proves the branch real inputs take is the right one
-// for them.
+// branches are right; this proves the REVERSED branch real inputs take is the
+// right one for them.
+//
+// ⚠️ It proves nothing about the ORDERED branch, and the shape counts say why.
+// Against the committed excerpt: 0 unordered, 1 ordered, 135 reversed -- and that
+// single "ordered" is a one-version package hitting monotonicity's len < 2 early
+// return, not a multi-version list that happened to arrive in policy order.
+// Because RSFIndex is ascending and Newest is descending, a real list of length
+// >= 2 essentially never takes the ordered branch. That branch is covered by the
+// synthetic cases above and by nothing here, which is the honest scope: the
+// guard below therefore requires reversed != 0 and deliberately does not require
+// ordered != 0, since demanding it would be demanding an input real data does not
+// produce.
 //
 // Set PYPIRSF_TEST_FILE to a full snapshot; without it this uses the committed
 // excerpt so CI still exercises it.

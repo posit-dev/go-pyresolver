@@ -159,11 +159,19 @@ func firstByScan(pkg index.PackageName, vs []version.Version, p Policy) (version
 //   - memo:   the list is already ranked, so take [0]. ZERO comparisons, which
 //     is what a per-package memo buys and what no per-call algorithm can match.
 //
-// Partial selection is strictly dominated: it is O(n) comparisons per call where
-// the memo is O(1), and the solver asks about the same package 2.4 to 4.8 times
-// per resolution. It is worth measuring anyway, because "the memo beats it" is a
-// claim about a ratio and the ratio is what decides whether the memo's retained
-// memory is worth paying for.
+// Partial selection is dominated on the axis this measures: it costs O(n)
+// COMPARISONS per call where the memo costs none, and the solver asks about the
+// same package 2.4 to 4.8 times per resolution. It is worth measuring anyway,
+// because "the memo beats it" is a claim about a ratio and the ratio is what
+// decides whether the memo's retained memory is worth paying for.
+//
+// ⚠️ "O(1) versus O(n)" is a claim about RANKING, not about a Candidates call,
+// and an earlier draft of this comment blurred them. Candidates does not break
+// out of its walk -- rank is the in-range count, so every version is still tested
+// against allowed on every call. The call stays O(n) in pep440set.Contains
+// whichever selection strategy is used, which is precisely why Contains is 28.6%
+// of the call in the profile that follows this change. What the memo removes is
+// the comparisons, not the walk.
 //
 // ⚠️ scan answers a STRICTLY EASIER question than the other two. It finds the
 // single best element and cannot produce the second-best, which Candidates needs

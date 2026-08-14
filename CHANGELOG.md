@@ -15,7 +15,7 @@ served it.
 
 ### Changed
 
-- **Resolution is 1.4x to 8.9x faster warm**, with no change to any resolution it
+- **Resolution is 1.4x to 11.8x faster warm**, with no change to any resolution it
   produces. `Provider.Candidates` no longer re-ranks a package's versions on every
   call, and `candidate.Rank` no longer sorts a list that is already ordered.
 
@@ -34,20 +34,32 @@ served it.
     essentially every call. `candidate.Rank` now classifies the input in one linear
     pass and reverses it, or returns it untouched, when it can.
 
+  Warm, ten iterations, medians of three interleaved runs, against base `73d820a`:
+
   | entry | warm before | warm after | |
   |---|---|---|---|
-  | `single-no-deps` | 1.68 ms | 0.32 ms | 5.2x |
-  | `small-tree` | 4.38 ms | 1.58 ms | 2.8x |
-  | `extras` | 9.77 ms | 2.55 ms | 3.8x |
-  | `app-set` | 72.44 ms | 8.14 ms | 8.9x |
-  | `wide-versions` | 83.16 ms | 17.13 ms | 4.9x |
-  | `backtracking` | 25.27 ms | 3.78 ms | 6.7x |
-  | `unsatisfiable` | 0.75 ms | 0.54 ms | 1.4x |
+  | `single-no-deps` | 1.77 ms | 0.28 ms | 6.3x |
+  | `small-tree` | 4.31 ms | 1.39 ms | 3.1x |
+  | `extras` | 9.68 ms | 1.90 ms | 5.1x |
+  | `app-set` | 67.10 ms | 5.67 ms | 11.8x |
+  | `wide-versions` | 80.33 ms | 15.02 ms | 5.3x |
+  | `backtracking` | 24.51 ms | 3.29 ms | 7.5x |
+  | `unsatisfiable` | 0.73 ms | 0.51 ms | 1.4x |
 
   `Metadata` calls are **unchanged**: this reads no less data, it stops re-sorting it.
   What falls is `candvers` — 6,040 to 943 on `app-set`, 2,495 to 351 on `backtracking`
   — which the previous release's change did not move at all. Allocations fall with it,
-  `app-set` from 70.7 MB / 1,496,571 to 12.2 MB / 176,128.
+  `app-set` from 67.2 MB / 1,444,306 to 8.7 MB / 123,869.
+
+  ⚠️ This is a delta from `73d820a`, which already contains the `pep440set.Contains`
+  change below, and the two are **not** independent — `Contains` sits inside
+  `Candidates`. Measured as a 2×2 in one interleaved session on the three largest
+  entries: `Contains` alone is 1.02x/1.12x/1.02x, this change alone is
+  9.19x/5.43x/6.90x, and `Contains` **on top of** this change is 1.29x/1.12x/1.11x.
+  It became more valuable, not less: `Contains` was 4.4% of a `Candidates` call before
+  the ranking work and 28.6% after, so the same absolute saving is a larger share of a
+  smaller total. Neither entry should be read as containing the other's win; the
+  decomposition is in `resolver/bench_test.go`.
 
   ⚠️ The memo lives on the `Provider`, **not** on the index, and that is
   correctness-bearing rather than stylistic. A `version.Version` cannot be shared
@@ -69,7 +81,15 @@ served it.
 
   Equivalence is measured, not argued: **4,007 resolutions against the production
   snapshot produce byte-identical transcripts** — same pins, same decision order, same
-  activated extras, and the same failure report text on the 1,605 that fail.
+  activated extras, and the same failure report text on the 1,605 that fail. A second
+  run of 1,007 against the current base agrees, 996 of 996 compared.
+
+  ⚠️ Every corpus figure in this entry comes from a **local run against the 981 MB
+  production snapshot**, which CI does not have. The snapshot-backed tests fall back to
+  the committed 1 MB excerpt (139 packages) when `PYPIRSF_TEST_FILE` is unset, and CI's
+  anti-skip guard covers `./index/` only — so CI verifies these tests *run and pass*, at
+  roughly 139 packages, not at the scale quoted here. The transcript harness does not
+  run in CI at all, by design.
 
 - The benchmark corpus's `backtracking` entry is `pandas, numpy<1.26` rather than
   `pandas, numpy<2`, and **actually backtracks again**. Under the old bound pandas had
@@ -134,14 +154,25 @@ served it.
   structurally cannot reach it: it asks each package **once**, always with
   `pep440set.All()`, and a memo only does anything on the second call with a
   **different** allowed set. This asks each package many times with ranges built from
-  its own published versions — 82,634 calls over 14,540 production packages, 68,094 of
-  them served from a warm memo — against a reference that re-reads the index and sorts
-  from scratch each time.
+  its own published versions — 82,634 calls over 14,540 production packages — against a
+  reference that re-reads the index and sorts from scratch each time.
 
-  ⚠️ It earns its place by mutation: poisoning the memo with the range-filtered list,
-  which is exactly the "keyed by caller-supplied input" bug, fails **this test and no
-  other in the module**. The pre-existing differential passes, and so does the entire
-  resolver suite.
+  It reads through a **counting index** and asserts that the provider made exactly one
+  `Versions()` call per distinct package: 14,379 for 14,379, so 68,255 of the 82,634
+  calls (82.6%) were served from the memo.
+
+  ⚠️ That assertion replaced a derived one, and the distinction is the point. An earlier
+  version reported the memoized-call count as calls-minus-packages — arithmetic over the
+  test's own loop shape. With the memo lookup neutered so every call missed, it still
+  passed and still printed the same figure, and that figure had been quoted here as a
+  measurement. Counting index calls is what distinguishes a memo that is *read* from one
+  that is merely *written*.
+
+  ⚠️ It earns its place by mutation, twice over. Poisoning the memo with the
+  range-filtered list — the "keyed by caller-supplied input" bug — fails **this test and
+  no other in the module**; the pre-existing differential passes, and so does the entire
+  resolver suite. Making the memo lookup always miss fails it at 940 reads for 136
+  packages, which is the mutation the derived version slept through.
 
 - `candidate` differentials for `Rank`'s fast path against a sort-only reference: 13
   hand-built shapes including the tie cases the reversed branch claims are impossible,

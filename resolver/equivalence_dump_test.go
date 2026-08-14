@@ -34,7 +34,31 @@ import (
 // GPR_DUMP_OUT, and the comparison is a diff.
 //
 // It is skipped unless GPR_DUMP_OUT is set, because it is a tool rather than a
-// test: it asserts nothing on its own.
+// test: it asserts nothing on its own. ⚠️ Which also means it never runs in CI,
+// so a figure quoted from it is a figure from someone's laptop.
+//
+// # The invocation behind the published figures, so they are reproducible
+//
+// Neither the defaults below nor a bare run reproduce them; record the flags with
+// the numbers or the numbers are not checkable:
+//
+//	PYPIRSF_TEST_FILE=~/.cache/ppm-rsf/prod.rsf GPR_SAMPLE=4000 GPR_SEED=1 \
+//	  GPR_CASE_TIMEOUT=8s GPR_DUMP_OUT=<file> \
+//	  go test ./resolver/ -run TestDumpResolutions -timeout 180m
+//
+// ⚠️ The committed default deadline is 10s and the published runs used 8s, so a
+// default run produces a different exclusion set.
+//
+// # ⚠️ The excluded set is BIASED, and toward the interesting cases
+//
+// Exclusions are cases that hit the wall-clock deadline. The optimized side is
+// several times faster, so a case near the deadline is far likelier to be
+// excluded for timing out on the BASELINE than on the other side -- which means
+// the excluded set skews toward the hardest, deepest resolutions, exactly where a
+// divergence would be most likely to hide. It was 48 of 4,007 (1.2%) and 11 of
+// 1,007 in the two published runs. Attributing them per side is worth doing:
+// in the second run, 3 cases timed out on the baseline and finished on the
+// optimized build, and none the other way.
 //
 // The transcript carries the OBSERVABLE surface of a resolution and nothing
 // else: the pins, the order the solver decided them in, the activated extras,

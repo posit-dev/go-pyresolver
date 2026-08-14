@@ -52,7 +52,16 @@ func rankBySortRef(pkg index.PackageName, versions []version.Version, p candidat
 func (p *Provider) ExactCandidates(pkg Package, allowed pep440set.Set) (pep440set.Set, bool, int, error) {
 	switch pkg.Kind {
 	case KindRoot, KindPython:
-		// No index behind these, so there is nothing to enumerate differently.
+		// ⚠️ Delegating to the code under test, which is a free pass, and it is
+		// bounded rather than justified: these two kinds have no index behind them
+		// and never reach the ranking, the memo or the fast path, so there is
+		// genuinely nothing here for a differential to compare. singleVersion is
+		// the whole implementation for both.
+		//
+		// It is inert today because no differential feeds these kinds. If one ever
+		// does, this arm must grow a real reference instead — a comparison that
+		// calls the implementation to produce the expected value proves nothing,
+		// and that failure mode is silent.
 		return p.Candidates(pkg, allowed)
 	}
 

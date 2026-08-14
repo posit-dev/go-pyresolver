@@ -104,8 +104,8 @@ const (
 	reversed
 )
 
-// monotonicity classifies vs against p in ONE pass of at most 2(n-1) Less calls,
-// stopping as soon as neither shape can still hold.
+// monotonicity classifies vs against p in ONE pass of at most n-1 Less calls --
+// exactly one per adjacent pair -- stopping as soon as neither shape can hold.
 //
 // # Why this is worth a pass
 //
@@ -113,13 +113,15 @@ const (
 // returns a package's versions sorted ASCENDING and deduped, and the default
 // Policy is Newest, which wants them descending -- so the real, overwhelmingly
 // common input to this function is an exactly reversed sequence, which is the
-// worst case for sort.SliceStable's insertion phase. Measured warm against a
-// production snapshot, this pass took the resolution benchmark's wide-versions
-// entry (botocore, ~14,000 releases) from 80.0 ms to 8.2 ms.
+// worst case for sort.SliceStable's insertion phase. On an ascending input this
+// replaces about 9.8 Less calls per element with one: 13,999 against 137,387 at
+// n=14,000, from BenchmarkPolicyLessCalls.
 //
-// The wasted work when neither shape holds is bounded by the break: two Less
-// calls on the first pair that settles it, which for an unsorted list is
-// normally the first pair.
+// The wasted work when neither shape holds is bounded by the break: it costs one
+// Less call on the pair that settles the second shape, so two pairs minimum, and
+// for an unsorted list that is normally the first two. Measured end to end on a
+// shuffled list of 14,000, the whole pass costs 3 extra comparisons against the
+// sort alone -- 243,629 against 243,626.
 //
 // # ⚠️ This LEANS ON transitivity where sort.SliceStable merely benefits from it
 //

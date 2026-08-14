@@ -156,6 +156,20 @@ func TestInRangeIsNotContiguous(t *testing.T) {
 	if packages == 0 {
 		t.Fatal("measured nothing")
 	}
+	// ⚠️ splitByPre is the number the whole binary-search decision turns on, so it
+	// is asserted rather than merely logged. A corpus where nothing is split
+	// would say the intersection COULD be two binary searches, which is a
+	// different engineering answer -- and it would say it silently, since every
+	// other line here is a t.Logf.
+	//
+	// The assertion is "at least one", not a threshold: the exact rate is a
+	// property of published data and will drift, but a corpus with zero splits
+	// means this test has stopped measuring what it is named for.
+	if splitByPre == 0 {
+		t.Error("no sampled package had its admitted versions split by a pre-release, so " +
+			"this measured nothing about contiguity; on a full snapshot the rate is " +
+			"around 4% of packages")
+	}
 }
 
 // versionsAreAscending is the check behind the claim candidate.Rank's fast path
