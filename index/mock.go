@@ -43,15 +43,37 @@ type mockPackage struct {
 	// order preserves insertion order so Versions can return a deterministic
 	// but deliberately unsorted result. See MockIndex.Versions.
 	//
-	// ⚠️ NORMALIZED VERSION STRINGS, NOT PARSED VALUES, for the same reason
-	// RSFIndex.Versions memoizes keys: a version.Version MUST NOT BE SHARED
-	// BETWEEN GOROUTINES. Version.Compare pads the shorter operand's release
-	// segment with append, into spare capacity that a by-value copy shares, so
-	// handing every caller a copy of one stored Version means two goroutines
-	// ranking candidates write to the same backing array. Holding these as
-	// parsed values made eight concurrent resolutions against one shared
-	// MockIndex fail `go test -race` inside candidate.Rank -- see
-	// resolver/concurrency_test.go, which is what found it.
+	// NORMALIZED VERSION STRINGS, NOT PARSED VALUES.
+	//
+	// ⚠️ HISTORICAL as of go-python-packaging v0.6.0, and kept because it is the
+	// reason this field has the type it has. It used to be forced: a
+	// version.Version could not be shared between goroutines, because
+	// Version.Compare padded the shorter operand's release segment with append
+	// into spare capacity that a by-value copy shares -- so handing every caller
+	// a copy of one stored Version meant two goroutines ranking candidates wrote
+	// to the same backing array. Holding these as parsed values made eight
+	// concurrent resolutions against one shared MockIndex fail `go test -race`
+	// inside candidate.Rank.
+	//
+	// v0.6.0 fixed that upstream, RSFIndex now memoizes parsed versions, and
+	// strings here are a choice rather than a constraint. Changing it would be a
+	// pure convenience change with nothing behind it -- a mock's version lists
+	// are a handful of entries -- so it has not been made.
+	//
+	// ⚠️ resolver/concurrency_test.go found the race in the VARIANT described
+	// above -- a mock that stored parsed values -- and it does not guard the
+	// hazard on shipped code, which is a different claim than the credit reads
+	// as. Measured at go-pyresolver 6c13230 with the dependency pinned back to
+	// v0.5.0, 20 fresh processes: that test passes, and so do provider, candidate
+	// and pep440set. What objects is index/shared_memo_test.go (20/20), this
+	// package's own TestMemoIsSafeUnderConcurrentUse (8/20, a lottery), and
+	// index/shared_version_test.go, which #44 added for the same hazard one level
+	// down. Nothing that ever shipped shared a parsed Version between goroutines
+	// until the parsed-version memo did.
+	//
+	// ⚠️ "pep440set passes" is a statement about THAT tree. On the current base a
+	// v0.5.0 pin does not compile pep440set at all -- it calls version.ReleaseKey,
+	// which is gpp v0.7.0. See the scope note in shared_memo_test.go.
 	order []string
 
 	// versions holds per-version state, keyed by normalized version string.
@@ -260,10 +282,25 @@ func (m *MockIndex) lookup(pkg PackageName, ver version.Version) (*mockVersion, 
 // here and then fail against a real index. Reverse insertion order breaks that
 // assumption without the flakiness a shuffle would introduce.
 //
-// ⚠️ Each version is RE-PARSED per call, so no two callers ever hold copies of
-// one version.Version. See mockPackage.order for the data race that costs, and
-// note that RSFIndex re-parses here for exactly the same reason -- the two
-// implementations agreeing is the point of the mock.
+// Each version is RE-PARSED per call, so no two callers ever hold copies of one
+// version.Version.
+//
+// ⚠️ That used to be a REQUIREMENT and is now merely what this does. Sharing a
+// parsed version.Version between goroutines was a data race until
+// go-python-packaging v0.6.0; it is not one now, and RSFIndex has stopped
+// re-parsing -- it memoizes the parsed versions and returns a copy of the memo's
+// slice. So the two implementations no longer agree on this point, which matters
+// because agreeing is the point of a mock.
+//
+// The divergence is deliberate and it is safe in ONE direction only. What a
+// caller may do with the returned slice is identical: both hand back a slice
+// nothing else holds, so sorting or overwriting it is fine against either. What
+// differs is that a mock-backed test can no longer detect a caller that depends
+// on getting a FRESH parse each call -- against RSFIndex two calls hand out
+// copies of one parse. Nothing in this module does that, and no interface
+// promises it. If MockIndex ever needs to model the real thing more closely, the
+// change is to memoize here too; do not make RSFIndex re-parse to restore the
+// symmetry.
 //
 // A parse failure is impossible: every string in order was produced by
 // Version.String() on a value Parse accepted. Reported rather than swallowed
@@ -323,11 +360,13 @@ func (m *MockIndex) Metadata(ctx context.Context, pkg PackageName, ver version.V
 	// missing from both for exactly as long as it was missing from either, so a
 	// caller mutating it was invisible to the mock as well.
 	//
-	// ⚠️ Version comes from the CALLER'S OWN value, not from the stored
-	// metadata, and that is the same concurrency requirement RSFIndex's
-	// cloneMetadata documents: a stored version.Version handed to every caller
-	// is one shared between goroutines. Not observable, because lookup matched
-	// on ver.String() and the setup methods force the stored Version to the key.
+	// Version comes from the CALLER'S OWN value, not from the stored metadata,
+	// matching RSFIndex's cloneMetadata. ⚠️ That was a concurrency requirement
+	// until go-python-packaging v0.6.0 and is not one now -- see the note on
+	// mockPackage.order. It is kept because cloneMetadata keeps it, for
+	// cloneMetadata's own second reason, and because the two must agree. Not
+	// observable either way here, because lookup matched on ver.String() and the
+	// setup methods force the stored Version to the key.
 	out := *mv.metadata
 	out.Version = ver
 	out.RequiresDist = append([]requirement.Requirement(nil), mv.metadata.RequiresDist...)

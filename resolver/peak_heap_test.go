@@ -124,6 +124,117 @@ func TestPeakHeapDuringOneResolve(t *testing.T) {
 	}
 }
 
+// TestIndexRetainedHeapAfterResolve reports how much heap ONE warmed
+// index.RSFIndex holds onto after a resolution has finished, which is the number
+// the parsed-version memo moves and the number no benchmark reports.
+//
+// # Why this is the number that matters, and TestPeakHeapDuringOneResolve is not
+//
+// The peak test above measures the high-water mark DURING a resolve. This
+// measures what survives it. They answer different questions and the parsed
+// memo moves them in opposite directions: churn falls sharply (warm allocs/op
+// drops 55.4% on app-set and 94.4% on wide-versions, measured at base 11da678)
+// while the index's steady-state footprint rises, because parsed versions that
+// used to be transient garbage now live in versionList for the life of the index.
+//
+// For every caller in this module that is a rounding error, because each builds
+// an RSFIndex per resolve and drops it. For a long-lived server holding one index
+// over a 932,861-package corpus it is the whole question, and index/rsfindex.go
+// says plainly that a bound is a prerequisite for that integration. This test is
+// what makes that claim a measured one.
+//
+// # How
+//
+// Warm the index with a full resolution, drop the result, force GC and read
+// HeapAlloc with the index still reachable; then drop the index, force GC and
+// read again. The difference is what the index alone was keeping alive.
+//
+// runtime.KeepAlive is what makes the first reading mean anything: without it the
+// compiler is entitled to consider idx dead the moment the last method call
+// returns, and both readings would measure the same thing.
+//
+// ⚠️ It is a LIVE-HEAP difference, not an allocator footprint. It excludes the
+// mmap'd snapshot itself, which is not Go heap, and it includes whatever the
+// resolution left reachable from the index -- the decoded blob cache and both
+// parsed memos, not just the one under test. That is deliberate: the question a
+// server operator has is "what does holding this index cost me", not "what does
+// this one field cost me".
+//
+// Two GC cycles are forced per reading, because one is not guaranteed to reclaim
+// everything that became unreachable during it -- an object finalized or
+// re-queued by the first pass is only freed by the second. That is belt and
+// braces rather than a fix for an observed problem, and it is cheap. The readings
+// it produces are stable: five interleaved rounds against the production snapshot
+// agreed to 0.01 MB on every corpus entry, on both builds.
+//
+// Skipped unless GPR_RETAIN is set: it is slow, it forces GC, and it asserts
+// nothing. It is a measurement, run deliberately and diffed between two builds.
+func TestIndexRetainedHeapAfterResolve(t *testing.T) {
+	if os.Getenv("GPR_RETAIN") == "" {
+		t.Skip("set GPR_RETAIN=1 to measure retained heap")
+	}
+
+	file, excerpt := benchSnapshotT(t)
+	ctx := context.Background()
+
+	// ⚠️ Say WHICH corpus, loudly, before printing a single megabyte figure.
+	// Without PYPIRSF_TEST_FILE this measures the 139-package committed excerpt
+	// and produces numbers nothing like the published table -- silently, because
+	// every other test here treats the excerpt as a legitimate fixture and
+	// benchSnapshotT returns the flag without insisting anyone read it. A
+	// retention figure whose corpus is unstated is not a figure.
+	corpus := "PRODUCTION snapshot from PYPIRSF_TEST_FILE"
+	if excerpt {
+		corpus = "COMMITTED EXCERPT -- set PYPIRSF_TEST_FILE for figures comparable to the CHANGELOG's"
+	}
+	t.Logf("corpus: %s, %d packages", corpus, file.Len())
+
+	for _, entry := range benchCorpus {
+		t.Run(entry.Name, func(t *testing.T) {
+			reqs := mustRequirements(t, entry.Requirements...)
+			opts := testOptions(t)
+
+			idx, err := index.NewRSFIndex(file, "production")
+			if err != nil {
+				t.Fatalf("NewRSFIndex: %v", err)
+			}
+
+			res, err := resolver.Resolve(ctx, reqs, idx, opts)
+			if err != nil && !entry.WantFailure && !excerpt {
+				t.Fatalf("Resolve: %v", err)
+			}
+			pins := 0
+			if res != nil {
+				pins = len(res.Pinned)
+			}
+			res = nil //nolint:ineffassign,wastedassign // dropped so only the index is measured
+
+			withIndex := liveHeap()
+			runtime.KeepAlive(idx)
+			idx = nil //nolint:ineffassign,wastedassign // the point of the next reading
+			withoutIndex := liveHeap()
+
+			retained := float64(withIndex) - float64(withoutIndex)
+			t.Logf("%-16s retained by the index %7.2f MB  (live %6.1f -> %6.1f MB, %d pins)",
+				entry.Name,
+				retained/(1<<20),
+				float64(withIndex)/(1<<20),
+				float64(withoutIndex)/(1<<20),
+				pins)
+		})
+	}
+}
+
+// liveHeap returns HeapAlloc after two forced collections. See the note above on
+// why one is not enough.
+func liveHeap() uint64 {
+	runtime.GC()
+	runtime.GC()
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.HeapAlloc
+}
+
 // benchSnapshotT is benchSnapshot for a *testing.T rather than a *testing.B.
 // Same contract, including that a missing file is a failure rather than a skip.
 func benchSnapshotT(t *testing.T) (*pypirsf.File, bool) {

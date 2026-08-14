@@ -26,12 +26,31 @@ import (
 // suggest it. cmd/pyresolve's `versions` subcommand really does sort the result
 // of Versions in place, so this is not a hypothetical caller.
 //
-// The Versions half currently cannot fail, because that memo holds keys and
-// re-parses them, so what it returns was never in the cache. It is kept as the
-// regression test for the DAY the memo starts holding parsed values -- which is
-// coming, see the upstream defect described on Versions -- and it is a test of
-// slice identity, not of the data race. The race is guarded by
-// resolver/concurrency_test.go.
+// ⚠️ THE VERSIONS HALF IS NOW LIVE. It was written as a regression test for the
+// day the version memo started holding parsed values rather than keys, and could
+// not fail until then, because what Versions returned had been re-parsed and was
+// never in the cache. That day arrived: the memo holds parsed versions, and
+// deleting the copy in Versions makes this fail with "the second call saw the
+// first call's mutations". It was the ONLY test that failed on that deletion when
+// the memo landed; shared_memo_test.go then added two more that do.
+//
+// ⚠️ All three are in THIS package. Nothing outside index/ catches the deletion,
+// cmd/pyresolve's own tests included -- and cmd/pyresolve is the caller that
+// sorts the result of Versions in place, which is the whole reason the copy
+// exists. It gets away with it because one invocation calls Versions once. So the
+// protection here is not redundant with an end-to-end test somewhere; there is no
+// end-to-end test that would notice.
+//
+// ⚠️ "Three tests" is a count, not three independent guards. The other two catch
+// it through a white-box pointer-identity check against an unexported field, and
+// in TestSharedMemoizedVersionsAreRaceFree that check is a t.Fatalf PRECONDITION
+// -- it aborts before the concurrent phase rather than detecting the defect. This
+// test is the only one that observes the damage through the exported API, which
+// is why it is the one that must not be folded into the others.
+//
+// It is a test of slice IDENTITY. The separate question of whether the parsed
+// version.Version VALUES are safe to share between goroutines is
+// TestSharedMemoizedVersionsAreRaceFree in shared_memo_test.go.
 
 func TestVersionsMemoIsNotAliasedByTheCaller(t *testing.T) {
 	idx := openFixtureIndex(t)
@@ -452,9 +471,23 @@ func guardTrailingZeroVersions(t *testing.T, pkgs []string) {
 // nested, so this also exercises the ordering.
 //
 // The property under test is that Versions and Metadata hand every goroutine
-// its own state. The failure it is shaped to catch is not a torn map -- the
-// mutexes handle that -- but a version.Version shared between goroutines, which
-// is why the memo holds keys. See the notes at each mutation site.
+// its own state, from a COLD memo -- goroutines racing to be the one that builds
+// each package's plan.
+//
+// ⚠️ Cold is what it covers and cold is ALL it covers, which is narrower than it
+// reads. Every goroutine calls Versions exactly ONCE, so on a 48-goroutine,
+// 6-package run most of them take the first-call path and get a slice nobody else
+// holds. With the defensive copy in Versions deleted, this test catches it 8
+// times in 20 -- measured, one fresh process per run -- against 20 in 20 for the
+// warm-memo test. It reaches the same hazard under a v0.5.0 dependency pin at the
+// same 8-in-20 rate. It is a scheduling lottery for the sharing case, and a
+// lottery is not a guard: it is a flake generator that happens to be pointing at
+// something real.
+//
+// So it is kept for what it does cover -- concurrent first calls, the memoMu/mu
+// ordering, and Metadata's slice copies -- and the sharing case is covered
+// deterministically, by warming the memo first, in
+// TestSharedMemoizedVersionsAreRaceFree (shared_memo_test.go).
 func TestMemoIsSafeUnderConcurrentUse(t *testing.T) {
 	idx := openFixtureIndex(t)
 	ctx := context.Background()
@@ -484,11 +517,12 @@ func TestMemoIsSafeUnderConcurrentUse(t *testing.T) {
 			// would sort just as busily and prove nothing. Asserted by
 			// guardTrailingZeroVersions above rather than left to this comment.
 			//
-			// ⚠️ It does NOT catch versionList itself being handed back, and no
-			// arrangement of this method could: the memo holds []string and this
-			// returns []version.Version, so the two cannot be the same object
-			// until the memo's type changes. That day is the one the aliasing
-			// test at the top of this file is kept for.
+			// ⚠️ It does NOT reliably catch versionList's own slice being handed
+			// back, now that the memo holds parsed versions and the two COULD be
+			// the same object. See the note above this function: one call per
+			// goroutine means most of them build their own plan. Slice identity
+			// is TestVersionsMemoIsNotAliasedByTheCaller's job, and sharing under
+			// a WARM memo is TestSharedMemoizedVersionsAreRaceFree's.
 			sort.Sort(sort.Reverse(version.SortedVersions(vers)))
 
 			for _, v := range vers {

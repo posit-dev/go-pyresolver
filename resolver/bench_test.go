@@ -489,16 +489,25 @@
 // still 34% of Resolve, but it is now parsing SPECIFIER OPERANDS inside
 // FromSpecifiers rather than version keys.
 //
-// ⚠️ THAT NEXT MEMO WOULD RE-OPEN THE HAZARD THIS ONE AVOIDS. A pep440set.Set
-// holds bounds, a bound holds a version.Version and a *posKey whose pub is
-// another, and Set is copied BY VALUE -- so a memoized Set shares parsed
-// versions between every goroutine that reads it, and Set.Singleton() hands
-// sp.lo.v straight out. Stressing it under -race today comes back clean, but
-// only incidentally: after #33 the sole surviving Compare call site is reached
-// only once the release lengths already match, which makes Padding a no-op.
-// Reordering cmpBound's discriminators brings the race back. Whoever builds
-// that memo owns the question, and "it was clean when I tried it" is not the
-// answer.
+// ⚠️ HISTORICAL as of go-python-packaging v0.6.0. This paragraph used to warn
+// that the projection memo would re-open a data race: a pep440set.Set holds
+// bounds, a bound holds a version.Version and a *posKey whose pub is another, and
+// Set is copied BY VALUE -- so a memoized Set shares parsed versions with every
+// goroutine that reads it, and Set.Singleton() hands sp.lo.v straight out. That
+// was safe under v0.5.0 only incidentally, because after #33 the sole surviving
+// Compare call site was reached once the release lengths already matched, making
+// Padding a no-op; reordering cmpBound's discriminators would have brought it
+// back.
+//
+// Sharing a parsed version.Version is no longer a race at all. v0.6.0 pads into a
+// fresh slice, and index.RSFIndex memoizes parsed versions on exactly that basis.
+// So the projection memo is free of THIS objection, and cmpBound's discriminators
+// can be reordered on their merits.
+//
+// ⚠️ What has not changed is that the memo would be keyed by (package, version,
+// extra) and would retain parsed structure for the life of whatever holds it. See
+// index/rsfindex.go's retention note: a bounded key set is not bounded memory,
+// and that is the question that memo owns.
 //
 // Two upstream costs are now visible that the parse used to hide, and both are
 // in go-python-packaging's dependency rather than in this module:
