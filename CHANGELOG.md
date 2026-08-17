@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-17
+
 ### Changed
 
 - **`index.RSFIndex` memoizes PARSED versions, not just version keys. Warm
@@ -1355,7 +1357,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.4.0...v0.5.0
