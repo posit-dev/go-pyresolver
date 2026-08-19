@@ -6,8 +6,15 @@ Phase 3.
 
 > **Status: implemented end to end.** `pypirsf/`, `index/`, `pep440set/`,
 > `candidate/`, `provider/` and `resolver/` all carry code. `resolver.Resolve`
-> is the entry point and the only package Package Manager imports; keep its
-> exported surface to `Resolve`, `Options`, `Resolution` and `ResolutionError`.
+> is the entry point; keep its exported surface to `Resolve`, `Options`,
+> `Resolution` and `ResolutionError`.
+>
+> ⚠️ `resolver` is **no longer the only package Package Manager imports**. PPM
+> implements its own `MetadataIndex` (`src/pyindex`) and imports `index/` for the
+> interface, its sentinels, and the shared contracts in `index/contract.go`
+> (`DedupeEqualityClasses`, `Lookup`, `ParseRecord`, `PackageMetadata.Clone`).
+> Those five names are a published surface with a second consumer: changing them
+> breaks PPM, and a Go module tag cannot be moved once the proxy has served it.
 
 ## Module layout
 

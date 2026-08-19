@@ -11,28 +11,24 @@ import (
 	"github.com/posit-dev/go-python-packaging/version"
 )
 
-// This file holds the three pieces of RSFIndex's logic that are contracts
-// rather than implementation details, exported so a consumer implementing its
-// own MetadataIndex over the same bytes can share them instead of re-deriving
-// them.
-//
-// They were exported because re-derivation had already drifted once: a consumer
-// reimplementing the stored-key lookup dropped the PEP 440 equality fallback, so
-// a request parsed from "1.0.0.0" missed a stored "1.0" and the version was
-// reported unknown even though the two ARE equal. The rules below are the ones
-// where two independent implementations must give the same answer to be
-// interoperable, and where nothing but a comment in each repository was making
-// that so.
-//
-// RSFIndex itself calls exactly these, so the exported behaviour cannot drift
-// from the behaviour this module's own tests cover.
+// This file holds the pieces of RSFIndex's logic that are contracts rather than
+// implementation details. The rationale for exporting them, and the list of what
+// they are, is in the package documentation under "If you are writing your own
+// index over the same bytes" -- kept there rather than here because a comment
+// floating between the imports and the first declaration is attached to nothing
+// and godoc renders it nowhere, which is a poor home for the one explanation a
+// consumer of this file needs.
 
 // EqualityClass is one PEP 440 equality class of stored version keys, reduced to
 // the single key that speaks for it.
 //
 // Key is the winning stored key, spelled exactly as the producer recorded it, so
-// it can be used to look the record up. Version is that key parsed, and the two
-// always agree: Version equals the result of parsing Key.
+// it can be used to look the record up. Version is that key parsed.
+//
+// ⚠️ "Version is Key parsed" is an invariant of the values DedupeEqualityClasses
+// RETURNS, not of the type. Both fields are exported, so a hand-built
+// EqualityClass{Key: "1.0"} carries the zero Version and makes Canonical() report
+// nonsense. Pass around values you got from DedupeEqualityClasses.
 type EqualityClass struct {
 	// Key is the representative stored version key.
 	Key string
@@ -48,6 +44,32 @@ type EqualityClass struct {
 // canonical, a lookup keyed by Version.String() finds the record directly, and
 // when it is not, the two spellings differ and the mapping has to be recorded.
 func (c EqualityClass) Canonical() bool { return c.Version.String() == c.Key }
+
+// DedupeResult is what DedupeEqualityClasses computed from a package's stored
+// version keys.
+//
+// It is a struct rather than multiple return values so a later field can be added
+// without breaking every caller -- this surface is published, and a Go module tag
+// cannot be moved once the proxy has served it.
+type DedupeResult struct {
+	// Classes holds one representative per PEP 440 equality class, sorted
+	// ascending by Version. Never nil, and no two elements compare equal, so it
+	// is binary-searchable -- see Lookup, which is the search.
+	Classes []EqualityClass
+
+	// Rejected holds the keys PEP 440 could not parse, sorted. Nil when every key
+	// parsed.
+	//
+	// ⚠️ It is returned rather than merely dropped because when EVERY key of a
+	// package is rejected, Classes is empty -- and that is indistinguishable from
+	// a package for which nothing was captured at all. Those are different facts
+	// and they call for different responses. Reporting the second when the first
+	// is true sends someone looking for missing data that is actually present,
+	// just recorded under a string the specification does not accept: a
+	// production snapshot holds `holygrail` with one key, "0.2.1.Perceval",
+	// carrying a real dependency on sqlobject.
+	Rejected []string
+}
 
 // DedupeEqualityClasses collapses stored version keys into PEP 440 equality
 // classes and returns one representative per class, sorted ascending by the
@@ -88,15 +110,18 @@ func (c EqualityClass) Canonical() bool { return c.Version.String() == c.Key }
 // indistinguishable from a package for which nothing was captured at all -- and
 // those are different facts. A caller that needs to tell them apart must report
 // the rejected keys separately; RSFIndex does so through UnparseableVersionKeys.
-func DedupeEqualityClasses(keys []string) []EqualityClass {
+func DedupeEqualityClasses(keys []string) DedupeResult {
 	candidates := make([]EqualityClass, 0, len(keys))
+	var rejected []string
 	for _, raw := range keys {
 		v, parseErr := version.Parse(raw)
 		if parseErr != nil {
+			rejected = append(rejected, raw)
 			continue
 		}
 		candidates = append(candidates, EqualityClass{Key: raw, Version: v})
 	}
+	sort.Strings(rejected)
 
 	// Sorting is not about the returned order for its own sake -- it is what puts
 	// the members of a class next to each other so one representative can be
@@ -120,11 +145,63 @@ func DedupeEqualityClasses(keys []string) []EqualityClass {
 		}
 		out = append(out, c)
 	}
-	return out
+
+	// Clipped to its length before it crosses the API boundary. A collapsed class
+	// leaves spare capacity behind, and a slice with len < cap is the shape that
+	// lets an append by one holder grow IN PLACE into memory another holder is
+	// reading -- the same hazard storePlan clips for internally.
+	return DedupeResult{Classes: out[:len(out):len(out)], Rejected: rejected}
+}
+
+// Lookup returns the class representative that answers for ver, searching
+// classes as returned by DedupeEqualityClasses.
+//
+// ⚠️ THIS IS THE STEP THAT ACTUALLY DRIFTED, and the reason to call it rather
+// than hand-roll it. A caller can hold a version that is PEP 440-equal to a
+// stored key while being spelled like NEITHER that key nor the class
+// representative: stored "1.0" against a request parsed from "1.0.0.0" renders
+// "1.0.0.0", so a map keyed by either spelling misses, yet the two versions ARE
+// equal because trailing zeros are insignificant. An implementation that checks
+// only its key map and its canonical-rendering map reports the version unknown
+// when it is present. That is a real regression that shipped in a consumer.
+//
+// It does NOT arise from an index's own Versions output, since those renderings
+// are exactly what a canonical map is keyed by -- which is why a differential
+// test between two paths that both route through the same lookup cannot see it.
+// It arises from a version the caller constructed: an admin-pinned requirement,
+// or one carried over from another index in a MultiIndex.
+//
+// # What this does and does not cover
+//
+// It resolves by PEP 440 EQUALITY, which subsumes an exact match on a
+// representative's key and a match on its canonical rendering. It cannot see a
+// stored key that lost its class, because a non-representative key is not in
+// classes by construction -- a caller that wants an exact stored-key hit to win
+// must check its own key map FIRST and fall back to this. RSFIndex does exactly
+// that.
+//
+// O(log n) and allocation-free: classes carry their parsed Version, so no probe
+// is re-parsed.
+func Lookup(classes []EqualityClass, ver version.Version) (EqualityClass, bool) {
+	lo, hi := 0, len(classes)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		switch probe := classes[mid].Version; {
+		case probe.Equal(ver):
+			return classes[mid], true
+		case probe.LessThan(ver):
+			lo = mid + 1
+		default:
+			hi = mid
+		}
+	}
+	return EqualityClass{}, false
 }
 
 // UnparseableRequirementError reports a stored Requires-Dist string that PEP 508
-// rejects. It is what ParseRecord returns when a record cannot be used.
+// rejects. It is what ParseRecord returns when a record cannot be used, and it
+// satisfies errors.Is(err, ErrMetadataUnusable) so it can be returned straight
+// from a MetadataIndex.Metadata implementation.
 //
 // ⚠️ It names the requirement and nothing else -- in particular it does NOT name
 // a version. The same parsed record answers for every spelling in its equality
@@ -145,7 +222,42 @@ func (e *UnparseableRequirementError) Error() string {
 	return fmt.Sprintf("parsing requirement %q: %v", e.Requirement, e.Err)
 }
 
-func (e *UnparseableRequirementError) Unwrap() error { return e.Err }
+// Unwrap returns BOTH the parse cause and ErrMetadataUnusable.
+//
+// ⚠️ The sentinel is load-bearing, not decoration. MetadataIndex consumers branch
+// on errors.Is(err, ErrMetadataUnusable) -- MultiIndex does, to decide whether a
+// later source may still answer for this version. An index that does the obvious
+// thing and returns ParseRecord's error straight out of Metadata would otherwise
+// produce a refusal that no composer recognizes, and MultiIndex would take the
+// wrong branch. Carrying it here makes the obvious implementation the correct
+// one.
+//
+// errors.Is still reaches the parse cause, so a diagnostic caller loses nothing.
+func (e *UnparseableRequirementError) Unwrap() []error {
+	return []error{ErrMetadataUnusable, e.Err}
+}
+
+// RawRecord is the set of published strings ParseRecord reads: exactly the
+// METADATA fields an RSF record carries that bear on resolution.
+//
+// ⚠️ It is a NAMED-FIELD struct rather than positional arguments deliberately.
+// RequiresDist and ProvidesExtra are both []string, so a positional signature
+// lets a caller transpose them, and the transposition does not fail -- a bare
+// extra name like "docs" is a valid PEP 508 requirement and a requirement string
+// normalizes as an extra, so the call SUCCEEDS and returns an inverted dependency
+// set with no error. Measured, not theorized. A struct also lets a fourth
+// published field be added later without breaking every caller.
+type RawRecord struct {
+	// RequiresDist is the record's Requires-Dist lines, unparsed.
+	RequiresDist []string
+
+	// RequiresPython is the record's Requires-Python constraint, or "" if it
+	// declared none.
+	RequiresPython string
+
+	// ProvidesExtra is the record's Provides-Extra names, un-normalized.
+	ProvidesExtra []string
+}
 
 // ParseRecord builds the parsed metadata triple from the strings a record
 // published: its Requires-Dist set, its Requires-Python constraint, and its
@@ -181,12 +293,12 @@ func (e *UnparseableRequirementError) Unwrap() error { return e.Err }
 //
 // Provides-Extra entries are normalized per PEP 685, so a request for
 // pkg[Test-Suite] matches a declared "test_suite".
-func ParseRecord(requiresDist []string, requiresPython string, providesExtra []string) (PackageMetadata, error) {
+func ParseRecord(raw RawRecord) (PackageMetadata, error) {
 	var meta PackageMetadata
 
-	if len(requiresDist) > 0 {
-		meta.RequiresDist = make([]requirement.Requirement, 0, len(requiresDist))
-		for _, rawReq := range requiresDist {
+	if len(raw.RequiresDist) > 0 {
+		meta.RequiresDist = make([]requirement.Requirement, 0, len(raw.RequiresDist))
+		for _, rawReq := range raw.RequiresDist {
 			req, reqErr := requirement.Parse(rawReq)
 			if reqErr != nil {
 				return PackageMetadata{}, &UnparseableRequirementError{Requirement: rawReq, Err: reqErr}
@@ -195,10 +307,10 @@ func ParseRecord(requiresDist []string, requiresPython string, providesExtra []s
 		}
 	}
 
-	meta.RequiresPythonRaw = requiresPython
+	meta.RequiresPythonRaw = raw.RequiresPython
 
-	if requiresPython != "" {
-		specs, specErr := version.NewSpecifiers(requiresPython)
+	if raw.RequiresPython != "" {
+		specs, specErr := version.NewSpecifiers(raw.RequiresPython)
 		if specErr != nil {
 			meta.RequiresPython = version.Specifiers{}
 			meta.RequiresPythonUnreadable = true
@@ -207,9 +319,9 @@ func ParseRecord(requiresDist []string, requiresPython string, providesExtra []s
 		}
 	}
 
-	if len(providesExtra) > 0 {
-		meta.ProvidesExtra = make([]string, 0, len(providesExtra))
-		for _, extra := range providesExtra {
+	if len(raw.ProvidesExtra) > 0 {
+		meta.ProvidesExtra = make([]string, 0, len(raw.ProvidesExtra))
+		for _, extra := range raw.ProvidesExtra {
 			meta.ProvidesExtra = append(meta.ProvidesExtra, extras.Normalize(extra))
 		}
 	}
