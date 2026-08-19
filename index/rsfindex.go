@@ -9,8 +9,6 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/posit-dev/go-python-packaging/extras"
-	"github.com/posit-dev/go-python-packaging/requirement"
 	"github.com/posit-dev/go-python-packaging/version"
 
 	"github.com/posit-dev/go-pyresolver/pypirsf"
@@ -373,9 +371,13 @@ func (idx *RSFIndex) storeMetadata(pkg PackageName, key string, entry memoEntry)
 	byVersion[key] = entry
 }
 
-// cloneMetadata returns m with its exported slices copied and its Version taken
-// from ver. See the memo notes above for why the copy is made and why it is
-// shallow.
+// cloneMetadata returns m with its Version taken from ver and its exported
+// slices copied. See the memo notes above for why the copy is made.
+//
+// The copy itself is PackageMetadata.Clone, which owns the field-by-field policy
+// and the maintenance contract that comes with it. Calling it rather than
+// repeating it here is what keeps the memo's copy and the copy an external
+// consumer applies from drifting apart.
 //
 // Version is overwritten with the CALLER'S OWN value rather than served from the
 // memo. That WAS a concurrency requirement: under go-python-packaging v0.5.0 and
@@ -396,57 +398,9 @@ func (idx *RSFIndex) storeMetadata(pkg PackageName, key string, entry memoEntry)
 // it: that is safe from a data-race standpoint today, and it would still tell the
 // second caller a different version string than it asked about. See unusableErr,
 // which declines to memoize a finished message for exactly the same reason.
-//
-// # The copy policy, field by field
-//
-// The rule is: every EXPORTED MUTABLE slice reachable from the returned value is
-// copied. Exported, because that is what a caller can reach without unsafe;
-// mutable, because a string is not.
-//
-//   - RequiresDist -- copied. The slice a caller sorts or truncates.
-//   - RequiresDist[i].Extras -- copied. ⚠️ It is exported, it is a []string, and
-//     it is reachable THROUGH the copied RequiresDist, so copying the outer
-//     slice alone leaves it aliased: `first.RequiresDist[i].Extras[0] = "x"`
-//     corrupted the memo permanently, for every later caller, until this loop
-//     existed. It is also the ONLY such slice below RequiresDist -- Specifiers
-//     and Marker are unexported all the way down -- so this closes the gap
-//     rather than narrowing it.
-//   - ProvidesExtra -- copied. Same reasoning as RequiresDist.
-//   - RequiresPython -- SHARED, deliberately. version.Specifiers wraps a
-//     [][]Specifier, but the outer field and every field of a Specifier are
-//     unexported, so a caller holding one has no exported path to any element:
-//     it is read-only in practice for the same reason a Marker is, and copying
-//     it would cost an allocation per Metadata call to defend nothing.
-//   - Name, Origin, RequiresPythonRaw, RequiresPythonUnreadable -- values.
-//
-// Adding an exported slice to PackageMetadata, or to requirement.Requirement on
-// a go-python-packaging bump, means adding a copy here.
 func cloneMetadata(m PackageMetadata, ver version.Version) PackageMetadata {
 	m.Version = ver
-
-	// nil is preserved rather than normalized to an empty slice: "the record
-	// declared no requirements" has always come back as a nil slice here, and a
-	// caller distinguishing nil from empty must keep seeing what it saw. The
-	// same holds for Requirement.Extras, which go-python-packaging documents as
-	// nil when the requirement carried no "[...]" clause.
-	if m.RequiresDist != nil {
-		reqs := make([]requirement.Requirement, len(m.RequiresDist))
-		copy(reqs, m.RequiresDist)
-		for i := range reqs {
-			if reqs[i].Extras != nil {
-				ex := make([]string, len(reqs[i].Extras))
-				copy(ex, reqs[i].Extras)
-				reqs[i].Extras = ex
-			}
-		}
-		m.RequiresDist = reqs
-	}
-	if m.ProvidesExtra != nil {
-		extra := make([]string, len(m.ProvidesExtra))
-		copy(extra, m.ProvidesExtra)
-		m.ProvidesExtra = extra
-	}
-	return m
+	return m.Clone()
 }
 
 // Versions implements MetadataIndex.
@@ -649,67 +603,36 @@ func (idx *RSFIndex) storePlan(pkg PackageName, plan versionPlan) {
 // the key half, without either needing to check that the two still agree. Keep
 // the two appends adjacent.
 func computeVersionOrder(decoded map[string]pypirsf.VersionDeps) versionPlan {
-	type candidate struct {
-		key       string
-		parsed    version.Version
-		canonical bool
-	}
-
-	candidates := make([]candidate, 0, len(decoded))
+	keys := make([]string, 0, len(decoded))
 	for raw := range decoded {
-		v, parseErr := version.Parse(raw)
-		if parseErr != nil {
-			// A version key PEP 440 rejects is skipped rather than failing the
-			// package. Real corpora carry a few non-conforming keys, and one of
-			// them must not make every other version unreachable.
-			//
-			// ⚠️ Skipping is silent HERE by design, but it must not be silent to a
-			// human. When EVERY key of a package is rejected this returns an empty
-			// slice, which is indistinguishable from a package for which nothing
-			// was captured at all — and those are different facts. See
-			// UnparseableVersionKeys, which exists so a diagnostic caller can tell
-			// them apart.
-			continue
-		}
-		candidates = append(candidates, candidate{key: raw, parsed: v, canonical: v.String() == raw})
+		keys = append(keys, raw)
 	}
 
-	// Sorting is not about the returned order, which the interface does not
-	// promise — it is what puts the members of a PEP 440 equality class next to
-	// each other so one representative can be chosen per class.
-	sort.Slice(candidates, func(i, j int) bool {
-		if !candidates[i].parsed.Equal(candidates[j].parsed) {
-			return candidates[i].parsed.LessThan(candidates[j].parsed)
-		}
-		// Within a class, order by the same rule that picks the representative, so
-		// the winner is simply the first member.
-		return preferKey(candidates[i].key, candidates[i].canonical,
-			candidates[j].key, candidates[j].canonical)
-	})
+	// The dedup rule, the sort and the skip-unparseable policy all live in
+	// DedupeEqualityClasses, which is exported so a consumer building its own
+	// index over the same bytes shares them instead of re-deriving them. Calling
+	// it here is what keeps the exported rule and the rule this index's own tests
+	// exercise the same rule.
+	classes := DedupeEqualityClasses(keys)
 
 	// Both non-nil even for a package whose every key is unparseable: Versions has
 	// always answered that with an empty slice rather than a nil one.
 	plan := versionPlan{
-		order:    make([]string, 0, len(candidates)),
-		versions: make([]version.Version, 0, len(candidates)),
+		order:    make([]string, 0, len(classes)),
+		versions: make([]version.Version, 0, len(classes)),
 	}
-	for i, c := range candidates {
-		if i > 0 && candidates[i-1].parsed.Equal(c.parsed) {
-			// A later member of a class already represented. See the dedup note in
-			// the method doc.
-			continue
-		}
-		plan.order = append(plan.order, c.key)
-		plan.versions = append(plan.versions, c.parsed)
+	for _, c := range classes {
+		plan.order = append(plan.order, c.Key)
+		plan.versions = append(plan.versions, c.Version)
 
 		// Only the non-canonical winners need an alias entry: for a canonical
 		// key the caller's ver.String() IS the key, and decoded resolves it
 		// without help. Allocated lazily so the common package pays nothing.
-		if !c.canonical {
+		if !c.Canonical() {
 			if plan.alias == nil {
 				plan.alias = make(map[string]string)
 			}
-			plan.alias[c.parsed.String()] = c.key
+			plan.alias[c.Version.String()] = c.Key
 		}
 	}
 
@@ -988,74 +911,22 @@ func (idx *RSFIndex) unusableErr(pkg PackageName, ver version.Version, u *unusab
 // under that record's key. It comes back as facts rather than as a message; see
 // unusableRecord.
 func (idx *RSFIndex) buildMetadata(raw pypirsf.VersionDeps) (PackageMetadata, *unusableRecord) {
-	meta := PackageMetadata{Origin: idx.origin}
-
-	if len(raw.RequiresDist) > 0 {
-		meta.RequiresDist = make([]requirement.Requirement, 0, len(raw.RequiresDist))
-		for _, rawReq := range raw.RequiresDist {
-			req, reqErr := requirement.Parse(rawReq)
-			if reqErr != nil {
-				// A requirement this module cannot parse is a hard error, not a
-				// skip. Dropping it silently would hand the resolver an
-				// incomplete dependency set and produce a confident wrong
-				// answer -- the one failure mode worth failing loudly for.
-				//
-				// Wrapped in ErrMetadataUnusable so a caller can CLASSIFY the
-				// refusal rather than only observe that something failed. The
-				// policy is unchanged: this version is still refused. What changes
-				// is that a caller can now tell "this one version is unusable"
-				// apart from "the index is broken", and respond in proportion --
-				// a resolver by trying another version, a diagnostic traversal by
-				// reporting the package and continuing. Returning an opaque error
-				// forced every caller to choose between aborting and swallowing
-				// everything, and the CLI chose to abort, discarding an entire
-				// walk over one bad entry.
-				//
-				// The original parse error stays in the chain, so the specific
-				// malformed string is still recoverable for diagnostics.
-				return PackageMetadata{}, &unusableRecord{requirement: rawReq, cause: reqErr}
-			}
-			meta.RequiresDist = append(meta.RequiresDist, req)
+	meta, err := ParseRecord(raw.RequiresDist, raw.RequiresPython, raw.ProvidesExtra)
+	if err != nil {
+		// Reduced back to facts for the memo. ParseRecord's error already carries
+		// only the requirement and the cause -- no version -- but unusableRecord is
+		// what the memo stores and unusableErr is what renders the message against
+		// the version actually asked about.
+		var unparseable *UnparseableRequirementError
+		if !errors.As(err, &unparseable) {
+			// ParseRecord documents this as its only error. A different one would
+			// mean the contract changed underneath us, and silently treating it as
+			// a bad requirement would misreport what happened.
+			return PackageMetadata{}, &unusableRecord{requirement: "", cause: err}
 		}
+		return PackageMetadata{}, &unusableRecord{requirement: unparseable.Requirement, cause: unparseable.Err}
 	}
-
-	// Preserved verbatim whether or not it parses, so a caller can tell "the
-	// record declared no interpreter constraint" from "the record declared one
-	// we could not read". Discarding it made those two indistinguishable, and
-	// the CLI reported both as "(unconstrained)" -- claiming the publisher said
-	// nothing when the publisher said something unreadable.
-	meta.RequiresPythonRaw = raw.RequiresPython
-
-	if raw.RequiresPython != "" {
-		specs, specErr := version.NewSpecifiers(raw.RequiresPython)
-		if specErr != nil {
-			// Left unconstrained rather than fatal, unlike RequiresDist. An
-			// unreadable interpreter constraint over-admits a candidate, which
-			// surfaces later as an install-time failure; an unreadable
-			// requirement would silently under-constrain the graph and change
-			// the resolution itself. pip draws the line the same way: it catches
-			// InvalidSpecifier on Requires-Python and treats the candidate as
-			// compatible.
-			//
-			// The permissiveness is recorded rather than merely applied: this is
-			// a decision the decoder made, not a fact about the record, and
-			// RequiresPythonUnreadable is what lets a caller say so.
-			meta.RequiresPython = version.Specifiers{}
-			meta.RequiresPythonUnreadable = true
-		} else {
-			meta.RequiresPython = specs
-		}
-	}
-
-	if len(raw.ProvidesExtra) > 0 {
-		meta.ProvidesExtra = make([]string, 0, len(raw.ProvidesExtra))
-		for _, extra := range raw.ProvidesExtra {
-			// Normalized per PEP 685 so a request for pkg[Test-Suite] matches a
-			// declared "test_suite".
-			meta.ProvidesExtra = append(meta.ProvidesExtra, extras.Normalize(extra))
-		}
-	}
-
+	meta.Origin = idx.origin
 	return meta, nil
 }
 

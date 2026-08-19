@@ -13,6 +13,39 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- **The equality-class arbitration rule, the record parser and the
+  `PackageMetadata` copy contract are now exported**, so a consumer implementing
+  its own `MetadataIndex` over the same RSF bytes shares them instead of
+  re-deriving them.
+
+  - `index.DedupeEqualityClasses(keys []string) []EqualityClass` collapses stored
+    version keys into PEP 440 equality classes and returns one representative per
+    class, sorted ascending. It owns the whole collapse-and-choose loop, not just
+    the predicate, because the loop was duplicated too.
+  - `index.ParseRecord(requiresDist []string, requiresPython string, providesExtra []string) (PackageMetadata, error)`
+    builds the parsed metadata triple from a record's published strings,
+    including the deliberate asymmetry where an unparseable requirement is fatal
+    and an unparseable `Requires-Python` is permissive-and-flagged. It reports the
+    fatal case as `*index.UnparseableRequirementError`, which names the offending
+    requirement and deliberately does NOT name a version.
+  - `index.PackageMetadata.Clone()` returns a deep copy safe to hand an external
+    caller, and now owns the maintenance contract that goes with it: adding an
+    exported slice to `PackageMetadata`, or to `requirement.Requirement` on a
+    go-python-packaging bump, means adding a copy in one place rather than in
+    every consumer.
+
+  Purely additive: no existing behaviour changed, and `RSFIndex` now calls exactly
+  these functions, so the exported rules cannot drift from the ones this module's
+  own tests cover.
+
+  Why: re-derivation had already drifted once. A consumer reimplementing the
+  stored-key lookup dropped the PEP 440 equality fallback, so a request parsed
+  from `1.0.0.0` missed a stored `1.0` and the version was reported unknown even
+  though the two are equal. Nothing but a comment in each repository was keeping
+  the two implementations in agreement.
+
 ## [0.8.0] - 2026-08-17
 
 ### Changed
