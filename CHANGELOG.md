@@ -7,7 +7,11 @@ While the major version is `0`, breaking changes ship in a **minor** bump rather
 than a major one, and are always listed under a `Breaking` heading so they are not
 mistaken for a safe patch upgrade.
 
-Entries go under `## [Unreleased]
+Entries go under `## [Unreleased]`, never into a dated section. A dated section may
+already be tagged, and a Go module tag cannot be moved once the module proxy has
+served it.
+
+## [Unreleased]
 
 ### Added
 
