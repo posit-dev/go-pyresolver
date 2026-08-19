@@ -13,6 +13,63 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- **The rules an index over the same RSF bytes must agree on are now exported**,
+  so a consumer implementing its own `MetadataIndex` shares them instead of
+  re-deriving them. `RSFIndex` calls exactly these, so the exported behaviour
+  cannot drift from the behaviour this module's own tests cover.
+
+  - `index.DedupeEqualityClasses(keys []string) DedupeResult` — which stored key
+    speaks for a PEP 440 equality class, and which keys are skipped as
+    unparseable. It owns the whole collapse-and-choose loop, not just the
+    predicate, because the loop was duplicated too. `DedupeResult` also returns
+    the `Rejected` keys, so a caller can tell "every key was unreadable" from
+    "nothing was captured" without re-running the parse; `UnparseableVersionKeys`
+    now sources them from here rather than from a second loop that happened to
+    agree.
+  - `index.Lookup(classes []EqualityClass, ver version.Version)` — which class
+    answers for a requested version. **This is the rule that actually drifted.**
+    An implementation that checks only its own key map and its
+    canonical-rendering map reports a version unknown when it is present but
+    spelled a third way: stored `1.0` against a request parsed from `1.0.0.0`
+    misses both maps, yet the two versions are equal because trailing zeros are
+    insignificant.
+  - `index.ParseRecord(raw RawRecord) (PackageMetadata, error)` — how a record's
+    published strings become metadata, including the asymmetry where an
+    unparseable requirement is fatal and an unparseable `Requires-Python` is
+    permissive-and-flagged. Its refusal is `*index.UnparseableRequirementError`,
+    which names the offending requirement, deliberately names no version, and
+    satisfies `errors.Is(err, ErrMetadataUnusable)` so it can be returned
+    straight from a `Metadata` implementation and still route correctly through
+    `MultiIndex`.
+  - `index.PackageMetadata.Clone()` — what must be copied before metadata is
+    handed to a caller, including the nested `RequiresDist[i].Extras` slice a
+    one-level copy leaves aliased. Adding an exported slice to `PackageMetadata`,
+    or to `requirement.Requirement` on a go-python-packaging bump, is now a
+    one-place fix. `MockIndex` calls it too, so the mock that exists to detect a
+    mutating caller can no longer disagree with the real index about what it
+    copies.
+
+  `RawRecord` is a named-field struct rather than positional arguments on
+  purpose: `RequiresDist` and `ProvidesExtra` are both `[]string`, and a
+  transposed positional call does not fail — a bare extra name is a valid PEP 508
+  requirement, so the call succeeds and returns an inverted dependency set.
+
+### Changed
+
+- `versionPlan` now holds one `[]EqualityClass` where it held two parallel slices
+  (the stored keys, and those keys parsed). Same data, fused. This is what lets
+  `resolveStoredKey` call the exported `Lookup` rather than keep a private
+  near-copy of the search, and it makes "the two halves drifted out of step"
+  unrepresentable rather than merely tested.
+
+  Two consequences, both internal: the binary search no longer re-parses each
+  probe, so a `Metadata` miss saves the log2(n) parses the private search paid
+  (and loses its error return, which existed only because a probe could fail to
+  parse); and `Versions` now extracts a field per element where it used to memcpy,
+  which is the cost paid for the fusion. Not separately benchmarked.
+
 ## [0.8.0] - 2026-08-17
 
 ### Changed

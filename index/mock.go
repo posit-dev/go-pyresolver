@@ -353,15 +353,22 @@ func (m *MockIndex) Metadata(ctx context.Context, pkg PackageName, ver version.V
 	// value it was handed. A resolver that sorted RequiresDist in place would
 	// otherwise silently change what later assertions see.
 	//
-	// ⚠️ Kept field-for-field in step with RSFIndex's cloneMetadata, which sets
-	// out the copy policy in full. The whole value of copying HERE is that a
-	// test against a mock detects a mutating caller before it reaches a real
-	// index -- and it detects only what it copies. Requirement.Extras was
-	// missing from both for exactly as long as it was missing from either, so a
-	// caller mutating it was invisible to the mock as well.
+	// ⚠️ Through PackageMetadata.Clone, which OWNS the copy policy -- not a
+	// field-for-field re-statement of it, which is what this used to be. The whole
+	// value of copying HERE is that a test against a mock detects a mutating
+	// caller before it reaches a real index, and it detects only what it copies:
+	// Requirement.Extras was missing from the hand-rolled copy for exactly as long
+	// as it was missing from the real one, so a caller mutating it was invisible
+	// to the mock as well. Calling Clone is what makes a future addition to the
+	// policy reach the mock without anyone remembering to come here.
+	//
+	// ⚠️ Clone also PRESERVES a non-nil-empty slice, where the hand-rolled
+	// append([]T(nil), ...) collapsed it to nil. That is a deliberate correction:
+	// the mock is supposed to mirror the real index, and the real index preserves
+	// it.
 	//
 	// Version comes from the CALLER'S OWN value, not from the stored metadata,
-	// matching RSFIndex's cloneMetadata. ⚠️ That was a concurrency requirement
+	// matching RSFIndex's cloneMetadata wrapper. ⚠️ That was a concurrency requirement
 	// until go-python-packaging v0.6.0 and is not one now -- see the note on
 	// mockPackage.order. It is kept because cloneMetadata keeps it, for
 	// cloneMetadata's own second reason, and because the two must agree. Not
@@ -369,13 +376,8 @@ func (m *MockIndex) Metadata(ctx context.Context, pkg PackageName, ver version.V
 	// setup methods force the stored Version to the key.
 	out := *mv.metadata
 	out.Version = ver
-	out.RequiresDist = append([]requirement.Requirement(nil), mv.metadata.RequiresDist...)
-	for i := range out.RequiresDist {
-		out.RequiresDist[i].Extras = append([]string(nil), out.RequiresDist[i].Extras...)
-	}
-	out.ProvidesExtra = append([]string(nil), mv.metadata.ProvidesExtra...)
 
-	return out, nil
+	return out.Clone(), nil
 }
 
 // Files implements MetadataIndex.

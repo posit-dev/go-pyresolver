@@ -458,14 +458,10 @@ func TestSharedMemoizedVersionsAreRaceFree(t *testing.T) {
 				t.Fatalf("the memo holds no plan for %s after a Versions call, so the "+
 					"goroutines below would not share anything", pkg)
 			}
-			if len(plan.versions) != len(plan.order) {
-				t.Fatalf("plan for %s holds %d parsed versions against %d keys; the two are "+
-					"parallel by construction", pkg, len(plan.versions), len(plan.order))
-			}
 			// The returned slice must be a copy, or the goroutines below would
 			// be racing on the slice rather than on the values inside it, and
 			// this test would be measuring the wrong thing.
-			if &warm[0] == &plan.versions[0] {
+			if &warm[0] == &plan.classes[0].Version {
 				t.Fatalf("Versions returned the memo's own slice for %s; this test needs a "+
 					"copy so that what is shared is the parsed VALUES", pkg)
 			}
@@ -473,7 +469,7 @@ func TestSharedMemoizedVersionsAreRaceFree(t *testing.T) {
 			// The answer every goroutine must agree on. Computed once, before
 			// any concurrency, from values the memo has not yet handed out
 			// twice.
-			want := plan.versions[0].Compare(plan.versions[1])
+			want := plan.classes[0].Version.Compare(plan.classes[1].Version)
 			if want == 0 {
 				t.Fatalf("fixture %s: %q and %q compare equal, so this case cannot detect a "+
 					"corrupted pad", pkg, c.shared, c.longer)
@@ -484,7 +480,7 @@ func TestSharedMemoizedVersionsAreRaceFree(t *testing.T) {
 			// differ in the release segment, so the two agree -- and that is
 			// checked here rather than assumed, because a fixture added later
 			// might not.
-			wantRel := plan.versions[0].ReleaseKey().Compare(plan.versions[1].ReleaseKey())
+			wantRel := plan.classes[0].Version.ReleaseKey().Compare(plan.classes[1].Version.ReleaseKey())
 			if wantRel == 0 {
 				t.Fatalf("fixture %s: %q and %q share a release key, so the ReleaseKey check "+
 					"below cannot detect a corrupted release segment", pkg, c.shared, c.longer)
@@ -577,10 +573,10 @@ func TestVersionsNeverReturnsTheMemosSlice(t *testing.T) {
 	idx.memoMu.RLock()
 	plan := idx.versionList[pkg]
 	idx.memoMu.RUnlock()
-	if len(plan.versions) == 0 {
+	if len(plan.classes) == 0 {
 		t.Fatal("the memo holds no parsed versions, so there is no identity to check")
 	}
-	if &first[0] == &plan.versions[0] {
+	if &first[0] == &plan.classes[0].Version {
 		t.Error("the FIRST call returned the memo's own slice; a caller sorting it corrupts " +
 			"the cache for every later caller")
 	}
@@ -589,7 +585,7 @@ func TestVersionsNeverReturnsTheMemosSlice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Versions (second call): %v", err)
 	}
-	if &second[0] == &plan.versions[0] {
+	if &second[0] == &plan.classes[0].Version {
 		t.Error("a warm call returned the memo's own slice")
 	}
 	if &second[0] == &first[0] {
@@ -597,21 +593,22 @@ func TestVersionsNeverReturnsTheMemosSlice(t *testing.T) {
 	}
 }
 
-// TestVersionPlanHalvesStayParallel enforces the invariant everything above rests
-// on: plan.versions[i] is version.Parse(plan.order[i]), same length, same order.
+// TestVersionPlanClassesAgreeWithTheirKeys enforces the invariant everything
+// above rests on: plan.classes[i].Version is version.Parse(plan.classes[i].Key).
 //
-// ⚠️ Until this existed, that invariant was held up by a comment ("keep the two
-// appends adjacent") and by the two appends happening to sit next to each other
-// in computeVersionOrder. Nothing checked it. A plan built by any other path --
-// a future partial construction, or a versionPlan{order: ...} literal -- would
-// make Versions return an empty NON-NIL slice, which reads as "this package has
-// no versions", with no error and nothing red. That is the worst available
-// failure mode: a wrong answer that is indistinguishable from a right one.
+// ⚠️ The LENGTH-and-ORDER half of this invariant is no longer representable.
+// The plan used to hold two parallel slices, and their agreement rested on a
+// comment ("keep the two appends adjacent") plus the two appends happening to sit
+// next to each other. A plan built by any other path could make Versions return
+// an empty NON-NIL slice, reading as "this package has no versions" with nothing
+// red -- a wrong answer indistinguishable from a right one. Fusing the two into
+// []EqualityClass made that state impossible to construct rather than merely
+// tested.
 //
-// Element-wise, not just by length, because a length check passes on two lists
-// that have drifted out of order -- which is the shape a dedup or sort change
-// would produce.
-func TestVersionPlanHalvesStayParallel(t *testing.T) {
+// What remains testable, and is tested here, is the per-element half: a class
+// whose Version is not its Key parsed. That is still constructible, because both
+// fields are exported.
+func TestVersionPlanClassesAgreeWithTheirKeys(t *testing.T) {
 	for _, idx := range []*RSFIndex{openShareFixtureIndex(t), openFixtureIndex(t)} {
 		for _, name := range idx.file.Packages() {
 			pkg := NewPackageName(name)
@@ -623,19 +620,15 @@ func TestVersionPlanHalvesStayParallel(t *testing.T) {
 			plan := idx.versionList[pkg]
 			idx.memoMu.RUnlock()
 
-			if len(plan.versions) != len(plan.order) {
-				t.Fatalf("%s: plan holds %d parsed versions against %d keys",
-					pkg, len(plan.versions), len(plan.order))
-			}
-			for i, key := range plan.order {
-				want, err := version.Parse(key)
+			for i, c := range plan.classes {
+				want, err := version.Parse(c.Key)
 				if err != nil {
-					t.Fatalf("%s: stored key %q in the order does not parse: %v", pkg, key, err)
+					t.Fatalf("%s: stored key %q in the plan does not parse: %v", pkg, c.Key, err)
 				}
-				if !plan.versions[i].Equal(want) {
-					t.Errorf("%s: plan.versions[%d] is %s but plan.order[%d] is %q; the two halves "+
-						"of a versionPlan must be parallel, and Versions serves from the first "+
-						"while Metadata searches the second", pkg, i, plan.versions[i], i, key)
+				if !c.Version.Equal(want) {
+					t.Errorf("%s: plan.classes[%d].Version is %s but its Key is %q; Versions serves "+
+						"the Version while Lookup matches on it, so the two must agree",
+						pkg, i, c.Version, c.Key)
 				}
 			}
 		}

@@ -29,6 +29,24 @@
 //     pypi_projects table, belongs there for the same reason: a public module
 //     cannot reach PPM's database.
 //
+// # If you are writing your own index over the same bytes
+//
+// Three rules are shared rather than re-derived, because an implementation that
+// disagrees with them is not interoperable and the disagreement is silent:
+//
+//   - DedupeEqualityClasses — which stored key speaks for a PEP 440 equality
+//     class, and which keys are skipped as unparseable.
+//   - Lookup — which class answers for a requested version. ⚠️ This is the rule
+//     that has actually drifted in practice: an implementation that checks only
+//     its own key map and canonical-rendering map reports a version unknown when
+//     it is present but spelled a third way.
+//   - ParseRecord and PackageMetadata.Clone — how a record's published strings
+//     become metadata, and what must be copied before that metadata is handed to
+//     a caller.
+//
+// RSFIndex calls exactly these, so they cannot drift from the behaviour this
+// module's own tests cover. See contract.go.
+//
 // # Where dependency metadata comes from
 //
 // The RSF, read in-process, with no per-package network request. RFD 0001
