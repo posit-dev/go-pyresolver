@@ -23,16 +23,22 @@ served it.
   A caller wanting to fail rather than downgrade quietly, or to say why it downgraded,
   had nothing to read.
 
-  It is read from the same provider the failure path reads, so the records, their order
-  and their dedupe are identical on both paths, and
-  `!u.Offered && u.Reason == provider.ReasonMetadataUnavailable` selects the
-  set-aside-for-missing-metadata case on either.
+  It is read from the same provider the failure path reads, so the records and their
+  order are identical on both paths. Two caveats the doc comment spells out, both
+  inherited rather than new:
 
-  ⚠️ Unfiltered but **not exhaustive**, for the same reason the failure path's field is:
-  candidate selection stops at the first usable version, so a version ranked below the
-  chosen one is never examined and never appears. This does not cost the case the field
-  exists for — a version set aside from *above* the winner had to be examined to get
-  past it, so a newer release passed over for an older one is always reported.
+  - **An entry is not proof a version was rejected.** `Offered: true` means "accepted,
+    with a note", and it occurs on ordinary successes — an unreadable `Requires-Python`
+    on the very version that gets pinned. So `len(Unusable) != 0` is not "something was
+    set aside"; the predicate is
+    `!u.Offered && u.Reason == provider.ReasonMetadataUnavailable`, and callers should
+    dedupe on `(Package.Name, Version)` too, because an extra is a separate solver
+    package and records the same release again.
+  - **Unfiltered but not exhaustive.** Candidate selection stops testing at the first
+    usable version in *ranked* order, so anything below it, or excluded by the range or
+    pre-release policy, is never examined. Under the default policy ranked order is
+    version order, so a newer release passed over for an older one is reported; a
+    non-default `Options.Policy` moves that gap.
 
 ## [0.9.0] - 2026-08-19
 

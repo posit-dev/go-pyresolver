@@ -103,8 +103,9 @@ type Resolution struct {
 	// reproduce the same install.
 	Extras map[index.PackageName][]string
 
-	// Unusable holds the versions this resolution set aside and why, in the
-	// order first encountered. It is empty when nothing was set aside.
+	// Unusable holds what this resolution recorded about the versions it
+	// examined, in the order first encountered. It is empty when there was
+	// nothing to record.
 	//
 	// It exists because a resolution can SUCCEED by passing over the release the
 	// caller meant. Under the default newest-first policy, a project whose
@@ -113,27 +114,39 @@ type Resolution struct {
 	// newest. A caller that wants to fail rather than silently downgrade -- or
 	// to say why it downgraded -- has nothing else to read.
 	//
-	// # It is unfiltered, and it is not exhaustive
+	// # An entry is not proof a version was rejected
 	//
-	// Candidate selection stops at the first usable version, so a version ranked
-	// BELOW the one chosen is never examined and never appears here. This is what
-	// the resolution encountered on its way to this answer, not everything wrong
-	// with these packages, and it must not be presented as the latter.
-	//
-	// ⚠️ What that does NOT cost you is the case this field is for. A version
-	// set aside from ABOVE the chosen one was necessarily examined to get past
-	// it, so a newer release passed over in favour of an older one is always
-	// reported. The gap is only below the winner, where nothing was looked at.
-	//
-	// # Reading an entry
-	//
-	// Offered distinguishes "recorded but still selectable" from "passed over".
-	// The predicate for a release genuinely set aside for missing metadata is
+	// Offered distinguishes "accepted, with a note" from "passed over". An
+	// Offered:true record happens on ordinary successes -- an unreadable
+	// Requires-Python on the very version that gets pinned -- so
+	// len(Unusable) != 0 is NOT "something was set aside". The predicate for a
+	// release genuinely set aside for missing metadata is
 	//
 	//	!u.Offered && u.Reason == provider.ReasonMetadataUnavailable
 	//
-	// which is the same test ResolutionError.Error applies when it decides which
-	// entries a failure makes relevant.
+	// ⚠️ Dedupe on (Package.Name, Version) as well. The provider's dedupe key is
+	// the SOLVER package, and an extra is a separate solver package for the same
+	// project, so flask and flask[async] each record flask 3.0. Unlike
+	// ResolutionError.Error, which dedupes before rendering, this field hands you
+	// both. Key on Package.Name, not Package.String(): the latter renders an
+	// extra as "flask[async]".
+	//
+	// # It is unfiltered, and it is not exhaustive
+	//
+	// Candidate selection stops TESTING at the first usable version in RANKED
+	// order, so anything ranked below the chosen version is never examined and
+	// cannot appear here. Nor can a version the requirement's range or the
+	// pre-release policy excluded, since both are checked before usability is.
+	// This is what the resolution encountered on its way to this answer, not
+	// everything wrong with these packages.
+	//
+	// ⚠️ Ranked order is not version order. Under the default policy the two
+	// coincide, so a newer release passed over for an older one IS reported --
+	// which is the case this field is for. A non-default Options.Policy moves the
+	// gap: a newer release demoted below the winner is passed over without being
+	// examined, and so without being reported. If you rely on this field to
+	// detect a downgrade, either leave Policy nil or account for the ordering you
+	// imposed.
 	Unusable []provider.Unusable
 }
 
