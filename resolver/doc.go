@@ -28,7 +28,8 @@
 // # What a Resolution is, and what it is not
 //
 // It is versions: one per package the requirements transitively reach, plus
-// which extras were activated and the order the solver decided them in.
+// which extras were activated and the order the solver decided them in, plus
+// what the resolution recorded about the versions it examined and did not pin.
 //
 // It is NOT a file list. Choosing between the wheels and sdists of a pinned
 // version is a separate job, deferred rather than forgotten: the PyPI RSF
@@ -43,8 +44,10 @@
 //     marker target; universal (environment-independent) resolution is deferred
 //     by RFD 0001.
 //   - No sdist building. A release whose dependency metadata cannot be read
-//     without executing a build is not a candidate, and ResolutionError names
-//     it rather than letting the report claim the version does not exist.
+//     without executing a build is not a candidate. ResolutionError names it
+//     rather than letting the report claim the version does not exist, and
+//     Resolution.Unusable names it on a success, so passing one over is not
+//     silent either.
 //   - No network and no database. Everything comes through
 //     index.MetadataIndex, which is what lets the same resolver serve
 //     connected Package Manager, air-gapped Package Manager, and a local file.
