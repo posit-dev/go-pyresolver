@@ -13,6 +13,27 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- **`Resolution.Unusable` reports the releases a SUCCESSFUL resolution set aside**, so a
+  caller can tell a deliberate pin from a silent downgrade. `Resolve` already collected
+  these for the failure path (`ResolutionError.Unusable`) and then discarded them on
+  success, which left a resolution that fell back from a newest release publishing no
+  usable metadata indistinguishable from one where the older release simply was newest.
+  A caller wanting to fail rather than downgrade quietly, or to say why it downgraded,
+  had nothing to read.
+
+  It is read from the same provider the failure path reads, so the records, their order
+  and their dedupe are identical on both paths, and
+  `!u.Offered && u.Reason == provider.ReasonMetadataUnavailable` selects the
+  set-aside-for-missing-metadata case on either.
+
+  ⚠️ Unfiltered but **not exhaustive**, for the same reason the failure path's field is:
+  candidate selection stops at the first usable version, so a version ranked below the
+  chosen one is never examined and never appears. This does not cost the case the field
+  exists for — a version set aside from *above* the winner had to be examined to get
+  past it, so a newer release passed over for an older one is always reported.
+
 ## [0.9.0] - 2026-08-19
 
 ### Added

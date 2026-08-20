@@ -102,6 +102,39 @@ type Resolution struct {
 	// optional feature sets pulled them in, which is what a caller needs to
 	// reproduce the same install.
 	Extras map[index.PackageName][]string
+
+	// Unusable holds the versions this resolution set aside and why, in the
+	// order first encountered. It is empty when nothing was set aside.
+	//
+	// It exists because a resolution can SUCCEED by passing over the release the
+	// caller meant. Under the default newest-first policy, a project whose
+	// newest release publishes no usable metadata resolves to an older one, and
+	// without this field that is indistinguishable from the older one being
+	// newest. A caller that wants to fail rather than silently downgrade -- or
+	// to say why it downgraded -- has nothing else to read.
+	//
+	// # It is unfiltered, and it is not exhaustive
+	//
+	// Candidate selection stops at the first usable version, so a version ranked
+	// BELOW the one chosen is never examined and never appears here. This is what
+	// the resolution encountered on its way to this answer, not everything wrong
+	// with these packages, and it must not be presented as the latter.
+	//
+	// ⚠️ What that does NOT cost you is the case this field is for. A version
+	// set aside from ABOVE the chosen one was necessarily examined to get past
+	// it, so a newer release passed over in favour of an older one is always
+	// reported. The gap is only below the winner, where nothing was looked at.
+	//
+	// # Reading an entry
+	//
+	// Offered distinguishes "recorded but still selectable" from "passed over".
+	// The predicate for a release genuinely set aside for missing metadata is
+	//
+	//	!u.Offered && u.Reason == provider.ReasonMetadataUnavailable
+	//
+	// which is the same test ResolutionError.Error applies when it decides which
+	// entries a failure makes relevant.
+	Unusable []provider.Unusable
 }
 
 // rootVersion is the synthetic version of the root package. Nothing in a
@@ -146,7 +179,14 @@ func Resolve(
 	if err != nil {
 		return nil, explain(err, p.Unusable())
 	}
-	return collapse(sol)
+	res, err := collapse(sol)
+	if err != nil {
+		return nil, err
+	}
+	// Read from the same provider the failure path reads, so a release set aside
+	// is reported identically whether the resolution went on to succeed or not.
+	res.Unusable = p.Unusable()
+	return res, nil
 }
 
 // validate checks that the options describe ONE interpreter.
