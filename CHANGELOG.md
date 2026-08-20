@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-20
+
 ### Added
 
 - **`Resolution.Unusable` reports the releases a SUCCESSFUL resolution set aside**, so a
@@ -1443,7 +1445,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.6.0...v0.7.0
