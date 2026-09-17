@@ -66,6 +66,11 @@ type Options struct {
 	// the root to carry a meaningful version; nothing in resolution depends on
 	// what it is.
 	RootVersion version.Version
+
+	// WheelTags rejects versions that publish nothing installable on the target.
+	// Nil leaves tag filtering off, and so does an index whose tag data is
+	// incomplete. See WheelTagFilter.
+	WheelTags *WheelTagFilter
 }
 
 // Provider implements solver.Provider[Package, pep440set.Set].
@@ -95,6 +100,15 @@ type Provider struct {
 	// sort is paid once per package per resolution rather than once per
 	// Candidates call. See rankedVersions.
 	ranked map[index.PackageName][]version.Version
+
+	// tagFilter is whether this resolution may reject a version for its wheel
+	// tags: a caller-supplied filter AND an index whose tag data is complete.
+	//
+	// Settled once at construction rather than asked per candidate, because both
+	// inputs are fixed for the life of a Provider -- and because a per-candidate
+	// call to WheelTagsComplete on a MultiIndex would walk its sources on every
+	// admission test.
+	tagFilter bool
 }
 
 // New returns a Provider for one resolution.
@@ -106,11 +120,12 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		opts.RootVersion = version.MustParse("0")
 	}
 	return &Provider{
-		ctx:      ctx,
-		index:    idx,
-		opts:     opts,
-		recorded: make(map[string]bool),
-		ranked:   make(map[index.PackageName][]version.Version),
+		ctx:       ctx,
+		index:     idx,
+		opts:      opts,
+		recorded:  make(map[string]bool),
+		ranked:    make(map[index.PackageName][]version.Version),
+		tagFilter: tagFilteringEnabled(idx, opts.WheelTags),
 	}
 }
 
@@ -421,8 +436,28 @@ func singleVersion(v version.Version, allowed pep440set.Set) (pep440set.Set, boo
 // the two drift apart -- leaving the solver holding a decision whose
 // dependencies then fail, which surfaces as an aborted resolve rather than as
 // the conflict it really is.
+//
+// The wheel-tag test is the one thing here Dependencies does not do, and it is
+// safe in that direction only: it can reject a version Dependencies would have
+// answered for, never admit one Dependencies would fail on. Anything added here
+// that could go the other way breaks the invariant above.
+//
+// # Where the wheel-tag test sits, and why it is here rather than earlier
+//
+// Immediately after the metadata read and BEFORE marker evaluation and
+// requirement parsing. Both halves of that matter:
+//
+//   - Not earlier. Tags ride the dependency blob, so reading them is reading
+//     metadata; putting the test in Candidates' cheap filter would make that
+//     filter's "no metadata and no I/O" promise false.
+//   - Not later. A version rejected for its tags must not pay full marker
+//     evaluation, which is the most expensive thing this function does.
+//
+// ⚠️ A test asserting only the rejection OUTCOME passes with the check in the
+// wrong place. TestWheelTagRejectionSkipsMarkerEvaluation is what pins the
+// position.
 func (p *Provider) usable(pkg Package, v version.Version) (bool, error) {
-	_, reason, err := p.projectDependencies(pkg, v)
+	meta, reason, kind, err := p.metadata(pkg, v)
 	if err != nil {
 		// An index that could not answer is NOT a version that cannot be used.
 		// Recording it here would put an outage in the failure report as
@@ -430,7 +465,25 @@ func (p *Provider) usable(pkg Package, v version.Version) (bool, error) {
 		return false, err
 	}
 	if reason != "" {
-		p.record(pkg, v, reason, false)
+		p.record(pkg, v, reason, kind, false)
+		return false, nil
+	}
+
+	if reason, rejected := p.rejectedForWheelTags(meta); rejected {
+		kind := KindNoCompatibleWheel
+		if len(meta.WheelTags) == 0 {
+			kind = KindNoDistributions
+		}
+		p.record(pkg, v, reason, kind, false)
+		return false, nil
+	}
+
+	_, reason, err = p.dependenciesFrom(pkg, v, meta)
+	if err != nil {
+		return false, err
+	}
+	if reason != "" {
+		p.record(pkg, v, reason, KindOther, false)
 		return false, nil
 	}
 	return true, nil

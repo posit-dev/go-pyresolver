@@ -74,6 +74,22 @@ type Options struct {
 	// requires_dist is arbitrary text published by third parties. A resolution
 	// that hits the bound fails loudly instead of hanging.
 	MaxRounds int
+
+	// WheelTags rejects versions that publish nothing installable on the target:
+	// wheels that cannot run here, and no source distribution to fall back to.
+	// Nil leaves tag filtering off.
+	//
+	// ⚠️ Two things silently leave it off even when set, and both are correct.
+	// A filter with no Matcher filters nothing, and so does an index whose wheel
+	// tag data is incomplete -- on a partially derived corpus, "no compatible tag"
+	// cannot be told apart from "tags never derived", so filtering would reject
+	// installable packages. As of 2026-09 the production PyPI snapshot is in that
+	// state.
+	//
+	// ⚠️ Compile ONE filter per environment cell. Resolving several targets
+	// against one shared index is the intended use, and a filter reused across
+	// cells answers the first cell's question under the second cell's name.
+	WheelTags *provider.WheelTagFilter
 }
 
 // Resolution is a successful resolution: one version chosen for every package
@@ -122,7 +138,15 @@ type Resolution struct {
 	// len(Unusable) != 0 is NOT "something was set aside". The predicate for a
 	// release genuinely set aside for missing metadata is
 	//
-	//	!u.Offered && u.Reason == provider.ReasonMetadataUnavailable
+	//	!u.Offered && u.Kind == provider.KindMetadataUnavailable
+	//
+	// ⚠️ Read Kind, not Reason. This predicate used to be written against
+	// provider.ReasonMetadataUnavailable, and it still works for that one
+	// category -- but a reason that carries per-version detail, as a wheel-tag
+	// rejection does, matches no constant, so the string form silently reports
+	// nothing for it. For "set aside for any reason at all", use
+	// !u.Offered alone; for "for a reason worth showing a user",
+	// !u.Offered && u.Kind.Reportable().
 	//
 	// ⚠️ Dedupe on (Package.Name, Version) as well. The provider's dedupe key is
 	// the SOLVER package, and an extra is a separate solver package for the same
@@ -180,6 +204,7 @@ func Resolve(
 		Prereleases:   candidate.EnabledPrereleases(reqs, opts.AllowPrerelease),
 		Requirements:  reqs,
 		RootVersion:   rootVersion,
+		WheelTags:     opts.WheelTags,
 	})
 
 	s := solver.New(provider.Root(), pep440set.Exactly(rootVersion), p)

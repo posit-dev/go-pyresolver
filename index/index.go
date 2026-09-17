@@ -163,3 +163,53 @@ type MetadataIndex interface {
 	// than a discrepancy waiting to be reported again.
 	Files(ctx context.Context, pkg PackageName, ver version.Version) ([]DistFile, error)
 }
+
+// WheelTagIndex is the optional capability of reporting that an index's wheel-tag
+// data is complete enough to filter on.
+//
+// # Why it is a separate, optional interface
+//
+// It is NOT a fourth method on MetadataIndex. Adding one there would break every
+// implementation at once, including Package Manager's own out-of-tree index, to
+// ask a question most sources cannot answer -- and the honest answer for a source
+// with no tag data is exactly what a non-implementor already communicates. Type
+// assertion keeps the seam's cost proportional to who cares.
+//
+// # Why the answer is per-INDEX and not per-version
+//
+// PackageMetadata.TagsCaptured says whether one version has a tag claim.
+// Completeness says whether the ABSENCE of a claim is informative. Those are
+// different questions, and only the second one can license filtering: on a
+// partially derived corpus a version with no compatible tag cannot be told apart
+// from one whose tags were never derived, so filtering rejects packages on the
+// strength of missing data. Filtering "only where we have tags" is the same bug
+// wearing a reasonable-sounding description -- it silently narrows the resolvable
+// corpus to the subset that has been backfilled.
+//
+// ⚠️ A composite index must answer with the AND over its sources, not the OR. One
+// complete source does not make its sibling's gaps informative.
+//
+// ⚠️ AND EVERY WRAPPER MUST FORWARD IT. Because the capability is found by type
+// assertion, a decorator that does not implement it does not merely fail to
+// forward -- it reports the index it wraps as incomplete and turns tag filtering
+// off for everything behind it. That is the safe direction and an invisible one,
+// so when you add a MetadataIndex wrapper, forward this too.
+type WheelTagIndex interface {
+	// WheelTagsComplete reports that every version this index serves carries a
+	// derived tag claim, so an empty tag list means "publishes no wheels" rather
+	// than "not derived".
+	//
+	// False must be the answer whenever there is any doubt: it disables tag
+	// filtering, which is the direction that cannot reject an installable package.
+	WheelTagsComplete() bool
+}
+
+// WheelTagsComplete reports whether idx can be tag-filtered.
+//
+// An index that does not implement WheelTagIndex is reported incomplete, which is
+// the safe direction and the correct reading: a source that cannot say its tag
+// data is complete has not said so.
+func WheelTagsComplete(idx MetadataIndex) bool {
+	wt, ok := idx.(WheelTagIndex)
+	return ok && wt.WheelTagsComplete()
+}

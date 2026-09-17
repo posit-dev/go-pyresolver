@@ -21,6 +21,61 @@ import (
 const ReasonMetadataUnavailable = "no dependency metadata is published for it " +
 	"(an sdist-only or dynamic-metadata release)"
 
+// UnusableKind classifies an Unusable so a consumer can select records by
+// CATEGORY instead of by matching the sentence in Reason.
+//
+// # Why this exists
+//
+// Reason is prose for a human, and one category can produce several sentences: a
+// wheel-tag rejection names the target and the tags it saw, so no two records
+// share a string. A consumer filtering on Reason therefore has to either compare
+// against a constant -- which silently drops every reason that carries detail --
+// or prefix-match, which breaks the first time the wording improves. The failure
+// explanation did the former and reported exactly one category as a result, so a
+// version set aside for any other reason failed with a message that did not
+// mention it.
+//
+// ⚠️ The zero value is KindOther, so a record created without a kind stays
+// unclassified rather than being mistaken for a specific category. Add a constant
+// here when you add a reason a consumer should be able to find.
+type UnusableKind string
+
+const (
+	// KindOther is an unclassified record: real, worth showing a curious reader,
+	// but with no category a consumer can act on programmatically.
+	KindOther UnusableKind = ""
+
+	// KindMetadataUnavailable is ReasonMetadataUnavailable: no readable dependency
+	// metadata, because the release ships only an sdist or declares its metadata
+	// dynamically.
+	KindMetadataUnavailable UnusableKind = "metadata-unavailable"
+
+	// KindNoCompatibleWheel is a version whose wheels cannot run on the target and
+	// which publishes no sdist to build from.
+	KindNoCompatibleWheel UnusableKind = "no-compatible-wheel"
+
+	// KindNoDistributions is a version that publishes no wheels and no sdist, so
+	// there is nothing to install regardless of the target.
+	KindNoDistributions UnusableKind = "no-distributions"
+)
+
+// Reportable reports whether a record names a fact worth putting in front of
+// someone whose resolution failed.
+//
+// It is defined here, next to the kinds, rather than in the renderer: a new
+// category's author is the one who knows whether it is actionable, and the
+// alternative -- a list maintained in the resolver package -- is what let new
+// reasons be silently dropped from failure reports.
+func (k UnusableKind) Reportable() bool {
+	switch k {
+	case KindMetadataUnavailable, KindNoCompatibleWheel, KindNoDistributions:
+		return true
+	case KindOther:
+		return false
+	}
+	return false
+}
+
 // Unusable records something the resolution could not use about one version of
 // one package, so a failure report can say "flask 3.0 exists but ships only an
 // sdist" instead of "no versions available" -- which is the single worst thing
@@ -45,7 +100,14 @@ type Unusable struct {
 
 	// Reason is a human-readable phrase completing "... because ...", meant to
 	// be read by whoever ran the resolution.
+	//
+	// ⚠️ Do NOT match on it to identify a category. Some reasons carry
+	// per-version detail, so equality against a constant silently misses them.
+	// Read Kind.
 	Reason string
+
+	// Kind classifies the record. The zero value, KindOther, means unclassified.
+	Kind UnusableKind
 
 	// Offered reports whether the version was still offered to the solver
 	// despite Reason. False means it was passed over: not selectable, so the
@@ -91,7 +153,7 @@ func (p *Provider) Unusable() []Unusable {
 // The dedupe key is built from strings rather than from the struct itself
 // because version.Version holds slices, so it is not comparable and cannot key
 // a map.
-func (p *Provider) record(pkg Package, v version.Version, reason string, offered bool) {
+func (p *Provider) record(pkg Package, v version.Version, reason string, kind UnusableKind, offered bool) {
 	if reason == "" {
 		return
 	}
@@ -104,6 +166,7 @@ func (p *Provider) record(pkg Package, v version.Version, reason string, offered
 		Package: pkg,
 		Version: v,
 		Reason:  reason,
+		Kind:    kind,
 		Offered: offered,
 	})
 }

@@ -53,3 +53,13 @@ func (c *countingIndex) Files(ctx context.Context, pkg index.PackageName, ver ve
 	c.files.Add(1)
 	return c.inner.Files(ctx, pkg, ver)
 }
+
+// WheelTagsComplete forwards index.WheelTagIndex.
+//
+// ⚠️ Not optional for a wrapper. The capability is discovered by type assertion,
+// so a wrapper that omits this does not merely fail to forward it -- it reports
+// the inner index as incomplete and silently switches wheel-tag filtering OFF for
+// every test that wraps it. Fails safe, and fails invisibly.
+func (c *countingIndex) WheelTagsComplete() bool {
+	return index.WheelTagsComplete(c.inner)
+}

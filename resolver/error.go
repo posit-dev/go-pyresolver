@@ -66,9 +66,9 @@ func (e *ResolutionError) Error() string {
 	} else {
 		b.WriteString(e.Report.String())
 	}
-	for _, u := range e.relevantSdistOnly() {
+	for _, u := range e.relevantRejections() {
 		b.WriteString("\n\n")
-		b.WriteString(sdistOnlyExplanation(u))
+		b.WriteString(rejectionExplanation(u))
 	}
 	return b.String()
 }
@@ -77,22 +77,51 @@ func (e *ResolutionError) Error() string {
 // *solver.Unsolvable and the derivation graph it carries.
 func (e *ResolutionError) Unwrap() error { return e.cause }
 
-// sdistOnlyExplanation is the message #18657 requires.
+// rejectionExplanation writes the paragraph for one set-aside version.
 //
-// Without it the report says "no version of flask matches >=3.0" about a
-// version the user can plainly see on PyPI, which is the single worst thing it
-// could say: everything in the sentence is true, and it sends the reader to
-// look for a release that is right there.
-func sdistOnlyExplanation(u provider.Unusable) string {
-	return fmt.Sprintf(
-		"Note: %s %s exists, but it publishes no readable dependency metadata -- it ships "+
-			"only an sdist, or declares its metadata dynamically. This resolver does not build "+
-			"sdists to find out what they require, so that version was not considered. Pin %s "+
-			"to a version that ships a wheel, or ask its maintainer to publish one.",
-		u.Package.Name, u.Version, u.Package.Name)
+// Without one the report says "no version of flask matches >=3.0" about a version
+// the user can plainly see on PyPI, which is the single worst thing it could say:
+// everything in the sentence is true, and it sends the reader to look for a
+// release that is right there.
+//
+// # Each kind gets its own paragraph, and the remedy is the reason why
+//
+// The categories differ in what the reader should DO. "Pin to a version that
+// ships a wheel" is right for sdist-only metadata and wrong for a
+// platform-incompatible wheel, where the release is fine and the target is the
+// mismatch. A single paragraph covering both would have to be vague enough to be
+// useless.
+//
+// The default arm is deliberately a real sentence rather than a panic or an empty
+// string: an error message is what someone sees when something has already gone
+// wrong, so a new kind that reaches here should read plainly, not vanish.
+func rejectionExplanation(u provider.Unusable) string {
+	switch u.Kind {
+	case provider.KindMetadataUnavailable:
+		return fmt.Sprintf(
+			"Note: %s %s exists, but it publishes no readable dependency metadata -- it ships "+
+				"only an sdist, or declares its metadata dynamically. This resolver does not build "+
+				"sdists to find out what they require, so that version was not considered. Pin %s "+
+				"to a version that ships a wheel, or ask its maintainer to publish one.",
+			u.Package.Name, u.Version, u.Package.Name)
+
+	case provider.KindNoCompatibleWheel:
+		return fmt.Sprintf(
+			"Note: %s %s exists, but %s, so that version was not considered. Resolve for a "+
+				"target its wheels support, or pin %s to a version that publishes one.",
+			u.Package.Name, u.Version, u.Reason, u.Package.Name)
+
+	case provider.KindNoDistributions:
+		return fmt.Sprintf(
+			"Note: %s %s exists, but %s, so that version was not considered.",
+			u.Package.Name, u.Version, u.Reason)
+	}
+
+	return fmt.Sprintf("Note: %s %s was not considered because %s.",
+		u.Package.Name, u.Version, u.Reason)
 }
 
-// relevantSdistOnly selects the records worth putting in front of a user for
+// relevantRejections selects the records worth putting in front of a user for
 // THIS failure.
 //
 // Three filters, and all three matter:
@@ -100,17 +129,21 @@ func sdistOnlyExplanation(u provider.Unusable) string {
 //   - Offered == false. An offered version was a candidate; its record is a
 //     note about how it was treated, not a reason it could not be used, and
 //     reporting one claims a version was rejected when it was not.
-//   - The report has to be talking about that package, at a version inside a
-//     range the report names. A release excluded from a package that resolved
-//     perfectly well is noise, and noise in a failure report is what makes
-//     people stop reading them.
+//   - Kind.Reportable(). A record has to name something the reader can act on.
+//     ⚠️ This used to be equality against provider.ReasonMetadataUnavailable,
+//     which meant every OTHER category was silently dropped -- a resolution that
+//     failed because nothing was installable on the target rendered as a bare
+//     "no solution" that did not mention the target. The predicate lives on the
+//     kind, in the package that mints kinds, so adding a category is a decision
+//     made once rather than a filter here that nobody remembers to widen.
 //   - One paragraph per (project, version). The provider's own dedupe key is
 //     the SOLVER package, and an extra is a separate solver package for the
 //     same project: flask and flask[async] each get a record for flask 3.0
-//     being sdist-only. sdistOnlyExplanation reads only the project name and
-//     the version, so those two records produce byte-identical paragraphs, and
-//     a report that says the same thing twice reads like two problems.
-func (e *ResolutionError) relevantSdistOnly() []provider.Unusable {
+//     being sdist-only. rejectionExplanation reads only the project name, the
+//     version and the reason, so those two records produce byte-identical
+//     paragraphs, and a report that says the same thing twice reads like two
+//     problems.
+func (e *ResolutionError) relevantRejections() []provider.Unusable {
 	if e.Report == nil {
 		return nil
 	}
@@ -119,7 +152,7 @@ func (e *ResolutionError) relevantSdistOnly() []provider.Unusable {
 	// provider builds its key from strings too.
 	seen := map[string]bool{}
 	for _, u := range e.Unusable {
-		if u.Offered || u.Reason != provider.ReasonMetadataUnavailable {
+		if u.Offered || !u.Kind.Reportable() {
 			continue
 		}
 		key := string(u.Package.Name) + "\x00" + u.Version.String()

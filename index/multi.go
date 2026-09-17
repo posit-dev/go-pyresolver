@@ -111,6 +111,33 @@ type MultiIndex struct {
 	sources []MetadataIndex
 }
 
+// WheelTagsComplete implements WheelTagIndex as the AND over every source, and
+// reports false for a MultiIndex with no sources.
+//
+// # It must be AND, and the OR is a real bug rather than a stylistic choice
+//
+// A MultiIndex answers from whichever source has the package. If one source's tag
+// data were complete and another's were not, an OR would license filtering
+// against BOTH -- and every version served by the incomplete one would be judged
+// on tags that were never derived. The AND costs the complete source's filtering
+// until its sibling catches up, which is the direction that cannot reject an
+// installable package.
+//
+// Zero sources reports false for the same reason: there is nothing to license
+// filtering, and "vacuously complete" would be a licence granted by an index that
+// serves nothing.
+func (m *MultiIndex) WheelTagsComplete() bool {
+	if len(m.sources) == 0 {
+		return false
+	}
+	for _, src := range m.sources {
+		if !WheelTagsComplete(src) {
+			return false
+		}
+	}
+	return true
+}
+
 // NewMultiIndex returns a MultiIndex over sources, consulted in the given order.
 //
 // It panics on a nil source. That is a programming error with no data behind it,

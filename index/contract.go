@@ -257,6 +257,22 @@ type RawRecord struct {
 
 	// ProvidesExtra is the record's Provides-Extra names, un-normalized.
 	ProvidesExtra []string
+
+	// WheelTags holds the PEP 425 tag triples of the wheels this version
+	// publishes, unparsed. Nil when the source captured no tag claim -- see
+	// TagsCaptured, which is what tells the two apart.
+	WheelTags []string
+
+	// HasSdist reports that this version publishes a source distribution. Only
+	// meaningful when TagsCaptured is true.
+	HasSdist bool
+
+	// TagsCaptured reports that the source derived a tag claim for this version.
+	//
+	// ⚠️ A source that has no tag data at all must leave all three fields zero,
+	// which reads as uncaptured. Setting TagsCaptured without real tags claims the
+	// version publishes no wheels, and a consumer will reject it.
+	TagsCaptured bool
 }
 
 // ParseRecord builds the parsed metadata triple from the strings a record
@@ -326,6 +342,19 @@ func ParseRecord(raw RawRecord) (PackageMetadata, error) {
 		}
 	}
 
+	// Carried through as published. Tags are not parsed here for the reason the
+	// field documents, and an unparseable one is deliberately not an error: unlike
+	// a requirement, a tag this code cannot read can only fail to match, which
+	// under-admits one version rather than corrupting the graph.
+	//
+	// ⚠️ The slice is SHARED with raw, not copied. RSFIndex's tag slices alias one
+	// pool backing array across the versions that share a slot, so copying here
+	// would defeat that without making anything safe -- Clone is what hands a
+	// caller its own copy.
+	meta.WheelTags = raw.WheelTags
+	meta.HasSdist = raw.HasSdist
+	meta.TagsCaptured = raw.TagsCaptured
+
 	return meta, nil
 }
 
@@ -347,13 +376,19 @@ func ParseRecord(raw RawRecord) (PackageMetadata, error) {
 //     Specifiers and Marker are unexported all the way down -- so this closes
 //     the gap rather than narrowing it.
 //   - ProvidesExtra -- copied. Same reasoning as RequiresDist.
+//   - WheelTags -- copied, and this one is the sharpest case for the rule. An
+//     RSFIndex's tag slices ALIAS a pool backing array shared by every version in
+//     the same slot, so a caller that sorts the slice it was handed does not
+//     corrupt one cache entry, it corrupts every co-pooled version's tags at
+//     once. Copying here is what lets that aliasing stay an internal
+//     optimization.
 //   - RequiresPython -- SHARED, deliberately. version.Specifiers wraps a
 //     [][]Specifier, but the outer field and every field of a Specifier are
 //     unexported, so a caller holding one has no exported path to any element:
 //     it is read-only in practice for the same reason a Marker is, and copying
 //     it would cost an allocation per call to defend nothing.
-//   - Name, Version, Origin, RequiresPythonRaw, RequiresPythonUnreadable --
-//     values.
+//   - Name, Version, Origin, RequiresPythonRaw, RequiresPythonUnreadable,
+//     HasSdist, TagsCaptured -- values.
 //
 // ⚠️ THE MAINTENANCE CONTRACT: adding an exported slice to PackageMetadata, or
 // to requirement.Requirement on a go-python-packaging bump, means adding a copy
@@ -382,6 +417,11 @@ func (m PackageMetadata) Clone() PackageMetadata {
 		extra := make([]string, len(m.ProvidesExtra))
 		copy(extra, m.ProvidesExtra)
 		m.ProvidesExtra = extra
+	}
+	if m.WheelTags != nil {
+		wt := make([]string, len(m.WheelTags))
+		copy(wt, m.WheelTags)
+		m.WheelTags = wt
 	}
 	return m
 }
