@@ -13,6 +13,56 @@ served it.
 
 ## [Unreleased]
 
+### Breaking
+
+- **`pypirsf.DecodePackage` takes the wheel-tag vocabulary as a third argument.** Pass
+  `nil` for the previous behaviour: a blob written before wheel tags existed carries no
+  tag section, and every version decodes uncaptured. `pypirsf.File` reads the vocabulary
+  from record 0 itself, so callers going through `File.Deps` are unaffected.
+
+### Added
+
+- **Wheel tags are decoded and can be filtered on.** A PyPI RSF now carries, per version,
+  the PEP 425 tag triples of the wheels it publishes plus a has-sdist bit. Set
+  `resolver.Options.WheelTags` to a `provider.WheelTagFilter` and a version whose wheels
+  cannot run on the target — and which has no sdist to build from — is not offered to the
+  solver, with a failure message naming both the target and the tags it saw.
+
+  Three things about it are easy to get wrong, so they are worth stating:
+
+  - **Filtering stays OFF unless the index says its tag data is complete.** `tagsdict`
+    carries a per-snapshot completeness flag, and while a backfill is in progress a
+    version with no matching tag is indistinguishable from one whose tags were never
+    derived. Filtering "where we have data" would reject installable packages, so an
+    incomplete index disables filtering for the WHOLE file. The live PyPI snapshot is in
+    that state today, which means setting `WheelTags` against it changes nothing yet.
+  - **Only one of five cases rejects.** A compatible wheel, an sdist fallback, or no
+    wheels-but-an-sdist all stay usable; rejection needs there to be nothing installable
+    left. `PackageMetadata.TagsCaptured` is what separates "publishes no wheels" from
+    "we never looked", and reading emptiness alone conflates them.
+  - **`PackageMetadata.WheelTags` is read-only.** An `RSFIndex`'s tag slices alias one
+    pool backing array shared by every version in the same slot, so sorting the slice you
+    were handed corrupts unrelated versions. `Clone` hands you your own copy.
+
+- **`provider.Unusable` carries a `Kind`**, so a consumer can select records by category
+  instead of matching the sentence in `Reason`. This fixes a real gap rather than adding
+  a convenience: the failure explanation filtered on equality with
+  `ReasonMetadataUnavailable`, so any reason carrying per-version detail — as a wheel-tag
+  rejection does — was silently dropped and the resolution failed with a message that did
+  not mention it. `provider.UnusableKind.Reportable()` is the predicate the renderer now
+  uses.
+
+  The predicate documented in 0.10.0, `!u.Offered && u.Reason ==
+  provider.ReasonMetadataUnavailable`, still works for that one category. Prefer
+  `u.Kind == provider.KindMetadataUnavailable`.
+
+- **`index.WheelTagIndex`**, an optional capability reporting whether an index's tag data
+  is complete, with `index.WheelTagsComplete` for the type assertion. It is deliberately
+  not a fourth `MetadataIndex` method, which would break every implementation to ask a
+  question most sources cannot answer. ⚠️ A `MetadataIndex` wrapper that does not forward
+  it reports the index it wraps as incomplete and turns tag filtering off for everything
+  behind it — safe, but invisible, so forward it from new decorators.
+
 ## [0.10.0] - 2026-08-20
 
 ### Added

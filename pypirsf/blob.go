@@ -90,11 +90,18 @@ func decodeDepSet(r *bytes.Reader, names []string) (VersionDeps, error) {
 
 // unmarshalBlob decodes an already-decompressed blob body.
 //
-// The body is a pool of distinct dependency sets followed by a version-to-pool
-// mapping. Many versions of a package usually share one dependency set, so
-// storing each set once and pointing at it is where most of the size reduction
-// comes from.
-func unmarshalBlob(b []byte, names []string) (map[string]VersionDeps, error) {
+// The body is a pool of distinct slots, followed by a version-to-slot mapping,
+// optionally followed by a tag section. Many versions of a package usually share
+// one slot, so storing each once and pointing at it is where most of the size
+// reduction comes from.
+//
+// # A slot is (dependency set, tag list), not a dependency set
+//
+// Two versions with identical dependencies but different wheels occupy two
+// slots. This is the producer's identity rule, and the decoder only has to not
+// assume otherwise -- but see the loop below for why the tag section forces this
+// function's shape.
+func unmarshalBlob(b []byte, names []string, td *TagDict) (map[string]VersionDeps, error) {
 	r := bytes.NewReader(b)
 
 	poolCount, err := readUvarint(r)
@@ -110,11 +117,21 @@ func unmarshalBlob(b []byte, names []string) (map[string]VersionDeps, error) {
 		pool = append(pool, ds)
 	}
 
+	// ⚠️ The version index CANNOT be flattened into the result map as it is read
+	// any more. Tags arrive AFTER the index and are written onto the pool, so a
+	// copy taken during the index walk would predate its own tags and every
+	// version would come back uncaptured -- with no error, which is the failure
+	// shape this whole layer is prone to. Collect the pairs, apply the tags, then
+	// flatten.
+	type versionSlot struct {
+		ver  string
+		slot uint64
+	}
 	versionCount, err := readUvarint(r)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]VersionDeps, capHint(versionCount, r, 2))
+	pairs := make([]versionSlot, 0, capHint(versionCount, r, 2))
 	for i := uint64(0); i < versionCount; i++ {
 		ver, err := readStr(r)
 		if err != nil {
@@ -127,7 +144,16 @@ func unmarshalBlob(b []byte, names []string) (map[string]VersionDeps, error) {
 		if idx >= uint64(len(pool)) {
 			return nil, fmt.Errorf("pypirsf: pool index %d out of range (%d entries)", idx, len(pool))
 		}
-		out[ver] = pool[idx]
+		pairs = append(pairs, versionSlot{ver: ver, slot: idx})
+	}
+
+	if err := decodeTagSection(r, pool, td); err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]VersionDeps, len(pairs))
+	for _, p := range pairs {
+		out[p.ver] = pool[p.slot]
 	}
 
 	return out, nil

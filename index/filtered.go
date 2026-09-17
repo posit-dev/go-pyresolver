@@ -230,6 +230,16 @@ type FilteredIndex struct {
 	policy FilterPolicy
 }
 
+// WheelTagsComplete implements WheelTagIndex by deferring to inner.
+//
+// A FilterPolicy removes versions; it never changes whether the tag data on the
+// versions that survive is complete. Answering false here instead would disable
+// tag filtering for every wrapped index, which is how a safe default becomes a
+// silent feature-off switch.
+func (f *FilteredIndex) WheelTagsComplete() bool {
+	return WheelTagsComplete(f.inner)
+}
+
 // NewFilteredIndex returns a FilteredIndex applying policy to inner.
 //
 // It panics if inner is nil. That is a programming error with no data behind it,

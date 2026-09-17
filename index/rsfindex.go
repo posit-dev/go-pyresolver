@@ -873,6 +873,9 @@ func (idx *RSFIndex) buildMetadata(raw pypirsf.VersionDeps) (PackageMetadata, *u
 		RequiresDist:   raw.RequiresDist,
 		RequiresPython: raw.RequiresPython,
 		ProvidesExtra:  raw.ProvidesExtra,
+		WheelTags:      raw.WheelTags,
+		HasSdist:       raw.HasSdist,
+		TagsCaptured:   raw.TagsCaptured,
 	})
 	if err != nil {
 		// Reduced back to facts for the memo. ParseRecord's error already carries
@@ -890,6 +893,16 @@ func (idx *RSFIndex) buildMetadata(raw pypirsf.VersionDeps) (PackageMetadata, *u
 	}
 	meta.Origin = idx.origin
 	return meta, nil
+}
+
+// WheelTagsComplete implements WheelTagIndex from the file's own tagsdict flag.
+//
+// ⚠️ It is false for every snapshot published so far, and that is correct rather
+// than a gap to work around: the producer sets the flag once the tag backfill has
+// covered the corpus. Until then a tag-filtering caller must behave as if this
+// index carried no tags at all, even for the versions where it does.
+func (idx *RSFIndex) WheelTagsComplete() bool {
+	return idx.file.WheelTagsComplete()
 }
 
 // Files implements MetadataIndex by always reporting ErrFilesUnavailable.

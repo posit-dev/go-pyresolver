@@ -1,0 +1,65 @@
+{
+  "vocabulary": [
+    "py3-none-any",
+    "cp39-cp39-manylinux_2_17_x86_64",
+    "py2-none-any"
+  ],
+  "versions": {
+    "1.0.0": {
+      "requires_dist": [
+        "flask\u003e=2.0"
+      ],
+      "wheel_tags": [
+        "py3-none-any"
+      ],
+      "has_sdist": true,
+      "wtags_captured": true
+    },
+    "1.0.1": {
+      "requires_dist": [
+        "flask\u003e=2.0"
+      ],
+      "wheel_tags": [
+        "py3-none-any"
+      ],
+      "has_sdist": true,
+      "wtags_captured": true
+    },
+    "1.1.0": {
+      "requires_dist": [
+        "flask\u003e=2.0"
+      ],
+      "wheel_tags": [
+        "cp39-cp39-manylinux_2_17_x86_64"
+      ],
+      "has_sdist": false,
+      "wtags_captured": true
+    },
+    "2.0.0": {
+      "requires_dist": [
+        "numpy\u003e=1.26"
+      ],
+      "wheel_tags": [
+        "cp313-cp313t-win_arm64",
+        "py3-none-any"
+      ],
+      "has_sdist": true,
+      "wtags_captured": true
+    },
+    "3.0.0": {
+      "has_sdist": true,
+      "wtags_captured": true
+    },
+    "4.0.0": {
+      "has_sdist": false,
+      "wtags_captured": true
+    },
+    "5.0.0": {
+      "requires_dist": [
+        "flask\u003e=2.0"
+      ],
+      "has_sdist": false,
+      "wtags_captured": false
+    }
+  }
+}

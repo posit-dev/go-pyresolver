@@ -96,6 +96,41 @@ type PackageMetadata struct {
 	// costs ~16 bytes per record and it is what makes a MultiIndex debuggable,
 	// since otherwise there is no way to tell which source answered.
 	Origin string
+
+	// WheelTags holds the PEP 425 tag triples ("py3-none-any") of the wheels this
+	// version publishes, as raw strings.
+	//
+	// Unparsed, unlike RequiresDist, and for the opposite reason: a tag is parsed
+	// only when a resolution actually filters on tags, which needs a target to
+	// match against. Parsing every candidate's tags to then not use them would be
+	// pure cost on the path RequiresDist is parsed to save.
+	//
+	// Empty means "publishes no wheels" ONLY when TagsCaptured is true.
+	WheelTags []string
+
+	// HasSdist reports that this version publishes a source distribution.
+	//
+	// It is what keeps a tag filter from over-rejecting: a version with no
+	// compatible wheel but a source distribution is still installable, so RFD 0001
+	// §5.3 admits it. Only meaningful when TagsCaptured is true.
+	HasSdist bool
+
+	// TagsCaptured reports that the source derived a tag claim for this version:
+	//
+	//	captured, tags non-empty -> these are the wheels
+	//	captured, tags empty     -> publishes no wheels (authoritative)
+	//	NOT captured             -> unknown; says nothing about wheels
+	//
+	// ⚠️ Reading the third state as the second is the fail-open hazard this field
+	// exists to close, and it is not hypothetical: as of 2026-09 the production
+	// PyPI snapshot has tags for 1.2% of packages and nothing for the rest.
+	//
+	// ⚠️ And per-version capture is NOT on its own a licence to filter. The index
+	// as a whole has to say its tag data is complete; a partially backfilled corpus
+	// cannot be filtered against at all, because a version with no compatible tag
+	// is indistinguishable from one whose tags were never derived. See
+	// WheelTagIndex.
+	TagsCaptured bool
 }
 
 // SupportsPython reports whether this version's Requires-Python admits the given

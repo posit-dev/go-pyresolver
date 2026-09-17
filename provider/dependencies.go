@@ -101,19 +101,44 @@ func (p *Provider) rootDependencies() ([]dependency, error) {
 // -- letting a transport error read as "no such version" would blame the user's
 // constraints for an outage.
 func (p *Provider) projectDependencies(pkg Package, v version.Version) ([]dependency, string, error) {
+	meta, reason, _, err := p.metadata(pkg, v)
+	if err != nil {
+		return nil, "", err
+	}
+	if reason != "" {
+		return nil, reason, nil
+	}
+
+	return p.dependenciesFrom(pkg, v, meta)
+}
+
+// metadata reads one version's metadata, translating the index's refusals into a
+// recordable reason.
+//
+// Split out of projectDependencies so usable can test wheel tags against the
+// SAME read rather than a second one: MetadataIndex makes no promise of
+// memoization, so asking twice can mean decoding twice, and per-candidate is
+// exactly the path that cannot afford it.
+func (p *Provider) metadata(pkg Package, v version.Version) (index.PackageMetadata, string, UnusableKind, error) {
 	meta, err := p.index.Metadata(p.ctx, pkg.Name, v)
 	if err != nil {
 		switch {
 		case errors.Is(err, index.ErrMetadataUnavailable):
-			return nil, ReasonMetadataUnavailable, nil
+			return meta, ReasonMetadataUnavailable, KindMetadataUnavailable, nil
 		case errors.Is(err, index.ErrMetadataUnusable):
-			return nil, fmt.Sprintf("its metadata cannot be used: %v", err), nil
+			return meta, fmt.Sprintf("its metadata cannot be used: %v", err), KindOther, nil
 		case errors.Is(err, index.ErrPackageNotFound):
-			return nil, "the index does not have this package", nil
+			return meta, "the index does not have this package", KindOther, nil
 		}
-		return nil, "", fmt.Errorf("provider: metadata for %s %s: %w", pkg, v, err)
+		return meta, "", KindOther, fmt.Errorf("provider: metadata for %s %s: %w", pkg, v, err)
 	}
+	return meta, "", KindOther, nil
+}
 
+// dependenciesFrom is projectDependencies once the metadata is in hand.
+func (p *Provider) dependenciesFrom(
+	pkg Package, v version.Version, meta index.PackageMetadata,
+) ([]dependency, string, error) {
 	var (
 		deps   []dependency
 		active []string
@@ -185,7 +210,7 @@ func (p *Provider) projectDependencies(pkg Package, v version.Version) ([]depend
 
 	// Only now is the version definitely offered, so only now is an
 	// Offered:true record truthful.
-	p.record(pkg, v, pendingUnreadable, true)
+	p.record(pkg, v, pendingUnreadable, KindOther, true)
 
 	return append(deps, expanded...), "", nil
 }

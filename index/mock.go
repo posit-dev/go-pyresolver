@@ -37,6 +37,12 @@ type MockIndex struct {
 	// empty version list is what distinguishes "exists but has no acceptable
 	// version" from ErrPackageNotFound.
 	packages map[PackageName]*mockPackage
+
+	// tagsComplete backs WheelTagsComplete. It defaults to FALSE so a test that
+	// sets wheel tags but forgets to declare them complete sees filtering stay
+	// off -- which is what production does today, and the state a test is most
+	// likely to be wrong about.
+	tagsComplete bool
 }
 
 type mockPackage struct {
@@ -98,6 +104,26 @@ func NewMockIndex(origin string) *MockIndex {
 		origin:   origin,
 		packages: make(map[PackageName]*mockPackage),
 	}
+}
+
+// SetWheelTagsComplete declares this mock's wheel-tag data complete, which is
+// what licenses a caller to filter on tags at all.
+//
+// Separate from SetMetadata on purpose: completeness is a property of the whole
+// index, and a test that could set it per version would be able to construct a
+// state the format cannot represent.
+func (m *MockIndex) SetWheelTagsComplete(complete bool) *MockIndex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tagsComplete = complete
+	return m
+}
+
+// WheelTagsComplete implements WheelTagIndex.
+func (m *MockIndex) WheelTagsComplete() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.tagsComplete
 }
 
 // pkgLocked returns the entry for name, creating it if absent. Callers must

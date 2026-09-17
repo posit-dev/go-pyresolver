@@ -33,9 +33,15 @@ import (
 // Order is load-bearing, and it is the `rsf` tag sequence -- not the Go names or
 // types -- that has to match the other two repos. Trailing fields may be
 // APPENDED: the RSF reader skips fields it does not know via the record size
-// prefix, which is how `license`/`licensedict` arrived, and how `tagsdict`
-// arrives for the server without this package needing to declare it. Anything
-// other than an append is a wire break.
+// prefix, which is how `license`/`licensedict` and then `tagsdict` arrived.
+// Anything other than an append is a wire break.
+//
+// ⚠️ Declaring a trailing field is a choice, not an obligation. This package read
+// post-cutover files correctly while declaring seven fields, because the size
+// prefix skipped the eighth; `tagsdict` is declared because the resolver now
+// reads it, not because seven had become wrong. So a literal shorter than the
+// producer's is not automatically a bug here -- a literal that DISAGREES about a
+// shared position is.
 func TestPackageRecordShape(t *testing.T) {
 	typ := reflect.TypeOf(PackageRecord{})
 	var b strings.Builder
@@ -51,6 +57,7 @@ Deps string rsf:"deps"
 Depsdict string rsf:"depsdict"
 License string rsf:"license"
 Licensedict string rsf:"licensedict"
+Tagsdict string rsf:"tagsdict"
 `
 	if got != want {
 		t.Fatalf("PackageRecord shape drifted:\n got=\n%s\nwant=\n%s", got, want)
@@ -74,6 +81,7 @@ func TestPackageRecordRSFTagOrder(t *testing.T) {
 		"depsdict",
 		"license",
 		"licensedict",
+		"tagsdict",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("PackageRecord rsf tag order drifted:\n got=%q\nwant=%q", got, want)
