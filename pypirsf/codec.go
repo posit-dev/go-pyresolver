@@ -20,6 +20,13 @@ const (
 // zstd-compressed field without one is an error rather than a silent empty
 // result.
 //
+// Pass the TagDict from the same record via ParseTagsdictField. A nil TagDict is
+// the pre-cutover state and is fine: blobs written before wheel tags existed
+// carry no tag section, and every version decodes uncaptured. A nil TagDict does
+// NOT suppress the tag section if one is present -- a reference it then cannot
+// resolve is an error, because the alternative is serving a quietly narrower tag
+// set than the file states.
+//
 // # The empty cases are distinct and both meaningful
 //
 // An empty field and a stored-but-empty blob both decode to an empty non-nil
@@ -30,7 +37,7 @@ const (
 // data was captured for it. A resolver must not conflate these: the first
 // permits resolution to proceed with no edges, the second means the answer is
 // unknown and choosing that version silently drops its subtree.
-func DecodePackage(field string, d *Dict) (map[string]VersionDeps, error) {
+func DecodePackage(field string, d *Dict, td *TagDict) (map[string]VersionDeps, error) {
 	if field == "" {
 		return map[string]VersionDeps{}, nil
 	}
@@ -43,7 +50,7 @@ func DecodePackage(field string, d *Dict) (map[string]VersionDeps, error) {
 		return map[string]VersionDeps{}, nil
 	}
 
-	return unmarshalBlob(blob, d.Names())
+	return unmarshalBlob(blob, d.Names(), td)
 }
 
 // decompress strips the leading format byte and returns the blob body.

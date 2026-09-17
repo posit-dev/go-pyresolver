@@ -64,7 +64,7 @@ func TestDependencyNameIndexPastTheTableIsRejected(t *testing.T) {
 
 	// control is 1-based, so len(names)+1 addresses index len(names): the first
 	// slot past the end.
-	_, err := DecodePackage(blobWithRequirementControl(uint64(len(names))+1), d)
+	_, err := DecodePackage(blobWithRequirementControl(uint64(len(names))+1), d, nil)
 	if err == nil {
 		t.Fatal("a dependency-name id one past the end of the table decoded without error")
 	}
@@ -74,7 +74,7 @@ func TestDependencyNameIndexPastTheTableIsRejected(t *testing.T) {
 
 	// The last valid index must still decode, or the check is simply too strict
 	// and the test above proves nothing.
-	if _, err := DecodePackage(blobWithRequirementControl(uint64(len(names))), d); err != nil {
+	if _, err := DecodePackage(blobWithRequirementControl(uint64(len(names))), d, nil); err != nil {
 		t.Errorf("the last valid dependency-name id was rejected: %v", err)
 	}
 }
@@ -97,7 +97,7 @@ func TestPoolIndexPastTheEndIsRejected(t *testing.T) {
 		return string(append([]byte{depsFormatStored}, body.Bytes()...))
 	}
 
-	_, err := DecodePackage(build(1), nil) // pool has exactly one entry, index 0
+	_, err := DecodePackage(build(1), nil, nil) // pool has exactly one entry, index 0
 	if err == nil {
 		t.Fatal("a pool index one past the end decoded without error")
 	}
@@ -105,7 +105,7 @@ func TestPoolIndexPastTheEndIsRejected(t *testing.T) {
 		t.Errorf("error does not name the cause: %v", err)
 	}
 
-	if _, err := DecodePackage(build(0), nil); err != nil {
+	if _, err := DecodePackage(build(0), nil, nil); err != nil {
 		t.Errorf("the only valid pool index was rejected: %v", err)
 	}
 }
@@ -178,11 +178,11 @@ func TestUnknownFormatByteIsRejected(t *testing.T) {
 	// Same body, unknown format byte.
 	future := "\x7f" + stored[1:]
 
-	if _, err := DecodePackage(stored, nil); err != nil {
+	if _, err := DecodePackage(stored, nil, nil); err != nil {
 		t.Fatalf("the stored control blob must decode for this test to be about the format byte: %v", err)
 	}
 
-	got, err := DecodePackage(future, nil)
+	got, err := DecodePackage(future, nil, nil)
 	if err == nil {
 		t.Fatalf("format byte 0x7f decoded as stored, yielding %v", got)
 	}
@@ -209,7 +209,7 @@ func TestZstdFieldWithoutADictionaryIsRejected(t *testing.T) {
 
 	for name, d := range map[string]*Dict{"nil dictionary": nil, "empty dictionary": {}} {
 		t.Run(name, func(t *testing.T) {
-			got, err := DecodePackage(field, d)
+			got, err := DecodePackage(field, d, nil)
 			if err == nil {
 				t.Fatalf("a zstd field decoded with no decoder, yielding %v", got)
 			}

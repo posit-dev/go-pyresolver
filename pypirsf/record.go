@@ -47,10 +47,10 @@ type SnapshotRecord struct {
 
 // PackageRecord is one PyPI package record in an RSF.
 //
-// Deps carries this package's dependency blob; Depsdict carries the global
-// dictionary and is populated only on the FIRST record of the file. Decode
-// Depsdict once with ParseDepsdictField and reuse the resulting Dict for every
-// package's Deps.
+// Deps carries this package's dependency blob; Depsdict and Tagsdict carry the
+// global dictionaries and are populated only on the FIRST record of the file.
+// Decode each once — ParseDepsdictField, ParseTagsdictField — and reuse the
+// results for every package's Deps.
 //
 // The trailing blob fields were appended additively so that a reader which does
 // not know about them skips them via the record size prefix. That is why the
@@ -61,6 +61,14 @@ type SnapshotRecord struct {
 // License and Licensedict are declared for completeness of the layout. This
 // package does not decode them — license derivation is a Package Manager
 // concern, and the two blob formats are independent.
+//
+// Tagsdict is the wheel-tag vocabulary. It is a separate field from Deps on
+// purpose: the tag REFERENCES live in each package's deps blob body while the
+// vocabulary lives here, under its own producer-side guard, so appending a
+// triple does not force every carried-forward blob to be re-encoded. The cost of
+// that split is the one invariant this decoder cannot verify — the vocabulary
+// must be append-only, because renumbering it silently repoints every existing
+// reference at a different triple.
 type PackageRecord struct {
 	CanonicalName string           `rsf:"cname"`
 	ProjectName   string           `rsf:"pname"`
@@ -69,4 +77,5 @@ type PackageRecord struct {
 	Depsdict      string           `json:"-" rsf:"depsdict"`
 	License       string           `json:"-" rsf:"license"`
 	Licensedict   string           `json:"-" rsf:"licensedict"`
+	Tagsdict      string           `json:"-" rsf:"tagsdict"`
 }

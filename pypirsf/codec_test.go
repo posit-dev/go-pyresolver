@@ -73,7 +73,7 @@ func TestDecodePackageGolden(t *testing.T) {
 	// byte to push it through the real decompress path rather than around it.
 	field := string(append([]byte{depsFormatStored}, blob...))
 
-	got, err := DecodePackage(field, d)
+	got, err := DecodePackage(field, d, nil)
 	if err != nil {
 		t.Fatalf("DecodePackage: %v", err)
 	}
@@ -138,9 +138,9 @@ func TestGoldenCoversDictionaryCompressionBothWays(t *testing.T) {
 // --- empty and error cases ---
 
 func TestDecodePackageEmptyFieldIsEmptyNonNilMap(t *testing.T) {
-	got, err := DecodePackage("", nil)
+	got, err := DecodePackage("", nil, nil)
 	if err != nil {
-		t.Fatalf("DecodePackage(\"\"): %v", err)
+		t.Fatalf("DecodePackage(\"\", nil, nil): %v", err)
 	}
 	if got == nil {
 		t.Fatal("want an empty non-nil map; nil would be indistinguishable from a decode failure")
@@ -153,7 +153,7 @@ func TestDecodePackageEmptyFieldIsEmptyNonNilMap(t *testing.T) {
 func TestDecodePackageStoredEmptyBlobWithNilDict(t *testing.T) {
 	// Stored, zero pool entries, zero versions. Needs no dictionary because it
 	// contains no dictionary references, so a nil Dict must work.
-	got, err := DecodePackage(string([]byte{depsFormatStored, 0x00, 0x00}), nil)
+	got, err := DecodePackage(string([]byte{depsFormatStored, 0x00, 0x00}), nil, nil)
 	if err != nil {
 		t.Fatalf("DecodePackage: %v", err)
 	}
@@ -169,13 +169,13 @@ func TestDecodePackageZstdWithoutDictErrorsNotPanics(t *testing.T) {
 		}
 	}()
 
-	if _, err := DecodePackage(string([]byte{depsFormatZstd, 0xff}), nil); err == nil {
+	if _, err := DecodePackage(string([]byte{depsFormatZstd, 0xff}), nil, nil); err == nil {
 		t.Error("expected an error for a zstd field with no dictionary")
 	}
 }
 
 func TestDecodePackageUnknownFormatByte(t *testing.T) {
-	if _, err := DecodePackage(string([]byte{0x03, 0x00}), nil); err == nil {
+	if _, err := DecodePackage(string([]byte{0x03, 0x00}), nil, nil); err == nil {
 		t.Error("expected an error for an unrecognized format byte")
 	}
 }
@@ -186,7 +186,7 @@ func TestDecodePackageTruncatedInput(t *testing.T) {
 	// A huge pool count with no data behind it. Must error on the read rather
 	// than attempting an allocation sized from the claimed count.
 	field := string([]byte{depsFormatStored, 0xff, 0xff, 0xff, 0xff, 0x0f})
-	if _, err := DecodePackage(field, d); err == nil {
+	if _, err := DecodePackage(field, d, nil); err == nil {
 		t.Error("expected an error for a truncated blob")
 	}
 }
@@ -207,7 +207,7 @@ func TestDecodeAfterCloseErrors(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if _, err := DecodePackage(string([]byte{depsFormatZstd, 0x28, 0xb5, 0x2f, 0xfd}), d); err == nil {
+	if _, err := DecodePackage(string([]byte{depsFormatZstd, 0x28, 0xb5, 0x2f, 0xfd}), d, nil); err == nil {
 		t.Error("expected an error decoding through a closed Dict")
 	}
 }
@@ -308,7 +308,7 @@ func TestUnmarshalBlobDictionaryReference(t *testing.T) {
 	putStr(&buf, "1.0.0")
 	putUvarint(&buf, 0) // -> pool[0]
 
-	got, err := unmarshalBlob(buf.Bytes(), names)
+	got, err := unmarshalBlob(buf.Bytes(), names, nil)
 	if err != nil {
 		t.Fatalf("unmarshalBlob: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestUnmarshalBlobSharedPoolEntry(t *testing.T) {
 	putStr(&buf, "2.0")
 	putUvarint(&buf, 0)
 
-	got, err := unmarshalBlob(buf.Bytes(), nil)
+	got, err := unmarshalBlob(buf.Bytes(), nil, nil)
 	if err != nil {
 		t.Fatalf("unmarshalBlob: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestUnmarshalBlobRejectsBadPoolIndex(t *testing.T) {
 	putStr(&buf, "1.0.0")
 	putUvarint(&buf, 5) // index 5 into an empty pool
 
-	if _, err := unmarshalBlob(buf.Bytes(), nil); err == nil {
+	if _, err := unmarshalBlob(buf.Bytes(), nil, nil); err == nil {
 		t.Error("expected an error for an out-of-range pool index")
 	}
 }
@@ -379,7 +379,7 @@ func TestUnmarshalBlobRejectsBadDepNameID(t *testing.T) {
 	putStr(&buf, ">=1.0")
 	putUvarint(&buf, 0)
 
-	if _, err := unmarshalBlob(buf.Bytes(), []string{"flask"}); err == nil {
+	if _, err := unmarshalBlob(buf.Bytes(), []string{"flask"}, nil); err == nil {
 		t.Error("expected an error for an out-of-range dep-name id")
 	}
 }
@@ -440,7 +440,7 @@ func TestMaxDecompressedBytesIsEnforced(t *testing.T) {
 
 	// Not a valid zstd frame, so this asserts the failure path is an error
 	// rather than a panic. The bound itself is enforced inside the decoder.
-	_, err := DecodePackage(string(append([]byte{depsFormatZstd}, bytes.Repeat([]byte{0x00}, 64)...)), d)
+	_, err := DecodePackage(string(append([]byte{depsFormatZstd}, bytes.Repeat([]byte{0x00}, 64)...)), d, nil)
 	if err == nil {
 		t.Error("expected an error for a malformed zstd payload")
 	}

@@ -63,6 +63,12 @@ type File struct {
 	schema rsf.Index
 	dict   *Dict
 
+	// tags is the wheel-tag vocabulary, or nil when the file's schema has no
+	// tagsdict field. Nil is the pre-cutover state, not a failure: unlike dict,
+	// whose absence means there is no dependency data to read at all, an absent
+	// vocabulary just means no version claims any wheels.
+	tags *TagDict
+
 	// offsets maps canonical name to the byte offset of that package's record.
 	offsets map[string]int64
 }
@@ -149,6 +155,11 @@ func (file *File) scan() error {
 			if err := file.loadDictLocked(r, buf); err != nil {
 				return err
 			}
+			// Must follow the depsdict read, not precede it: the reader skips
+			// forward only, and tagsdict is the last field in the record.
+			if err := file.loadTagsLocked(r, buf); err != nil {
+				return err
+			}
 		}
 
 		// Skip whatever is left of this record. Passing rsf.Top resets the
@@ -203,6 +214,43 @@ func (file *File) loadDictLocked(r rsf.Reader, buf *bufio.Reader) error {
 	return nil
 }
 
+// loadTagsLocked reads the first record's tagsdict, with the reader positioned
+// after the depsdict field.
+//
+// ⚠️ An absent field is the normal case and leaves file.tags nil. Every snapshot
+// published before the wheel-tag work has no tagsdict at all, and one published
+// after it may still report its vocabulary incomplete — so a nil vocabulary and
+// an incomplete one both have to be ordinary states this reader returns rather
+// than errors it raises. What must NOT be tolerated is a field that is present
+// and corrupt: that means the producer wrote something this decoder does not
+// understand, and guessing would serve wrong tags.
+func (file *File) loadTagsLocked(r rsf.Reader, buf *bufio.Reader) error {
+	if err := r.AdvanceTo(buf, "tagsdict"); err != nil {
+		if errors.Is(err, rsf.ErrNoSuchField) {
+			return nil
+		}
+		return fmt.Errorf("pypirsf: advancing to tagsdict: %w", err)
+	}
+
+	raw, err := r.ReadStringField(buf)
+	if err != nil {
+		return fmt.Errorf("pypirsf: reading tagsdict: %w", err)
+	}
+	if raw == "" {
+		// The field is in the schema but this snapshot wrote no vocabulary. Same
+		// meaning as the field being absent.
+		return nil
+	}
+
+	td, err := ParseTagsdictField([]byte(raw))
+	if err != nil {
+		return fmt.Errorf("pypirsf: parsing tagsdict: %w", err)
+	}
+	file.tags = td
+
+	return nil
+}
+
 // Close releases the file and the shared decoder.
 func (file *File) Close() error {
 	var dictErr error
@@ -219,6 +267,20 @@ func (file *File) Close() error {
 
 // Dict returns the global dependency dictionary read from the first record.
 func (file *File) Dict() *Dict { return file.dict }
+
+// TagDict returns the wheel-tag vocabulary read from the first record, or nil
+// when the file carries none.
+func (file *File) TagDict() *TagDict { return file.tags }
+
+// WheelTagsComplete reports whether this file's wheel tags can be filtered on.
+//
+// ⚠️ This is the ONLY safe gate for tag filtering, and it is a property of the
+// FILE, not of a version. A snapshot mid-backfill carries real tags for a small
+// minority of packages and nothing for the rest; filtering "where we have data"
+// then rejects versions whose wheels were simply never derived, which looks from
+// the outside like the filter working well. False means disable tag filtering
+// entirely.
+func (file *File) WheelTagsComplete() bool { return file.tags.Complete() }
 
 // Len reports how many package records the file contains.
 func (file *File) Len() int { return len(file.offsets) }
@@ -284,7 +346,7 @@ func (file *File) Deps(cname string) (map[string]VersionDeps, error) {
 		return nil, fmt.Errorf("pypirsf: %q: reading deps: %w", cname, err)
 	}
 
-	deps, err := DecodePackage(field, file.dict)
+	deps, err := DecodePackage(field, file.dict, file.tags)
 	if err != nil {
 		return nil, fmt.Errorf("pypirsf: %q: %w", cname, err)
 	}
