@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-18
+
 ### Breaking
 
 - **`pypirsf.DecodePackage` takes the wheel-tag vocabulary as a third argument.** Pass
@@ -34,8 +36,10 @@ served it.
     carries a per-snapshot completeness flag, and while a backfill is in progress a
     version with no matching tag is indistinguishable from one whose tags were never
     derived. Filtering "where we have data" would reject installable packages, so an
-    incomplete index disables filtering for the WHOLE file. The live PyPI snapshot is in
-    that state today, which means setting `WheelTags` against it changes nothing yet.
+    incomplete index disables filtering for the WHOLE file. The live PyPI snapshot began
+    reporting itself complete with checkpoint `1789732917` (2026-09-18); every earlier one
+    reports incomplete, so the same requirements and the same target resolve differently
+    across that boundary and nothing in the output says why.
   - **Only one of five cases rejects.** A compatible wheel, an sdist fallback, or no
     wheels-but-an-sdist all stay usable; rejection needs there to be nothing installable
     left. `PackageMetadata.TagsCaptured` is what separates "publishes no wheels" from
