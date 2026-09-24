@@ -48,3 +48,17 @@ github.com/posit-dev/go-python-packaging, used for PEP 440 versions and PEP 508
 requirements, is Copyright (c) Posit Software, PBC, licensed under the Apache
 License, Version 2.0, or the MIT license. See that project's own NOTICE for the
 upstreams it in turn credits.
+
+resolver/testdata/packse contains scenario files copied from astral-sh/packse
+(https://github.com/astral-sh/packse), Copyright (c) 2023 Astral Software Inc.,
+dual-licensed under the Apache License, Version 2.0, or the MIT license. See
+resolver/testdata/packse/README.md for the pinned commit and how they were
+copied.
+
+github.com/crillab/gophersat, used as a SAT-solver cross-check in the resolver
+package's tests, is Copyright (c) 2017 Centre de Recherche en Informatique de
+Lens and contributors, licensed under the MIT license. Test-only dependency.
+
+github.com/BurntSushi/toml, used to parse the packse scenario fixtures in the
+resolver package's tests, is licensed under the MIT license. Test-only
+dependency.
