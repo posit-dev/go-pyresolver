@@ -7,7 +7,7 @@ require (
 	github.com/crillab/gophersat v1.4.0
 	github.com/klauspost/compress v1.19.2
 	github.com/posit-dev/go-pubgrub v0.2.1
-	github.com/posit-dev/go-python-packaging v0.7.0
+	github.com/posit-dev/go-python-packaging v0.10.0
 	github.com/rstudio/repository-snapshot-format v0.12.0
 )
 
