@@ -99,6 +99,28 @@ jobs:
             echo "::error::The equivalence check did not report a fast-mode comparison, so it did not run."
             exit 1
           fi
+      # packse scenarios cross-checked against a SAT oracle, run the same way and
+      # for the same reason as the two steps above: a mistyped -run exits 0 while
+      # asserting nothing, and a silent SKIP would hide a scenario going untested
+      # instead of failing loudly. See resolver/testdata/packse/README.md.
+      - name: packse and SAT oracle (must not skip)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./resolver/ -run 'TestPackse|TestSATOracle' -v -count=1 -timeout 20m \
+            | tee packse.log
+          if grep -q -e '--- SKIP' packse.log; then
+            echo "::error::A packse or SAT oracle test skipped. These must run on every PR."
+            exit 1
+          fi
+          if ! grep -qE 'packse: [0-9]+ scenarios = ' packse.log; then
+            echo "::error::TestPackse did not print its summary line, so it did not run."
+            exit 1
+          fi
+          if ! grep -qE 'SAT oracle: cross-checked [0-9]+ scenarios' packse.log; then
+            echo "::error::TestSATOracle did not print its summary line, so it did not run."
+            exit 1
+          fi
       - name: Format check
         run: |
           unformatted=$(gofmt -l .)
