@@ -47,15 +47,22 @@ type oracleVersion struct {
 
 // exactPinAdmitsYanked reports whether some root requirement pins pkgName to
 // exactly v, which is PEP 592's exception to "never offer a yanked release":
-// an installer MAY still honor an explicit, exact request for it. Checked
-// against the raw requirement text rather than a general specifier-shape
-// analysis -- sufficient for the vendored corpus (measured: both scenarios
-// that need this write it as "name==x.y.z"), and simpler than reconstructing
-// "is this specifier exactly one version" from a parsed Specifiers.
+// an installer MAY still honor an explicit, exact request for it. Checked by
+// parsing each root requirement rather than a general specifier-shape
+// analysis of Specifiers -- sufficient for the vendored corpus (measured: both
+// scenarios that need this write it as "name==x.y.z"), and simpler than
+// reconstructing "is this specifier exactly one version" from a parsed
+// Specifiers. Matching on the parsed requirement name (not a substring of the
+// raw text) avoids a false positive from a prefixed name, e.g. "bb==1.0.0"
+// containing the text "b==1.0.0".
 func exactPinAdmitsYanked(root tomlRoot, pkgName string, v version.Version) bool {
-	needle := pkgName + "==" + v.String()
+	needle := "==" + v.String()
 	for _, raw := range root.Requires {
-		if strings.Contains(raw, needle) {
+		req, err := requirement.Parse(raw)
+		if err != nil || req.Name != pkgName {
+			continue
+		}
+		if req.Specifiers.String() == needle {
 			return true
 		}
 	}
@@ -277,6 +284,13 @@ func buildOracleModel(t *testing.T, s tomlScenario, py pythonSpec, env marker.En
 		}
 	}
 
+	if len(clauses) == 0 {
+		// No root requirements and no packages: trivially satisfiable. Must be
+		// bf.True, not bf.And() with zero arguments -- see atMostOne's comment.
+		// Unreachable against the vendored corpus (every scenario has a non-empty
+		// root.requires), kept as a guard against a future re-pull that adds one.
+		return oracleModel{formula: bf.True, vars: allVars}
+	}
 	return oracleModel{formula: bf.And(clauses...), vars: allVars}
 }
 

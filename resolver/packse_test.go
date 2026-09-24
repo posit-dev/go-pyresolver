@@ -203,8 +203,7 @@ func TestPackse(t *testing.T) {
 			continue
 		}
 
-		if reason, ok := unsupportedOption[name]; ok {
-			_ = reason
+		if _, ok := unsupportedOption[name]; ok {
 			unsupported++
 			continue
 		}
