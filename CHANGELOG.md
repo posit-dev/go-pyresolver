@@ -19,6 +19,13 @@ served it.
   and uv do.** A final release in range is still preferred. Some resolutions that used to fail or
   backtrack now pick a pre-release or a newer version instead.
 
+### Changed
+
+- **An extra a version does not declare is now ignored, as pip and uv do, instead of excluding
+  that version.** A resolution can move to a newer version, and a misspelled extra no longer
+  fails. Each ignored extra is reported in the new `Resolution.MissingExtras` field
+  (`MissingExtra`, `Requester`).
+
 ## [0.11.0] - 2026-09-18
 
 ### Breaking

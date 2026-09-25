@@ -88,12 +88,6 @@ var knownFail = map[string]string{
 		"PEP 592 (and uv) still allow it when a requirement pins it exactly, which this scenario's root does for b==1.0.0",
 	"yanked/transitive-yanked-and-unyanked-dependency-opt-in": "FilteredIndex.ExcludeYanked drops a yanked version outright; " +
 		"PEP 592 (and uv) still allow it when a requirement pins it exactly, which this scenario's root does for c==2.0.0",
-
-	"extras/missing-extra": "go-pyresolver models name[extra] as a virtual package requiring a candidate that " +
-		"declares the extra, so a version that omits it is excluded rather than the extra being silently dropped; " +
-		"uv ignores an extra no candidate provides",
-	"extras/extra-does-not-exist-backtrack": "same gap as extras/missing-extra: the newest version (3.0.0) does not " +
-		"provide the extra, so go-pyresolver backtracks to the one that does (1.0.0) instead of dropping the extra",
 }
 
 // divergence is one scenario's entry on intentionalDivergence: the reason and
@@ -300,6 +294,29 @@ func TestPackse(t *testing.T) {
 				matchedPackse, _ := matchOutcome(t, res, resolveErr, s.Expected.Satisfiable, s.Expected.Packages)
 				if matchedPackse {
 					t.Errorf("%s unexpectedly matched packse, remove it from intentionalDivergence", name)
+				}
+				return
+			}
+
+			if name == "extras/missing-extra" {
+				// The harness can assert the warning here, so it does: the root
+				// asked for a[extra], and 1.0.0 (the only version) does not
+				// declare it.
+				res, resolveErr := resolvePackseScenario(t, s)
+				matched, detail := matchOutcome(t, res, resolveErr, s.Expected.Satisfiable, s.Expected.Packages)
+				if !matched {
+					t.Errorf("%s: %s", name, detail)
+				}
+				if resolveErr == nil {
+					want := []resolver.MissingExtra{{
+						Package:     index.NewPackageName("a"),
+						Version:     version.MustParse("1.0.0"),
+						Extra:       "extra",
+						RequestedBy: resolver.Requester{Root: true},
+					}}
+					if !reflect.DeepEqual(res.MissingExtras, want) {
+						t.Errorf("%s: MissingExtras = %+v, want %+v", name, res.MissingExtras, want)
+					}
 				}
 				return
 			}

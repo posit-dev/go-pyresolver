@@ -96,6 +96,20 @@ type Provider struct {
 	unusable []Unusable
 	recorded map[string]bool
 
+	// extraRequests holds every requester -> package[extra] edge seen while
+	// expanding requirements, and extraRequestsSeen is its dedupe key set. See
+	// recordExtraRequest. This is what was ASKED for, independent of whether
+	// the target version ends up declaring the extra -- resolver.Resolve
+	// filters it against the final solution to build Resolution.MissingExtras.
+	extraRequests     []ExtraRequest
+	extraRequestsSeen map[string]bool
+
+	// undeclaredExtras holds each (package, version, extra) this Provider found
+	// not declared, and undeclaredExtrasSeen is its dedupe key set. See
+	// recordUndeclaredExtra.
+	undeclaredExtras     []UndeclaredExtra
+	undeclaredExtrasSeen map[string]bool
+
 	// ranked memoizes candidate.Rank over a package's FULL version list, so the
 	// sort is paid once per package per resolution rather than once per
 	// Candidates call. See rankedVersions.
@@ -120,12 +134,14 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		opts.RootVersion = version.MustParse("0")
 	}
 	return &Provider{
-		ctx:       ctx,
-		index:     idx,
-		opts:      opts,
-		recorded:  make(map[string]bool),
-		ranked:    make(map[index.PackageName][]version.Version),
-		tagFilter: tagFilteringEnabled(idx, opts.WheelTags),
+		ctx:                  ctx,
+		index:                idx,
+		opts:                 opts,
+		recorded:             make(map[string]bool),
+		extraRequestsSeen:    make(map[string]bool),
+		undeclaredExtrasSeen: make(map[string]bool),
+		ranked:               make(map[index.PackageName][]version.Version),
+		tagFilter:            tagFilteringEnabled(idx, opts.WheelTags),
 	}
 }
 

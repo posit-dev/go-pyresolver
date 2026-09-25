@@ -558,3 +558,114 @@ func TestResolveAcceptsAnEquivalentPythonVersionSpelling(t *testing.T) {
 		t.Fatalf("Resolve rejected an equivalent spelling of the same version: %v", err)
 	}
 }
+
+// A misspelled extra is ignored, as pip and uv do: the resolve still picks the
+// newest flask, Extras carries no entry for it, and the warning names it in
+// MissingExtras instead. Paired with provider's
+// TestSolveMisspelledExtraIsIgnoredAndPicksTheNewestVersion, which cannot see
+// MissingExtras -- that lives in this package.
+func TestResolveReportsAMissingExtra(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		SetMetadata("flask", "3.0", index.PackageMetadata{
+			RequiresDist:  mustRequirements(t, `asgiref>=3.2; extra == "async"`),
+			ProvidesExtra: []string{"async"},
+		}).
+		AddVersion("asgiref", "3.7")
+
+	res, err := resolve(t, idx, "flask[asynk]")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	want := map[string]string{"flask": "3.0"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
+	}
+	if got, ok := res.Extras["flask"]; ok {
+		t.Errorf("Extras[flask] = %v, want no entry: asynk is not a real extra", got)
+	}
+
+	wantMissing := []resolver.MissingExtra{{
+		Package:     index.NewPackageName("flask"),
+		Version:     version.MustParse("3.0"),
+		Extra:       "asynk",
+		RequestedBy: resolver.Requester{Root: true},
+	}}
+	if !reflect.DeepEqual(res.MissingExtras, wantMissing) {
+		t.Errorf("MissingExtras = %+v, want %+v", res.MissingExtras, wantMissing)
+	}
+}
+
+// The transitive case: x, not the root, is the one who asked for a[extra].
+// The newest a (2.0) does not declare it, so b -- which only the extra would
+// have pulled in -- must be absent, and the warning must name x as the
+// requester, not the root.
+func TestResolveReportsATransitiveMissingExtra(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("x", "1.0", "a[extra]").
+		SetMetadata("a", "1.0", index.PackageMetadata{
+			RequiresDist:  mustRequirements(t, `b==1.0.0; extra == "extra"`),
+			ProvidesExtra: []string{"extra"},
+		}).
+		SetMetadata("a", "2.0", index.PackageMetadata{
+			// The marker-gated requirement is still published, but 2.0 does not
+			// list "extra" in ProvidesExtra -- the real-world shape of an
+			// undeclared extra, and what makes the "b absent" assertion below
+			// meaningful rather than vacuous.
+			RequiresDist: mustRequirements(t, `b==1.0.0; extra == "extra"`),
+		}).
+		AddVersion("b", "1.0.0")
+
+	res, err := resolve(t, idx, "x")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	want := map[string]string{"x": "1.0", "a": "2.0"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
+	}
+	if _, ok := res.Pinned["b"]; ok {
+		t.Errorf("b is pinned, but a 2.0 does not declare the extra that would pull it in: %v", pins(t, res))
+	}
+
+	wantMissing := []resolver.MissingExtra{{
+		Package: index.NewPackageName("a"),
+		Version: version.MustParse("2.0"),
+		Extra:   "extra",
+		RequestedBy: resolver.Requester{
+			Package: index.NewPackageName("x"),
+			Version: version.MustParse("1.0"),
+		},
+	}}
+	if !reflect.DeepEqual(res.MissingExtras, wantMissing) {
+		t.Errorf("MissingExtras = %+v, want %+v", res.MissingExtras, wantMissing)
+	}
+}
+
+// The backtracked-requester trap: x 2.0 asks for z[extra] (which z does not
+// declare) on its way to a conflict the solver can only see once it has
+// decided z's own requirement on "bad" -- and the solver then reverts to
+// x 1.0, which never asks for z at all. The abandoned request must not
+// appear; MissingExtras describes the final solution only.
+func TestResolveDoesNotReportAMissingExtraFromABacktrackedRequester(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("x", "1.0").
+		AddVersion("x", "2.0", "z[extra]").
+		AddVersion("z", "1.0", "bad>=1.0").
+		AddVersion("bad", "0.5")
+
+	res, err := resolve(t, idx, "x", "bad<1.0")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	want := map[string]string{"x": "1.0", "bad": "0.5"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
+	}
+	if len(res.MissingExtras) != 0 {
+		t.Errorf("MissingExtras = %+v, want none: the request came from x 2.0, which the solver abandoned",
+			res.MissingExtras)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/posit-dev/go-pubgrub/solver"
 	"github.com/posit-dev/go-pyresolver/index"
@@ -89,6 +90,7 @@ func (p *Provider) rootDependencies() ([]dependency, error) {
 		// aborts the resolve rather than excluding anything.
 		return nil, fmt.Errorf("provider: the requested requirements cannot be resolved: %s", reason)
 	}
+	p.recordExtraRequests(Root(), version.Version{}, expanded)
 	return append(deps, expanded...), nil
 }
 
@@ -182,22 +184,20 @@ func (p *Provider) dependenciesFrom(
 			deps = append(deps, pyDep)
 		}
 	} else {
-		// An extra nobody declared must fail loudly. Without this check
-		// pkg[tests], where the extra is spelled test, resolves happily and
-		// installs nothing extra -- which looks like success. Reporting it as
-		// "no candidate version" is what lets the solver explain it through
-		// the derivation graph for free.
-		if !slices.Contains(meta.ProvidesExtra, pkg.Extra) {
-			return nil, fmt.Sprintf("it does not provide the extra %q", pkg.Extra), nil
+		// An extra nobody declared is ignored, as pip and uv do, rather than
+		// excluding the version. It is reported in Resolution.MissingExtras.
+		if slices.Contains(meta.ProvidesExtra, pkg.Extra) {
+			active = []string{pkg.Extra}
+			reqs = extraOnly(meta.RequiresDist, p.opts.Environment, active)
+		} else {
+			reqs = nil
+			p.recordUndeclaredExtra(pkg.Name, v, pkg.Extra)
 		}
-		active = []string{pkg.Extra}
 
-		// The same-version link. Without it the extra could resolve to a
-		// version other than the base package it is an extra OF, and the
-		// installed set would be incoherent.
+		// The same-version link, whether or not the extra is declared. Without
+		// it the extra could resolve to a version other than the base package
+		// it is an extra OF, and the installed set would be incoherent.
 		deps = append(deps, dependency{Package: Project(pkg.Name), Allowed: pep440set.Exactly(v)})
-
-		reqs = extraOnly(meta.RequiresDist, p.opts.Environment, active)
 	}
 
 	expanded, reason, err := expandRequirements(reqs, p.opts.Environment, active)
@@ -207,6 +207,7 @@ func (p *Provider) dependenciesFrom(
 	if reason != "" {
 		return nil, reason, nil
 	}
+	p.recordExtraRequests(Project(pkg.Name), v, expanded)
 
 	// Only now is the version definitely offered, so only now is an
 	// Offered:true record truthful.
@@ -328,4 +329,90 @@ func expandRequirements(reqs []requirement.Requirement, env marker.Environment, 
 	}
 
 	return deps, "", nil
+}
+
+// ExtraRequest is one requester -> package[extra] edge, recorded as
+// expandRequirements builds a dependency onto an extra virtual package. It
+// says who asked, independent of whether the target version turns out to
+// declare the extra.
+//
+// This is what was ASKED for, not what the resolution settled on: the solver
+// can visit this edge on a branch it later backtracks past. resolver.Resolve
+// keeps only the edges the final solution still contains.
+type ExtraRequest struct {
+	// Requester is Root() or Project(name) -- never carries its own Extra,
+	// since this identifies WHO asked, not which of their own extras asked.
+	Requester Package
+
+	// RequesterVersion is the requester's pinned version. Meaningless when
+	// Requester is Root().
+	RequesterVersion version.Version
+
+	// Package is the project whose extra was requested.
+	Package index.PackageName
+
+	// Extra is the PEP 685-normalized extra requested.
+	Extra string
+}
+
+// ExtraRequests returns every requester -> package[extra] edge this Provider
+// has seen, including ones on a branch the solver later backtracked past.
+func (p *Provider) ExtraRequests() []ExtraRequest {
+	return p.extraRequests
+}
+
+// recordExtraRequests scans deps for edges onto an extra virtual package.
+// rootDependencies and dependenciesFrom call this once they have expanded
+// their own requirements, because they are the ones who know their requester
+// identity -- the solver's Dependencies method is never told who is asking.
+func (p *Provider) recordExtraRequests(requester Package, requesterVersion version.Version, deps []dependency) {
+	for _, d := range deps {
+		if d.Package.Kind != KindProject || d.Package.Extra == "" {
+			continue
+		}
+		p.recordExtraRequest(requester, requesterVersion, d.Package.Name, d.Package.Extra)
+	}
+}
+
+// recordExtraRequest adds one edge, ignoring a repeat of one already held. See
+// Provider.record for why the dedupe key is built from strings.
+func (p *Provider) recordExtraRequest(
+	requester Package, requesterVersion version.Version, name index.PackageName, extra string,
+) {
+	key := strings.Join([]string{requester.String(), requesterVersion.String(), string(name), extra}, "\x00")
+	if p.extraRequestsSeen[key] {
+		return
+	}
+	p.extraRequestsSeen[key] = true
+	p.extraRequests = append(p.extraRequests, ExtraRequest{
+		Requester:        requester,
+		RequesterVersion: requesterVersion,
+		Package:          name,
+		Extra:            extra,
+	})
+}
+
+// UndeclaredExtra records that one project's specific version does not
+// declare an extra the resolution asked about.
+type UndeclaredExtra struct {
+	Package index.PackageName
+	Version version.Version
+	Extra   string
+}
+
+// UndeclaredExtras returns every (package, version, extra) this Provider found
+// not declared, including versions the solver later backtracked past.
+func (p *Provider) UndeclaredExtras() []UndeclaredExtra {
+	return p.undeclaredExtras
+}
+
+// recordUndeclaredExtra adds one record, ignoring a repeat of one already
+// held.
+func (p *Provider) recordUndeclaredExtra(name index.PackageName, v version.Version, extra string) {
+	key := strings.Join([]string{string(name), v.String(), extra}, "\x00")
+	if p.undeclaredExtrasSeen[key] {
+		return
+	}
+	p.undeclaredExtrasSeen[key] = true
+	p.undeclaredExtras = append(p.undeclaredExtras, UndeclaredExtra{Package: name, Version: v, Extra: extra})
 }
