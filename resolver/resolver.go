@@ -359,6 +359,13 @@ func missingExtras(
 			requester = Requester{Package: req.Requester.Name, Version: req.RequesterVersion}
 			v, ok := res.Pinned[req.Requester.Name]
 			requesterPinned = ok && v.Equal(req.RequesterVersion)
+			// When the requester is itself an extra, its own extra must have
+			// survived into the final solution too -- a name+version match
+			// alone cannot tell an abandoned base[extra] apart from the base
+			// that survived with no extra active.
+			if requesterPinned && req.Requester.Extra != "" {
+				requesterPinned = slices.Contains(res.Extras[req.Requester.Name], req.Requester.Extra)
+			}
 		default:
 			continue // the interpreter never requests an extra
 		}

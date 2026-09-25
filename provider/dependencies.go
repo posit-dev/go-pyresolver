@@ -207,7 +207,11 @@ func (p *Provider) dependenciesFrom(
 	if reason != "" {
 		return nil, reason, nil
 	}
-	p.recordExtraRequests(Project(pkg.Name), v, expanded)
+	// pkg itself, not Project(pkg.Name): when pkg is an extra, the request came
+	// from THAT extra, not from the base with no extra active. Dropping the
+	// extra here would let resolver.missingExtras attribute the request to a
+	// base that survives while the extra that actually asked was abandoned.
+	p.recordExtraRequests(pkg, v, expanded)
 
 	// Only now is the version definitely offered, so only now is an
 	// Offered:true record truthful.
@@ -340,8 +344,11 @@ func expandRequirements(reqs []requirement.Requirement, env marker.Environment, 
 // can visit this edge on a branch it later backtracks past. resolver.Resolve
 // keeps only the edges the final solution still contains.
 type ExtraRequest struct {
-	// Requester is Root() or Project(name) -- never carries its own Extra,
-	// since this identifies WHO asked, not which of their own extras asked.
+	// Requester is Root() or a Package identifying who asked. When the
+	// requester is itself an extra (e.g. base[extraA] asking for
+	// other[extraB]), Requester.Extra carries that -- resolver.missingExtras
+	// needs it to tell an abandoned base[extraA] apart from a base that
+	// survived with no extra active.
 	Requester Package
 
 	// RequesterVersion is the requester's pinned version. Meaningless when

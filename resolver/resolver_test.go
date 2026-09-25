@@ -669,3 +669,57 @@ func TestResolveDoesNotReportAMissingExtraFromABacktrackedRequester(t *testing.T
 			res.MissingExtras)
 	}
 }
+
+// The extra-requests-extra trap: x 2.0 asks for z[declared], a REAL declared
+// extra of z, and z[declared] itself asks for other[missing] (which other does
+// not declare). recordExtraRequests attributes that ask to plain z, not to
+// z[declared] -- the requester identity it is given already dropped the extra
+// (dependencies.go, dependenciesFrom's call to recordExtraRequests). x then
+// backtracks to 1.0, which never asks for z at all, while root's own separate,
+// unconditional requirement on z pins it at the SAME version regardless. A
+// requester check keyed on (name, version) alone cannot tell the abandoned
+// z[declared] apart from the z that survived, so the warning must not appear
+// unless it also confirms "declared" is still in res.Extras["z"].
+func TestResolveDoesNotReportAMissingExtraFromAnAbandonedExtraOfAPinnedBase(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("x", "1.0").
+		AddVersion("x", "2.0", "z[declared]").
+		SetMetadata("z", "1.0", index.PackageMetadata{
+			ProvidesExtra: []string{"declared"},
+			RequiresDist: mustRequirements(t,
+				`other[missing]; extra == "declared"`,
+				`shared>=2.0; extra == "declared"`),
+		}).
+		AddVersion("other", "1.0").
+		AddVersion("shared", "1.5").
+		AddVersion("shared", "2.5").
+		// y has many versions, all requiring shared<2.0, so the solver's
+		// fewest-candidates-first heuristic decides it LAST among root's direct
+		// requirements -- after z[declared] has already committed to
+		// shared>=2.0. That is what makes the eventual conflict a real
+		// post-commit backjump instead of an instant pre-commit rejection: the
+		// latter would reject z[declared] before its OTHER edge (other[missing])
+		// is ever explored, which is a weaker, uninteresting test.
+		AddVersion("y", "1.0", "shared<2.0").
+		AddVersion("y", "2.0", "shared<2.0").
+		AddVersion("y", "3.0", "shared<2.0").
+		AddVersion("y", "4.0", "shared<2.0").
+		AddVersion("y", "5.0", "shared<2.0")
+
+	res, err := resolve(t, idx, "x", "z", "other", "y")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	want := map[string]string{"x": "1.0", "z": "1.0", "other": "1.0", "y": "5.0", "shared": "1.5"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
+	}
+	if got, ok := res.Extras["z"]; ok {
+		t.Errorf("Extras[z] = %v, want no entry: x 1.0 never activated \"declared\"", got)
+	}
+	if len(res.MissingExtras) != 0 {
+		t.Errorf("MissingExtras = %+v, want none: \"declared\" was never active on the pinned z",
+			res.MissingExtras)
+	}
+}
