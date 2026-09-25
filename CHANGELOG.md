@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-25
+
 ### Fixed
 
 - **When no final release satisfies a requirement's range, a pre-release is now chosen, as pip
