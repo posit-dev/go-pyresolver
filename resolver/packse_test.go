@@ -94,21 +94,66 @@ var knownFail = map[string]string{
 		"uv ignores an extra no candidate provides",
 	"extras/extra-does-not-exist-backtrack": "same gap as extras/missing-extra: the newest version (3.0.0) does not " +
 		"provide the extra, so go-pyresolver backtracks to the one that does (1.0.0) instead of dropping the extra",
-
-	"prereleases/package-only-prereleases": "candidate.PrereleaseSet admits a pre-release only when a specifier " +
-		"names one or the caller opts in; it does not implement pip/uv's further fallback of admitting one when a " +
-		"package publishes no final release at all (see PrereleaseSet.Admits's doc comment)",
-	"prereleases/package-only-prereleases-boundary": "same gap as prereleases/package-only-prereleases",
-	"prereleases/transitive-package-only-prereleases": "same gap as prereleases/package-only-prereleases, one level " +
-		"down the dependency graph",
-
-	"requires_python/python-less-than-current": "go-pyresolver's SupportsPython enforces the full Requires-Python " +
-		"specifier per PEP 440, including an upper bound; uv deliberately ignores an upper bound on Requires-Python",
 }
 
-// runPackseScenario resolves s and reports whether the result matches
-// expected.
-func runPackseScenario(t *testing.T, s tomlScenario) (matched bool, detail string) {
+// divergence is one scenario's entry on intentionalDivergence: the reason and
+// pip's outcome, asserted exactly rather than merely "not packse".
+type divergence struct {
+	reason string
+	// pins is the full pin set pip is asserted to reach. Nil means pip fails:
+	// Resolve must return a *resolver.ResolutionError.
+	pins map[string]string
+}
+
+// intentionalDivergence lists scenarios where go-pyresolver deliberately
+// differs from packse's (uv's) expectation because it matches pip.
+//
+// Ruling 2026-09-24: requires_python/python-less-than-current. pip enforces
+// the whole Requires-Python specifier, upper bound included; uv ignores the
+// upper bound. Reclassified rather than fixed.
+//
+// Ruling 2026-09-25: the five prereleases/ scenarios. packse encodes uv's
+// admission rule from before astral-sh/uv#19993 ("no final release at all").
+// pip (packaging's SpecifierSet.filter with prereleases=None, per PEP 440)
+// and current uv (crates/uv-resolver/src/prerelease.rs, PreferStable) instead
+// fall back to a pre-release when nothing final satisfies the RANGE, which is
+// what this change implements. Confirmed against packaging 26.3's
+// SpecifierSet.filter for each scenario's package (PR description).
+var intentionalDivergence = map[string]divergence{
+	"requires_python/python-less-than-current": {
+		reason: "pip enforces the whole Requires-Python specifier, upper bound included, and uv ignores the " +
+			"upper bound",
+		pins: nil, // pip: unsatisfiable
+	},
+	"prereleases/package-only-prereleases-in-range": {
+		reason: "no final release of a is in range (only 0.1.0, excluded by a>0.1.0), so pip and current uv fall " +
+			"back to the pre-release",
+		pins: map[string]string{"a": "1.0.0a1"},
+	},
+	"prereleases/transitive-package-only-prereleases-in-range": {
+		reason: "same fallback one level down: no final release of b is in range",
+		pins:   map[string]string{"a": "0.1.0", "b": "1.0.0a1"},
+	},
+	"prereleases/transitive-prerelease-and-stable-dependency": {
+		reason: "c's range (==2.0.0b1 intersected with >=1.0.0,<=3.0.0) admits no final release at all",
+		pins:   map[string]string{"a": "1.0.0", "b": "1.0.0", "c": "2.0.0b1"},
+	},
+	"prereleases/transitive-prerelease-and-stable-dependency-many-versions": {
+		reason: "c's range (>=2.0.0b1) excludes every final and every alpha, so the fallback picks the highest " +
+			"beta in range",
+		pins: map[string]string{"a": "1.0.0", "b": "1.0.0", "c": "2.0.0b9"},
+	},
+	"prereleases/transitive-prerelease-and-stable-dependency-many-versions-holes": {
+		reason: "c's range excludes the only final and several pre-releases by name; the fallback picks the " +
+			"highest surviving one",
+		pins: map[string]string{"a": "1.0.0", "b": "1.0.0", "c": "2.0.0b4"},
+	},
+}
+
+// resolvePackseScenario runs s against the real resolver and returns the raw
+// result, shared by runPackseScenario and the intentionalDivergence check so
+// both assert against the SAME resolve rather than running it twice.
+func resolvePackseScenario(t *testing.T, s tomlScenario) (*resolver.Resolution, error) {
 	t.Helper()
 
 	py, err := scenarioPython(s)
@@ -140,10 +185,18 @@ func runPackseScenario(t *testing.T, s tomlScenario) (matched bool, detail strin
 	}
 
 	reqs := mustRequirements(t, s.Root.Requires...)
-	res, resolveErr := resolver.Resolve(context.Background(), reqs, idx, opts)
+	return resolver.Resolve(context.Background(), reqs, idx, opts)
+}
+
+// matchOutcome reports whether resolving s produced wantSatisfiable and, when
+// satisfiable, exactly wantPackages.
+func matchOutcome(
+	t *testing.T, res *resolver.Resolution, resolveErr error, wantSatisfiable bool, wantPackages map[string]string,
+) (matched bool, detail string) {
+	t.Helper()
 
 	switch {
-	case !s.Expected.Satisfiable:
+	case !wantSatisfiable:
 		if resolveErr == nil {
 			return false, fmt.Sprintf("expected unsatisfiable, but resolved to %v", pins(t, res))
 		}
@@ -155,13 +208,13 @@ func runPackseScenario(t *testing.T, s tomlScenario) (matched bool, detail strin
 		}
 		return true, ""
 
-	case len(s.Expected.Packages) > 0:
+	case len(wantPackages) > 0:
 		if resolveErr != nil {
-			return false, fmt.Sprintf("expected packages %v, but Resolve failed: %v", s.Expected.Packages, resolveErr)
+			return false, fmt.Sprintf("expected packages %v, but Resolve failed: %v", wantPackages, resolveErr)
 		}
 		got := pins(t, res)
-		if !reflect.DeepEqual(got, s.Expected.Packages) {
-			return false, fmt.Sprintf("Pinned = %v, want %v", got, s.Expected.Packages)
+		if !reflect.DeepEqual(got, wantPackages) {
+			return false, fmt.Sprintf("Pinned = %v, want %v", got, wantPackages)
 		}
 		return true, ""
 
@@ -171,6 +224,14 @@ func runPackseScenario(t *testing.T, s tomlScenario) (matched bool, detail strin
 		}
 		return true, ""
 	}
+}
+
+// runPackseScenario resolves s and reports whether the result matches
+// packse's own expected outcome.
+func runPackseScenario(t *testing.T, s tomlScenario) (matched bool, detail string) {
+	t.Helper()
+	res, resolveErr := resolvePackseScenario(t, s)
+	return matchOutcome(t, res, resolveErr, s.Expected.Satisfiable, s.Expected.Packages)
 }
 
 // TestPackse runs every non-universal vendored packse scenario against the
@@ -184,7 +245,7 @@ func TestPackse(t *testing.T) {
 	}
 
 	seen := make(map[string]bool, len(scenarios))
-	var pass, known, unsupported, outScope int
+	var pass, known, diverged, unsupported, outScope int
 
 	for _, ps := range scenarios {
 		name := ps.relName
@@ -220,7 +281,29 @@ func TestPackse(t *testing.T) {
 		}
 
 		reason, isKnownFail := knownFail[name]
+		div, isDivergence := intentionalDivergence[name]
+		if isKnownFail && isDivergence {
+			t.Errorf("%s: listed on both knownFail and intentionalDivergence", name)
+		}
+
 		t.Run(name, func(t *testing.T) {
+			if isDivergence {
+				// Reuse runPackseScenario's resolve, but assert pip's outcome
+				// exactly rather than merely "disagrees with packse" -- the latter
+				// would also pass if the harness itself broke.
+				res, resolveErr := resolvePackseScenario(t, s)
+				matched, detail := matchOutcome(t, res, resolveErr, div.pins != nil, div.pins)
+				if !matched {
+					t.Errorf("%s: intentional divergence from packse did not match pip's outcome (%s): %s",
+						name, div.reason, detail)
+				}
+				matchedPackse, _ := matchOutcome(t, res, resolveErr, s.Expected.Satisfiable, s.Expected.Packages)
+				if matchedPackse {
+					t.Errorf("%s unexpectedly matched packse, remove it from intentionalDivergence", name)
+				}
+				return
+			}
+
 			matched, detail := runPackseScenario(t, s)
 			switch {
 			case isKnownFail && matched:
@@ -232,9 +315,12 @@ func TestPackse(t *testing.T) {
 			}
 		})
 
-		if isKnownFail {
+		switch {
+		case isDivergence:
+			diverged++
+		case isKnownFail:
 			known++
-		} else {
+		default:
 			pass++
 		}
 	}
@@ -242,6 +328,11 @@ func TestPackse(t *testing.T) {
 	for name := range knownFail {
 		if !seen[name] {
 			t.Errorf("knownFail names %q, which does not exist in testdata/packse", name)
+		}
+	}
+	for name := range intentionalDivergence {
+		if !seen[name] {
+			t.Errorf("intentionalDivergence names %q, which does not exist in testdata/packse", name)
 		}
 	}
 	for name := range unsupportedOption {
@@ -255,6 +346,6 @@ func TestPackse(t *testing.T) {
 		}
 	}
 
-	t.Logf("packse: %d scenarios = %d pass + %d known-fail + %d unsupported + %d out-of-scope",
-		len(scenarios), pass, known, unsupported, outScope)
+	t.Logf("packse: %d scenarios = %d pass + %d known-fail + %d divergence + %d unsupported + %d out-of-scope",
+		len(scenarios), pass, known, diverged, unsupported, outScope)
 }

@@ -161,8 +161,8 @@ func TestCandidatesPrereleaseAdmission(t *testing.T) {
 			t.Fatal("found = false, want true")
 		}
 		if rank != 1 {
-			t.Errorf("rank = %d, want 1 (the release candidate is not admissible, and "+
-				"pre-release admission is part of the in-range filter rank counts)", rank)
+			t.Errorf("rank = %d, want 1 (rank counts finals only when any are in range, "+
+				"even though the release candidate is still in range as a fallback)", rank)
 		}
 		if got := bestVersion(t, best); got.String() != "1.0" {
 			t.Errorf("best = %s, want 1.0", got)
@@ -181,8 +181,9 @@ func TestCandidatesPrereleaseAdmission(t *testing.T) {
 		if !found {
 			t.Fatal("found = false, want true")
 		}
-		if rank != 2 {
-			t.Errorf("rank = %d, want 2", rank)
+		if rank != 1 {
+			t.Errorf("rank = %d, want 1 (finals-in-range count, per the rank rule -- "+
+				"the pre-release still wins the ranking, via Policy, not via rank)", rank)
 		}
 		if got := bestVersion(t, best); got.String() != "2.0rc1" {
 			t.Errorf("best = %s, want 2.0rc1", got)

@@ -251,20 +251,23 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 	// a weakening of the rule the error path exists for: nothing is being reported as
 	// unavailable on the strength of an outage. It is simply not being looked at.
 	var (
-		best    version.Version
-		found   bool
-		inRange int
+		best                             version.Version
+		found                            bool
+		finalsInRange, prereleaseInRange int
 	)
 	for _, v := range ranked {
-		// The cheap half of admission: range and pre-release policy, no metadata
-		// and no I/O. What passes both is what rank counts.
+		// The cheap half of admission is range alone now: rankedVersions already
+		// ordered pre-releases after finals for a package that is not enabled, so
+		// nothing needs skipping here -- the fallback is a ranking effect, not an
+		// admission one. See candidate.PrereleaseSet.
 		if !allowed.Contains(v) {
 			continue
 		}
-		if !p.opts.Prereleases.Admits(pkg.Name, v) {
-			continue
+		if v.IsPreRelease() {
+			prereleaseInRange++
+		} else {
+			finalsInRange++
 		}
-		inRange++
 		if found {
 			// best is settled; the rest of the walk only counts, which costs no
 			// metadata read.
@@ -285,7 +288,18 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 		// everything.
 		return pep440set.Empty(), false, 0, nil
 	}
-	return pep440set.Exactly(best), true, inRange, nil
+	// rank counts finals only when there are any, and pre-releases otherwise --
+	// NOT their sum -- so a package's rank does not grow just because it also
+	// publishes pre-releases the walk above would never prefer while a final is
+	// usable. See the package's pre-release fallback in rankedVersions; without
+	// this every package with pre-releases would report a larger rank than
+	// before this change, for a reason unrelated to it, and could shift the
+	// solver's package order (TestResolutionTranscriptMatchesGolden).
+	rank := finalsInRange
+	if rank == 0 {
+		rank = prereleaseInRange
+	}
+	return pep440set.Exactly(best), true, rank, nil
 }
 
 // rankedVersions returns pkg's full published version list in Policy order,
@@ -415,8 +429,30 @@ func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
 	// is unchanged. provider/differential_test.go checks that against the exact
 	// reference rather than leaving it as an argument.
 	r := candidate.Rank(pkg.Name, all, p.opts.Policy)
+	r = finalsFirst(pkg.Name, r, p.opts.Prereleases)
 	p.ranked[pkg.Name] = r
 	return r, nil
+}
+
+// finalsFirst stably moves the pre-releases of a package that is not enabled
+// to the end of an already-ranked list, leaving everything else untouched.
+//
+// This is the pip/uv in-range fallback (candidate.PrereleaseSet's doc
+// comment), implemented as ranking rather than admission so the enabled set
+// can stay fixed for the whole resolution: candidate.Rank is a stable sort,
+// so this partition preserves Policy order within each half, and for an
+// enabled package (Admits true for every version) it is a no-op.
+func finalsFirst(pkg index.PackageName, ranked []version.Version, prereleases candidate.PrereleaseSet) []version.Version {
+	out := make([]version.Version, 0, len(ranked))
+	var after []version.Version
+	for _, v := range ranked {
+		if prereleases.Admits(pkg, v) {
+			out = append(out, v)
+		} else {
+			after = append(after, v)
+		}
+	}
+	return append(out, after...)
 }
 
 // singleVersion answers for a package with exactly one version and no index

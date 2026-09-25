@@ -8,10 +8,11 @@ import (
 	"github.com/posit-dev/go-python-packaging/version"
 )
 
-// PrereleaseSet records which packages may have pre-release versions offered.
+// PrereleaseSet records which packages rank their pre-releases alongside
+// their final releases, rather than after all of them.
 //
 // Keys are PEP 503-canonical names. A package absent from the set, or present
-// with a false value, gets final releases only.
+// with a false value, still offers its pre-releases -- only after its finals.
 type PrereleaseSet map[index.PackageName]bool
 
 // EnabledPrereleases derives the set from the requirements a resolution starts
@@ -23,11 +24,18 @@ type PrereleaseSet map[index.PackageName]bool
 // canonicalized here; allow is assumed to hold values already built with
 // index.NewPackageName.
 //
+// For an enabled package, its pre-releases are ranked right alongside its
+// final releases by Policy. For a package that is not enabled, Admits still
+// says every version exists (see below); the caller ranks its pre-releases
+// after every final release instead, so a pre-release is only ever chosen
+// there when nothing final is usable. That in-range fallback matches pip and
+// current uv.
+//
 // The set is computed ONCE, before solving, and must not be recomputed as the
-// solver narrows a package's allowed range. That is what makes pre-release
-// admission a fact about a version rather than a fact about the current search
-// state, and go-pubgrub caches derivations on the assumption that the facts
-// behind them do not move.
+// solver narrows a package's allowed range. That is what keeps a version's
+// pre-release status a fact about the version rather than a fact about the
+// current search state, and go-pubgrub caches derivations on the assumption
+// that the facts behind them do not move.
 //
 // ⚠️ Detection uses Specifiers.PreReleases, NOT Specifiers.FilterVersions, and
 // the difference is not stylistic. FilterVersions implements pip's fuller rule,
@@ -37,6 +45,8 @@ type PrereleaseSet map[index.PackageName]bool
 // admit a pre-release under one range and reject it under a wider one, and a
 // cached incompatibility derived from the earlier answer would then be wrong.
 // Do not call FilterVersions here, and do not call it from Candidates either.
+// The pip/uv in-range fallback described above is implemented as ranking
+// instead, precisely so it can react to the range without moving admission.
 //
 // Note that "!=1.0a1" does not enable pre-releases even though it names one,
 // and neither does "==1.*"; both match pypa/packaging's own derivation, which
@@ -59,17 +69,15 @@ func EnabledPrereleases(reqs []requirement.Requirement, allow []index.PackageNam
 	return set
 }
 
-// Admits reports whether v may be offered for pkg.
-//
-// Every final release is admitted; a pre-release is admitted only for a
-// package the set enables. "Pre-release" here is version.IsPreRelease, so a
-// development release (2.0.dev1) counts and a post-release (2.0.post1) does
-// not -- confirmed against go-python-packaging v0.5.0 rather than assumed.
-//
-// This is admission, not ranking: a version this method rejects is one the
-// resolution genuinely may not use, and the reason does not change while the
-// solver runs. Anything that merely makes a version less desirable belongs in
-// a Policy, where it cannot make the version look nonexistent.
+// Admits now decides ORDERING, not admission: every version of pkg is
+// admissible for existence, whatever this returns. What it decides is
+// whether v should be ranked no worse than pkg's final releases. A final
+// release always is; a pre-release is only for a package the set enables --
+// everyone else's pre-releases get ranked after every final release, so one
+// is picked only when nothing final is usable (see EnabledPrereleases).
+// "Pre-release" here is version.IsPreRelease, so a development release
+// (2.0.dev1) counts and a post-release (2.0.post1) does not -- confirmed
+// against go-python-packaging v0.5.0 rather than assumed.
 func (s PrereleaseSet) Admits(pkg index.PackageName, v version.Version) bool {
 	if !v.IsPreRelease() {
 		return true

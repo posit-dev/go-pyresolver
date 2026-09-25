@@ -59,9 +59,16 @@ type Options struct {
 	// See candidate.Rank.
 	Policy candidate.Policy
 
-	// AllowPrerelease names packages whose pre-release versions may be offered
-	// even though no requirement asked for one. Names must already be
-	// canonical (build them with index.NewPackageName).
+	// AllowPrerelease names packages whose pre-releases are ranked alongside
+	// their final releases, rather than only after every final release in
+	// range. Names must already be canonical (build them with
+	// index.NewPackageName).
+	//
+	// Every package's pre-releases are still offered as a fallback when no
+	// final release in range is usable, whether or not it is named here --
+	// see candidate.PrereleaseSet. This only affects a package where a final
+	// IS usable: named here, its newest pre-release can still beat an older
+	// final; not named, the final wins regardless of version order.
 	//
 	// A package whose own requirement names a pre-release -- ">=2.0rc1" -- is
 	// enabled without being listed here.
