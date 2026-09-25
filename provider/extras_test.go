@@ -77,11 +77,11 @@ func TestExtraDependsOnItsBaseAtExactlyTheSameVersion(t *testing.T) {
 	}
 }
 
-// PackageMetadata.ProvidesExtra exists precisely so pkg[tests] where the extra
-// is spelled test does not resolve happily and install nothing. Asserted
-// through Candidates, because found == false is exactly the signal the solver
-// reads as "no such thing" and turns into an explanation.
-func TestUnknownExtraHasNoCandidates(t *testing.T) {
+// An undeclared extra is ignored, as pip and uv do, rather than excluding the
+// version: pkg[tests], where the extra is spelled test, still resolves to the
+// newest version. Asserted through Candidates, since found == true and best
+// unchanged is the signal the solver reads as "usable".
+func TestUnknownExtraHasCandidatesAndPicksTheNewestVersion(t *testing.T) {
 	idx := index.NewMockIndex("test").
 		SetMetadata("flask", "3.0.0", index.PackageMetadata{
 			ProvidesExtra: []string{"async"},
@@ -89,8 +89,12 @@ func TestUnknownExtraHasNoCandidates(t *testing.T) {
 
 	p := provider.New(context.Background(), idx, testOptions(t))
 
-	if _, found, _, err := p.Candidates(provider.WithExtra("flask", "asynk"), pep440set.All()); err != nil || found {
-		t.Errorf("misspelled extra: found = %v, err = %v; want false, nil", found, err)
+	best, found, _, err := p.Candidates(provider.WithExtra("flask", "asynk"), pep440set.All())
+	if err != nil || !found {
+		t.Fatalf("misspelled extra: found = %v, err = %v; want true, nil", found, err)
+	}
+	if got := bestVersion(t, best); got.String() != "3.0.0" {
+		t.Errorf("misspelled extra: best = %s, want 3.0.0", got)
 	}
 	if _, found, _, err := p.Candidates(provider.WithExtra("flask", "async"), pep440set.All()); err != nil || !found {
 		t.Errorf("declared extra: found = %v, err = %v; want true, nil", found, err)
@@ -101,18 +105,12 @@ func TestUnknownExtraHasNoCandidates(t *testing.T) {
 	}
 }
 
-// Only the versions that declare the extra are SELECTABLE for it, which is what
-// makes "this package has that extra only from 3.0 on" resolvable rather than a
-// silent no-op.
-//
-// ⚠️ Note what rank does and does not say here. Three versions are in range and
-// only two provide the extra, and rank reports 3 — it counts what is in range
-// before usability is tested, deliberately, because testing usability is the cost
-// this provider exists to avoid. Over-counting is what this provider chooses --
-// go-pubgrub requires no bound either way -- and this is that gap in action. What
-// must still be exact is best (the newest version actually providing the extra)
-// and found.
-func TestCandidatesForAnExtraSelectOnlyVersionsThatProvideIt(t *testing.T) {
+// Every version is SELECTABLE for an extra, whether or not it declares one:
+// an undeclared extra is ignored rather than excluding the version. best is
+// the newest version overall, not the newest that happens to provide the
+// extra -- 2.0 (which does not declare "async") is exactly as usable as 3.0
+// and 4.0 here.
+func TestCandidatesForAnExtraAreEveryVersionRegardlessOfWhatItProvides(t *testing.T) {
 	idx := index.NewMockIndex("test").
 		SetMetadata("flask", "2.0", index.PackageMetadata{}).
 		SetMetadata("flask", "3.0", index.PackageMetadata{ProvidesExtra: []string{"async"}}).
@@ -125,14 +123,13 @@ func TestCandidatesForAnExtraSelectOnlyVersionsThatProvideIt(t *testing.T) {
 		t.Fatalf("Candidates: %v", err)
 	}
 	if !found {
-		t.Fatal("found = false, want true: 3.0 and 4.0 both provide the extra")
+		t.Fatal("found = false, want true: all three versions are usable")
 	}
 	if got := bestVersion(t, best); got.String() != "4.0" {
-		t.Errorf("best = %s, want 4.0 — the newest version that actually provides the extra, "+
-			"which is the part that must NOT be approximate", got)
+		t.Errorf("best = %s, want 4.0 — the newest version overall", got)
 	}
-	if rank < 2 {
-		t.Errorf("rank = %d, want at least 2: rank may over-count but must never under-count "+
+	if rank < 3 {
+		t.Errorf("rank = %d, want at least 3: rank may over-count but must never under-count "+
 			"the usable versions, or the heuristic would prefer this package over one that "+
 			"genuinely has fewer", rank)
 	}

@@ -239,25 +239,27 @@ func TestSolveWithoutTheExtraLeavesItsRequirementOut(t *testing.T) {
 
 // A misspelled extra must fail the resolve rather than install nothing and
 // report success. This is the end-to-end form of the ProvidesExtra check.
-func TestSolveMisspelledExtraFails(t *testing.T) {
+// A misspelled extra is ignored, as pip and uv do, rather than failing the
+// resolve: it does not backtrack away from the newest version, and it does
+// not pull in the real extra's requirements. See the paired resolver test,
+// TestResolveReportsAMissingExtra, for Resolution.MissingExtras.
+func TestSolveMisspelledExtraIsIgnoredAndPicksTheNewestVersion(t *testing.T) {
 	idx := index.NewMockIndex("test").
-		SetMetadata("flask", "3.0", index.PackageMetadata{ProvidesExtra: []string{"async"}})
+		AddVersion("flask", "2.0").
+		SetMetadata("flask", "3.0", index.PackageMetadata{
+			RequiresDist:  mustRequirements(t, `asgiref>=3.2; extra == "async"`),
+			ProvidesExtra: []string{"async"},
+		}).
+		AddVersion("asgiref", "3.7")
 
-	_, _, err := solve(t, idx, "flask[asynk]")
-
-	var unsolvable *solver.Unsolvable[provider.Package, pep440set.Set]
-	if !errors.As(err, &unsolvable) {
-		t.Fatalf("err = %v, want *solver.Unsolvable", err)
+	got, _, err := solve(t, idx, "flask[asynk]")
+	if err != nil {
+		t.Fatalf("Solve: %v", err)
 	}
 
-	// Asserting only the error TYPE would keep this test green if flask became
-	// unresolvable for some unrelated reason, which is precisely the failure it
-	// exists to distinguish. Pin the derivation to the misspelled extra.
-	if !causeMentions(unsolvable.RootCause, func(pkg provider.Package) bool {
-		return pkg == provider.WithExtra("flask", "asynk")
-	}) {
-		t.Errorf("root cause does not mention flask[asynk]; the resolve failed for some other reason: %v",
-			unsolvable.RootCause)
+	assertSelected(t, got, map[string]string{"flask": "3.0"})
+	if _, ok := got["asgiref"]; ok {
+		t.Errorf("the misspelled extra pulled in asgiref, which only the real async extra declares: %v", got)
 	}
 }
 

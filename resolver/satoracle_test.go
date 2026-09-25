@@ -143,10 +143,9 @@ func extraVar(pkg, extra, ver string) string { return pkg + "[" + extra + "]@" +
 // one per (package[extra], version); at-most-one per project; the root
 // requirements; and implications of the form x(p,v) -> OR(admissible
 // versions of each dependency). Extras are modeled the way go-pyresolver
-// models them (a version must itself declare an extra for a request naming it
-// to admit that version) so the oracle agrees with the resolver on the
-// extras/ knownFail scenarios rather than adding a second, unrelated
-// disagreement.
+// models them: a version that does not declare a requested extra still
+// admits the requirement, just without the extra clause -- an undeclared
+// extra is ignored rather than excluding the version.
 func buildOracleModel(t *testing.T, s tomlScenario, py pythonSpec, env marker.Environment, matcher *tags.Matcher) oracleModel {
 	t.Helper()
 
@@ -181,19 +180,13 @@ func buildOracleModel(t *testing.T, s tomlScenario, py pythonSpec, env marker.En
 			if r.Specifiers.String() != "" && !r.Specifiers.Check(vi.parsed) {
 				continue
 			}
-			ok := true
-			for _, e := range r.Extras {
-				if !vi.provides[e] {
-					ok = false
-					break
-				}
-			}
-			if !ok {
-				continue
-			}
+			// An extra vi does not declare is ignored rather than excluding vi:
+			// no term references its (nonexistent) extra variable.
 			term := []bf.Formula{bf.Var(projVar(name, vi.str))}
 			for _, e := range r.Extras {
-				term = append(term, bf.Var(extraVar(name, e, vi.str)))
+				if vi.provides[e] {
+					term = append(term, bf.Var(extraVar(name, e, vi.str)))
+				}
 			}
 			terms = append(terms, bf.And(term...))
 		}

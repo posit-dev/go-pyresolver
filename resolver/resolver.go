@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/posit-dev/go-pubgrub/solver"
 	"github.com/posit-dev/go-pyresolver/candidate"
@@ -25,8 +26,9 @@ import (
 // requires_dist is exactly that: arbitrary text published by third parties.
 // A resolution that hits this bound fails loudly instead of hanging.
 //
-// Unexported: this package's supported surface is Resolve, Options, Resolution
-// and ResolutionError, and a consumer that wants a specific bound sets one.
+// Unexported: this package's supported surface is Resolve, Options, Resolution,
+// ResolutionError, MissingExtra and Requester, and a consumer that wants a
+// specific bound sets one.
 const defaultMaxRounds = 10_000
 
 // Options configures one resolution.
@@ -179,6 +181,49 @@ type Resolution struct {
 	// detect a downgrade, either leave Policy nil or account for the ordering you
 	// imposed.
 	Unusable []provider.Unusable
+
+	// MissingExtras lists each requested package[extra] whose pinned version
+	// does not declare the extra. go-pyresolver ignores it rather than
+	// excluding that version, matching pip and uv, and this is the warning a
+	// caller shows for it.
+	//
+	// It describes the FINAL solution only: an extra requested on a branch the
+	// solver later backtracked past is not reported, the same way Extras never
+	// names a virtual package that was not ultimately selected.
+	//
+	// One entry per (requester, package, extra), sorted by (package, extra,
+	// requester).
+	MissingExtras []MissingExtra
+}
+
+// MissingExtra is a requested extra that the pinned version does not declare,
+// so it was ignored (pip and uv do the same).
+type MissingExtra struct {
+	// Package is the project whose extra is missing.
+	Package index.PackageName
+
+	// Version is Package's pinned version -- the one that does not declare
+	// Extra.
+	Version version.Version
+
+	// Extra is the PEP 685-normalized extra that was requested.
+	Extra string
+
+	// RequestedBy is who asked for Package[Extra].
+	RequestedBy Requester
+}
+
+// Requester is the root (the caller's own requirements) or one pinned
+// package.
+type Requester struct {
+	// Root is true when the caller's own requirements asked for the extra.
+	Root bool
+
+	// Package is empty when Root.
+	Package index.PackageName
+
+	// Version is the zero value when Root.
+	Version version.Version
 }
 
 // rootVersion is the synthetic version of the root package. Nothing in a
@@ -231,7 +276,130 @@ func Resolve(
 	// Read from the same provider the failure path reads, so a release set aside
 	// is reported identically whether the resolution went on to succeed or not.
 	res.Unusable = p.Unusable()
+	filterUndeclaredExtras(res, p.UndeclaredExtras())
+	res.MissingExtras = missingExtras(res, p.ExtraRequests(), p.UndeclaredExtras())
 	return res, nil
+}
+
+// undeclaredKey identifies one (package, version, extra) triple so
+// filterUndeclaredExtras and missingExtras can both test membership in the
+// provider's undeclared-extra set without version.Version's Equal, which
+// cannot key a map.
+func undeclaredKey(name index.PackageName, v version.Version, extra string) string {
+	return name.String() + "\x00" + v.String() + "\x00" + extra
+}
+
+// filterUndeclaredExtras removes an extra from res.Extras when the pinned
+// version does not declare it. Resolution.Extras documents itself as "what a
+// caller needs to reproduce the same install", and a version that never
+// declared the extra cannot be reproduced by asking for it.
+func filterUndeclaredExtras(res *Resolution, undeclared []provider.UndeclaredExtra) {
+	if len(undeclared) == 0 {
+		return
+	}
+	bad := make(map[string]bool, len(undeclared))
+	for _, u := range undeclared {
+		bad[undeclaredKey(u.Package, u.Version, u.Extra)] = true
+	}
+	for name, list := range res.Extras {
+		v, ok := res.Pinned[name]
+		if !ok {
+			continue
+		}
+		kept := list[:0]
+		for _, e := range list {
+			if !bad[undeclaredKey(name, v, e)] {
+				kept = append(kept, e)
+			}
+		}
+		if len(kept) == 0 {
+			delete(res.Extras, name)
+		} else {
+			res.Extras[name] = kept
+		}
+	}
+}
+
+// requesterKey renders a Requester so missingExtras can sort and dedupe on it
+// without version.Version's Equal, which cannot key a map or a sort compare
+// directly.
+func requesterKey(r Requester) string {
+	if r.Root {
+		return ""
+	}
+	return r.Package.String() + "@" + r.Version.String()
+}
+
+// missingExtras turns the provider's raw requester -> package[extra] edges
+// into MissingExtra values, keeping only what the FINAL solution still
+// contains: a requester that is pinned (Root always is) at the recorded
+// version, and a target whose pinned version does not declare the extra.
+//
+// The provider's edges include ones from a branch the solver later
+// backtracked past -- see the trap on warnings from versions the solver left
+// behind. Filtering against res.Pinned, rather than trusting the edge's own
+// recorded facts, is what excludes them.
+func missingExtras(
+	res *Resolution, requests []provider.ExtraRequest, undeclared []provider.UndeclaredExtra,
+) []MissingExtra {
+	bad := make(map[string]bool, len(undeclared))
+	for _, u := range undeclared {
+		bad[undeclaredKey(u.Package, u.Version, u.Extra)] = true
+	}
+
+	var out []MissingExtra
+	for _, req := range requests {
+		var requester Requester
+		var requesterPinned bool
+		switch req.Requester.Kind {
+		case provider.KindRoot:
+			requester = Requester{Root: true}
+			requesterPinned = true
+		case provider.KindProject:
+			requester = Requester{Package: req.Requester.Name, Version: req.RequesterVersion}
+			v, ok := res.Pinned[req.Requester.Name]
+			requesterPinned = ok && v.Equal(req.RequesterVersion)
+			// When the requester is itself an extra, its own extra must have
+			// survived into the final solution too -- a name+version match
+			// alone cannot tell an abandoned base[extra] apart from the base
+			// that survived with no extra active.
+			if requesterPinned && req.Requester.Extra != "" {
+				requesterPinned = slices.Contains(res.Extras[req.Requester.Name], req.Requester.Extra)
+			}
+		default:
+			continue // the interpreter never requests an extra
+		}
+		if !requesterPinned {
+			continue
+		}
+
+		v, ok := res.Pinned[req.Package]
+		if !ok || !bad[undeclaredKey(req.Package, v, req.Extra)] {
+			continue
+		}
+		out = append(out, MissingExtra{
+			Package:     req.Package,
+			Version:     v,
+			Extra:       req.Extra,
+			RequestedBy: requester,
+		})
+	}
+
+	slices.SortFunc(out, func(a, b MissingExtra) int {
+		if c := strings.Compare(a.Package.String(), b.Package.String()); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Extra, b.Extra); c != 0 {
+			return c
+		}
+		return strings.Compare(requesterKey(a.RequestedBy), requesterKey(b.RequestedBy))
+	})
+	return slices.CompactFunc(out, func(a, b MissingExtra) bool {
+		return a.Package == b.Package && a.Extra == b.Extra && a.Version.Equal(b.Version) &&
+			a.RequestedBy.Root == b.RequestedBy.Root &&
+			a.RequestedBy.Package == b.RequestedBy.Package &&
+			a.RequestedBy.Version.Equal(b.RequestedBy.Version)
+	})
 }
 
 // validate checks that the options describe ONE interpreter.
