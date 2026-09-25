@@ -73,25 +73,58 @@ func (p *Provider) ExactCandidates(pkg Package, allowed pep440set.Set) (pep440se
 		return pep440set.Empty(), false, 0, err
 	}
 
-	admissible := make([]version.Version, 0, len(all))
+	// Admission is range alone now -- nothing is excluded for being a
+	// pre-release, so every in-range version is tested for usability.
+	// finalsInRange is the SAME raw count Candidates uses for rank, kept
+	// separately so the count returned below can mirror it exactly rather
+	// than merely bound it.
+	inRange := make([]version.Version, 0, len(all))
+	finalsInRange := 0
 	for _, v := range all {
-		if !allowed.Contains(v) || !p.opts.Prereleases.Admits(pkg.Name, v) {
+		if !allowed.Contains(v) {
 			continue
 		}
+		inRange = append(inRange, v)
+		if !v.IsPreRelease() {
+			finalsInRange++
+		}
+	}
+
+	ranked := finalsFirst(pkg.Name, rankBySortRef(pkg.Name, inRange, p.opts.Policy), p.opts.Prereleases)
+
+	var (
+		best                    version.Version
+		found                   bool
+		finalsUsable, preUsable int
+	)
+	for _, v := range ranked {
 		ok, err := p.usable(pkg, v)
 		if err != nil {
 			return pep440set.Empty(), false, 0, err
 		}
-		if ok {
-			admissible = append(admissible, v)
+		if !ok {
+			continue
+		}
+		if v.IsPreRelease() {
+			preUsable++
+		} else {
+			finalsUsable++
+		}
+		if !found {
+			best, found = v, true
 		}
 	}
-	if len(admissible) == 0 {
+	if !found {
 		return pep440set.Empty(), false, 0, nil
 	}
-
-	ranked := rankBySortRef(pkg.Name, admissible, p.opts.Policy)
-	return pep440set.Exactly(ranked[0]), true, len(ranked), nil
+	// Mirrors Candidates' own rank rule (provider.go) exactly, not merely an
+	// upper bound of it: finalsInRange (raw) here equals the count Candidates
+	// itself computes, so finalsUsable/preUsable can never exceed it.
+	count := finalsUsable
+	if finalsInRange == 0 {
+		count = preUsable
+	}
+	return pep440set.Exactly(best), true, count, nil
 }
 
 // InRangeRanked is the ranked in-range version list Candidates walks, before any
@@ -109,10 +142,10 @@ func (p *Provider) InRangeRanked(pkg Package, allowed pep440set.Set) ([]version.
 
 	inRange := make([]version.Version, 0, len(all))
 	for _, v := range all {
-		if !allowed.Contains(v) || !p.opts.Prereleases.Admits(pkg.Name, v) {
-			continue
+		if allowed.Contains(v) {
+			inRange = append(inRange, v)
 		}
-		inRange = append(inRange, v)
 	}
-	return rankBySortRef(pkg.Name, inRange, p.opts.Policy), nil
+	ranked := rankBySortRef(pkg.Name, inRange, p.opts.Policy)
+	return finalsFirst(pkg.Name, ranked, p.opts.Prereleases), nil
 }

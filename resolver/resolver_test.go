@@ -301,22 +301,159 @@ func TestResolveHonoursThePolicy(t *testing.T) {
 	}
 }
 
+// AllowPrerelease no longer decides whether a pre-release exists in range --
+// every package's pre-releases are offered as a fallback when nothing final
+// is usable (see the field's doc comment and TestResolveFallsBackTo*). What
+// it decides is a pre-release winning a range where a final ALSO usable, so
+// flask needs a final release too for the two halves to differ.
 func TestResolveHonoursAllowPrerelease(t *testing.T) {
-	idx := index.NewMockIndex("test").AddVersion("flask", "2.0rc1")
+	idx := index.NewMockIndex("test").
+		AddVersion("flask", "1.0").
+		AddVersion("flask", "2.0rc1")
 
-	// A pre-release nobody asked for is not offered, so this cannot resolve.
-	if _, err := resolve(t, idx, "flask"); err == nil {
-		t.Fatal("a pre-release was offered without being asked for")
+	// Not asked for: the final release wins even though 2.0rc1 is newer.
+	res, err := resolve(t, idx, "flask")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got := pins(t, res)["flask"]; got != "1.0" {
+		t.Errorf("flask = %q, want 1.0 (not asked for a pre-release, and a final is usable)", got)
 	}
 
 	opts := testOptions(t)
 	opts.AllowPrerelease = []index.PackageName{index.NewPackageName("flask")}
-	res, err := resolver.Resolve(context.Background(), mustRequirements(t, "flask"), idx, opts)
+	res, err = resolver.Resolve(context.Background(), mustRequirements(t, "flask"), idx, opts)
 	if err != nil {
 		t.Fatalf("Resolve with AllowPrerelease: %v", err)
 	}
 	if got := pins(t, res)["flask"]; got != "2.0rc1" {
 		t.Errorf("flask = %q, want 2.0rc1", got)
+	}
+}
+
+// TestResolveAdmitsPrereleaseWhenNoFinalExists is unit test 1 of the
+// verification bar: the package has never published a final release.
+func TestResolveAdmitsPrereleaseWhenNoFinalExists(t *testing.T) {
+	idx := index.NewMockIndex("test").AddVersion("a", "1.0a1")
+
+	res, err := resolve(t, idx, "a")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := map[string]string{"a": "1.0a1"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
+	}
+}
+
+// TestResolveAdmitsDevReleaseAsPrerelease is unit test 2: a dev release is a
+// pre-release for this purpose, and the same in-range fallback applies to it.
+func TestResolveAdmitsDevReleaseAsPrerelease(t *testing.T) {
+	idx := index.NewMockIndex("test").AddVersion("a", "1.0.dev1")
+
+	res, err := resolve(t, idx, "a")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := map[string]string{"a": "1.0.dev1"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
+	}
+}
+
+// TestResolveFallsBackToPrereleaseWhenNoFinalInRange is unit test 3: the
+// in-range fallback itself. a's only final (0.1.0) is excluded by the root
+// specifier, so the pre-release is what pip and current uv would pick.
+func TestResolveFallsBackToPrereleaseWhenNoFinalInRange(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("a", "0.1.0").
+		AddVersion("a", "1.0a1")
+
+	res, err := resolve(t, idx, "a>0.1.0")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := map[string]string{"a": "1.0a1"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
+	}
+}
+
+// TestResolveResolvePrefersFinalOverPrereleaseInRange is unit test 4: the same
+// two versions, but with a final in range, so it wins over the newer
+// pre-release.
+func TestResolveResolvePrefersFinalOverPrereleaseInRange(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("a", "0.1.0").
+		AddVersion("a", "1.0a1")
+
+	res, err := resolve(t, idx, "a")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := map[string]string{"a": "0.1.0"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
+	}
+}
+
+// TestResolveTreatsPostReleaseAsFinal is unit test 5: a post-release is not a
+// pre-release, so it is preferred even over a newer pre-release.
+func TestResolveTreatsPostReleaseAsFinal(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("a", "1.0.post1").
+		AddVersion("a", "2.0a1")
+
+	res, err := resolve(t, idx, "a")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := map[string]string{"a": "1.0.post1"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
+	}
+}
+
+// TestResolvePicksNewerVersionViaPrereleaseFallbackAfterBacktracking is unit
+// test 6: the backtracking trap. Today x=2.0's dependency y>1.0 has nothing
+// final in range, so the resolver used to reject x=2.0 outright and settle
+// for the older x=1.0. Under the fallback, y's pre-release is usable, so x=2.0
+// resolves and is preferred as the newer version.
+func TestResolvePicksNewerVersionViaPrereleaseFallbackAfterBacktracking(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("x", "1.0").
+		AddVersion("x", "2.0", "y>1.0").
+		AddVersion("y", "1.0").
+		AddVersion("y", "2.0a1")
+
+	res, err := resolve(t, idx, "x")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := map[string]string{"x": "2.0", "y": "2.0a1"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
+	}
+}
+
+// TestResolveFallsBackToPrereleaseWhenFinalRuledOutByConflict is unit test 7:
+// the conflict case (Jon 2026-09-25: follow uv, not pip). b's only final
+// (1.0) depends on a package that does not exist, so once the solver rules it
+// out, b's range holds only the pre-release. pip would fail here because its
+// admission is decided by the specifier alone, before the conflict is known;
+// this resolver's admission is range-based throughout, so it does not.
+func TestResolveFallsBackToPrereleaseWhenFinalRuledOutByConflict(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("b", "1.0", "missing").
+		AddVersion("b", "2.0rc1")
+
+	res, err := resolve(t, idx, "b")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := map[string]string{"b": "2.0rc1"}
+	if got := pins(t, res); !reflect.DeepEqual(got, want) {
+		t.Errorf("Pinned = %v, want %v", got, want)
 	}
 }
 

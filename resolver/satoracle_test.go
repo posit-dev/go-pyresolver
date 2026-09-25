@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/crillab/gophersat/bf"
-	"github.com/posit-dev/go-pyresolver/candidate"
 	"github.com/posit-dev/go-pyresolver/index"
 	"github.com/posit-dev/go-pyresolver/resolver"
 	"github.com/posit-dev/go-python-packaging/extras"
@@ -70,21 +69,19 @@ func exactPinAdmitsYanked(root tomlRoot, pkgName string, v version.Version) bool
 }
 
 // oracleAdmissible computes, independently of provider/candidate, whether v
-// may be offered at all: Requires-Python, pre-release admission (sharing
-// candidate.PrereleaseSet -- the one deliberate exception named in this
-// package's mutation-proof and PR-body notes), and wheel/sdist availability.
-func oracleAdmissible(
-	v tomlVersion, parsed version.Version, py pythonSpec, prereleases candidate.PrereleaseSet, pkgName string, matcher *tags.Matcher,
-) bool {
+// may be offered at all: Requires-Python and wheel/sdist availability. Since
+// the pip/uv in-range fallback made pre-release status a ranking concern
+// rather than an admission one, the oracle shares no admission input with the
+// solver at all -- every version in range genuinely exists, and pin CHOICE
+// among pre-releases is covered by packse's expected.packages and the unit
+// tests instead.
+func oracleAdmissible(v tomlVersion, py pythonSpec, matcher *tags.Matcher) bool {
 	reqPy := requiresPythonOf(v)
 	if reqPy != "" {
 		specs, err := version.NewSpecifiers(reqPy)
 		if err == nil && !specs.Check(version.MustParse(py.full)) {
 			return false
 		}
-	}
-	if !prereleases.Admits(index.NewPackageName(pkgName), parsed) {
-		return false
 	}
 
 	facts := versionDistFacts(v)
@@ -153,8 +150,6 @@ func extraVar(pkg, extra, ver string) string { return pkg + "[" + extra + "]@" +
 func buildOracleModel(t *testing.T, s tomlScenario, py pythonSpec, env marker.Environment, matcher *tags.Matcher) oracleModel {
 	t.Helper()
 
-	prereleases := candidate.EnabledPrereleases(mustRequirements(t, s.Root.Requires...), oraclePrereleaseAllow(s))
-
 	versions := make(map[string][]oracleVersion, len(s.Packages))
 	for pkgName, pkg := range s.Packages {
 		name := index.NewPackageName(pkgName).String()
@@ -163,7 +158,7 @@ func buildOracleModel(t *testing.T, s tomlScenario, py pythonSpec, env marker.En
 			if err != nil {
 				t.Fatalf("oracle %s: %s %s: bad version: %v", s.Name, pkgName, verStr, err)
 			}
-			admissible := oracleAdmissible(v, parsed, py, prereleases, name, matcher) &&
+			admissible := oracleAdmissible(v, py, matcher) &&
 				(!v.Yanked || exactPinAdmitsYanked(s.Root, pkgName, parsed))
 			provides := make(map[string]bool, len(v.Extras))
 			for e := range v.Extras {
@@ -305,15 +300,6 @@ func originalPackageName(pkgs map[string]tomlPackage, canonical string) string {
 		}
 	}
 	return canonical
-}
-
-// oraclePrereleaseAllow mirrors runPackseScenario's resolver_options.prereleases
-// emulation, so the oracle and the resolver share the same admission input.
-func oraclePrereleaseAllow(s tomlScenario) []index.PackageName {
-	if !s.ResolverOptions.Prereleases {
-		return nil
-	}
-	return allPackageNames(s.Packages)
 }
 
 // resolverModel builds the variable assignment the CNF sees for a resolved

@@ -30,6 +30,21 @@ resolves one concrete marker environment at a time (see
 resolution is deferred by RFD 0001. `resolver/packse_test.go`'s `outOfScope`
 list names them.
 
+## Intentional divergence
+
+Six scenarios run against the real resolver but are asserted against pip's outcome instead of
+packse's `expected` block, because go-pyresolver deliberately matches pip over packse (uv).
+`resolver/packse_test.go`'s `intentionalDivergence` list names them and the pip outcome each one
+must produce.
+
+- `requires_python/python-less-than-current`: pip enforces the whole `Requires-Python` specifier,
+  upper bound included; uv ignores the upper bound.
+- The five `prereleases/*` scenarios where packse expects "unsatisfiable" because no final release
+  is in range: pip (`packaging.specifiers.SpecifierSet.filter`, PEP 440's own recommendation) and
+  current uv (astral-sh/uv#19993, "Support transitive pre-release dependencies") both fall back to
+  a pre-release instead of failing. packse's `prereleases/` scenarios were last touched before that
+  uv change, so they still encode the older, per-package rule.
+
 ## How to refresh
 
 Bump the pinned commit above, re-run the copy command (all 147 files, so a

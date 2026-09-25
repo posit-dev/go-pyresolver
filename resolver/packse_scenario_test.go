@@ -89,8 +89,8 @@ type tomlResolverOptions struct {
 
 // packseScenario is one loaded scenario, named by its path relative to
 // testdata/packse (e.g. "requires_python/python-less-than-current"), which is
-// what the classification lists (outOfScope, knownFail, unsupportedOption) key
-// on.
+// what the classification lists (outOfScope, knownFail, intentionalDivergence,
+// unsupportedOption) key on.
 type packseScenario struct {
 	relName  string // category/scenario-name, no extension
 	path     string

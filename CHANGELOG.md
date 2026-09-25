@@ -13,6 +13,12 @@ served it.
 
 ## [Unreleased]
 
+### Fixed
+
+- **When no final release satisfies a requirement's range, a pre-release is now chosen, as pip
+  and uv do.** A final release in range is still preferred. Some resolutions that used to fail or
+  backtrack now pick a pre-release or a newer version instead.
+
 ## [0.11.0] - 2026-09-18
 
 ### Breaking

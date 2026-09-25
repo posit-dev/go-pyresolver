@@ -6,12 +6,16 @@
 // Two separable things live here, and keeping them separate is the point:
 //
 //   - Admission is a yes/no about a single version, decided once before
-//     solving so it cannot move while the solver backtracks. Today that is the
-//     pre-release rule: see PrereleaseSet.
+//     solving so it cannot move while the solver backtracks.
 //   - Ranking is a total order over the admissible versions, supplied by the
 //     caller through Policy so that an embedder -- Package Manager, say -- can
 //     demote versions it would rather not install without making them
-//     unavailable. Newest is the default.
+//     unavailable. Newest is the default. The pre-release rule lives here too:
+//     see PrereleaseSet. A package's pre-releases rank alongside its finals if
+//     the caller enabled it, and after every final release otherwise, so a
+//     pre-release is chosen only when nothing final in range is usable -- the
+//     pip/uv in-range fallback. Nothing is ever inadmissible for being a
+//     pre-release.
 //
 // # Ranking must never remove a version
 //
