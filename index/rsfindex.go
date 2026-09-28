@@ -876,6 +876,7 @@ func (idx *RSFIndex) buildMetadata(raw pypirsf.VersionDeps) (PackageMetadata, *u
 		WheelTags:      raw.WheelTags,
 		HasSdist:       raw.HasSdist,
 		TagsCaptured:   raw.TagsCaptured,
+		Yanked:         raw.Yanked,
 	})
 	if err != nil {
 		// Reduced back to facts for the memo. ParseRecord's error already carries
@@ -903,6 +904,11 @@ func (idx *RSFIndex) buildMetadata(raw pypirsf.VersionDeps) (PackageMetadata, *u
 // index carried no tags at all, even for the versions where it does.
 func (idx *RSFIndex) WheelTagsComplete() bool {
 	return idx.file.WheelTagsComplete()
+}
+
+// YanksCaptured implements YankIndex from the file's own record-0 marker.
+func (idx *RSFIndex) YanksCaptured() bool {
+	return idx.file.YanksCaptured()
 }
 
 // Files implements MetadataIndex by always reporting ErrFilesUnavailable.
