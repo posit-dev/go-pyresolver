@@ -115,6 +115,12 @@ func rejectionExplanation(u provider.Unusable) string {
 		return fmt.Sprintf(
 			"Note: %s %s exists, but %s, so that version was not considered.",
 			u.Package.Name, u.Version, u.Reason)
+
+	case provider.KindYanked:
+		return fmt.Sprintf(
+			"Note: %s %s exists, but %s. Pin %s to that exact version with == "+
+				"if you need it anyway.",
+			u.Package.Name, u.Version, u.Reason, u.Package.Name)
 	}
 
 	return fmt.Sprintf("Note: %s %s was not considered because %s.",
