@@ -240,6 +240,13 @@ func (f *FilteredIndex) WheelTagsComplete() bool {
 	return WheelTagsComplete(f.inner)
 }
 
+// YanksCaptured implements YankIndex by deferring to inner, same reasoning as
+// WheelTagsComplete: a FilterPolicy removes versions, it never changes whether
+// the surviving versions' yank data is complete.
+func (f *FilteredIndex) YanksCaptured() bool {
+	return YanksCaptured(f.inner)
+}
+
 // NewFilteredIndex returns a FilteredIndex applying policy to inner.
 //
 // It panics if inner is nil. That is a programming error with no data behind it,

@@ -401,31 +401,64 @@ func TestDecodeTagSectionRejectsTruncationAndDrift(t *testing.T) {
 	}
 }
 
-// TestDecodeTagSectionIgnoresTrailingBytes protects the property that let this
-// change ship without a deps format-byte bump: a reader stops after the sections
-// it knows. If this reader ever rejected trailing bytes, the NEXT section appended
-// after the tags would break it -- the same trap the tag section itself was placed
-// to avoid.
+// TestDecodeTagSectionIgnoresTrailingBytes protects decodeTagSection's own
+// property: it stops after the one claim per pool slot and never looks past
+// its own section. unmarshalBlob now interprets bytes after the tag section as
+// a yank section, so garbage there is a decode error one layer up (see the
+// malformed-yank tests in yank_test.go) -- that changed on purpose once the
+// yank section stopped being hypothetical. This test stays at the
+// decodeTagSection level, below that change, to check what still holds.
 func TestDecodeTagSectionIgnoresTrailingBytes(t *testing.T) {
 	field, td, _ := crossrepoTagsFixture(t)
+	names := crossrepoDict(t).Names()
 
-	got, err := DecodePackage(field+string([]byte{0xde, 0xad, 0xbe, 0xef}), crossrepoDict(t), td)
+	blob, err := decompress(field, crossrepoDict(t))
 	if err != nil {
-		t.Fatalf("bytes after the tag section must be ignored: %v", err)
+		t.Fatalf("decompress: %v", err)
 	}
-	clean, err := DecodePackage(field, crossrepoDict(t), td)
-	if err != nil {
-		t.Fatalf("DecodePackage: %v", err)
-	}
+	tagBytes := tagSectionBytes(t, blob, names)
 
-	if len(got) != len(clean) {
-		t.Fatalf("trailing bytes changed the decode: %d versions vs %d", len(got), len(clean))
+	clean := decodeAgainstTagBytes(t, blob, names, td, tagBytes)
+	withGarbage := decodeAgainstTagBytes(t, blob, names, td, append(append([]byte(nil), tagBytes...), 0xde, 0xad, 0xbe, 0xef))
+
+	if len(withGarbage) != len(clean) {
+		t.Fatalf("trailing bytes changed the decode: %d slots vs %d", len(withGarbage), len(clean))
 	}
-	for ver, want := range clean {
-		if !sameRecord(want, got[ver]) {
-			t.Errorf("%s decoded differently with trailing bytes present", ver)
+	for i := range clean {
+		if !sameRecord(clean[i], withGarbage[i]) {
+			t.Errorf("slot %d decoded differently with trailing bytes present", i)
 		}
 	}
+}
+
+// tagSectionBytes returns everything left in blob once the pool and version
+// index are consumed, i.e. the tag section (and, on this branch, anything
+// after it).
+func tagSectionBytes(t *testing.T, blob []byte, names []string) []byte {
+	t.Helper()
+	r, _, _, err := decodeBlobBody(blob, names)
+	if err != nil {
+		t.Fatalf("decodeBlobBody: %v", err)
+	}
+	rest := make([]byte, r.Len())
+	if _, err := r.Read(rest); err != nil {
+		t.Fatalf("reading remainder: %v", err)
+	}
+	return rest
+}
+
+// decodeAgainstTagBytes re-decodes blob's pool and runs decodeTagSection
+// against tagBytes standing in for whatever trails the version index.
+func decodeAgainstTagBytes(t *testing.T, blob []byte, names []string, td *TagDict, tagBytes []byte) []VersionDeps {
+	t.Helper()
+	_, pool, _, err := decodeBlobBody(blob, names)
+	if err != nil {
+		t.Fatalf("decodeBlobBody: %v", err)
+	}
+	if err := decodeTagSection(bytes.NewReader(tagBytes), pool, td); err != nil {
+		t.Fatalf("decodeTagSection: %v", err)
+	}
+	return pool
 }
 
 // TestParseTagsdictFieldRejectsCorruption keeps a corrupt vocabulary a real

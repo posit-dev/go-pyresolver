@@ -213,3 +213,22 @@ func WheelTagsComplete(idx MetadataIndex) bool {
 	wt, ok := idx.(WheelTagIndex)
 	return ok && wt.WheelTagsComplete()
 }
+
+// YankIndex is the optional capability of reporting that an index's yank data
+// is complete enough to filter on. Same shape and same reasoning as
+// WheelTagIndex: per-INDEX, not per-version, AND over a composite's sources,
+// and every wrapper must forward it or it silently disables yank filtering
+// behind it.
+type YankIndex interface {
+	// YanksCaptured reports that every version this index serves has been
+	// checked for a yank, so PackageMetadata.Yanked can be trusted. False must
+	// be the answer whenever there is doubt.
+	YanksCaptured() bool
+}
+
+// YanksCaptured reports whether idx can be yank-filtered. An index that does
+// not implement YankIndex is reported not captured, the safe direction.
+func YanksCaptured(idx MetadataIndex) bool {
+	yi, ok := idx.(YankIndex)
+	return ok && yi.YanksCaptured()
+}

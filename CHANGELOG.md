@@ -13,6 +13,11 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- RSF deps blobs can carry a yank section; the provider skips yanked versions unless a root
+  requirement pins them with `==`/`===` (rstudio/package-manager#21025).
+
 ## [0.12.0] - 2026-09-25
 
 ### Fixed

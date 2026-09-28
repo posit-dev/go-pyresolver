@@ -123,6 +123,15 @@ type Provider struct {
 	// call to WheelTagsComplete on a MultiIndex would walk its sources on every
 	// admission test.
 	tagFilter bool
+
+	// yankFilter is whether this resolution may reject a version for being
+	// yanked: an index whose yank data is complete. Settled once, same
+	// reasoning as tagFilter.
+	yankFilter bool
+
+	// rootYankPins is the per-package set of root `==`/`===` specifiers that
+	// exempt a yanked version from rejection. See rootYankPins and yankExempt.
+	rootYankPins map[index.PackageName][]version.Specifier
 }
 
 // New returns a Provider for one resolution.
@@ -142,6 +151,8 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		undeclaredExtrasSeen: make(map[string]bool),
 		ranked:               make(map[index.PackageName][]version.Version),
 		tagFilter:            tagFilteringEnabled(idx, opts.WheelTags),
+		yankFilter:           index.YanksCaptured(idx),
+		rootYankPins:         rootYankPins(opts.Requirements),
 	}
 }
 
@@ -489,10 +500,11 @@ func singleVersion(v version.Version, allowed pep440set.Set) (pep440set.Set, boo
 // dependencies then fail, which surfaces as an aborted resolve rather than as
 // the conflict it really is.
 //
-// The wheel-tag test is the one thing here Dependencies does not do, and it is
-// safe in that direction only: it can reject a version Dependencies would have
-// answered for, never admit one Dependencies would fail on. Anything added here
-// that could go the other way breaks the invariant above.
+// The wheel-tag and yank tests are the things here Dependencies does not do,
+// and both are safe in that direction only: they can reject a version
+// Dependencies would have answered for, never admit one Dependencies would
+// fail on. Anything added here that could go the other way breaks the
+// invariant above.
 //
 // # Where the wheel-tag test sits, and why it is here rather than earlier
 //
@@ -527,6 +539,13 @@ func (p *Provider) usable(pkg Package, v version.Version) (bool, error) {
 			kind = KindNoDistributions
 		}
 		p.record(pkg, v, reason, kind, false)
+		return false, nil
+	}
+
+	if p.yankFilter && meta.Yanked && !p.yankExempt(pkg, v) {
+		p.record(pkg, v,
+			"it was yanked from the index and this resolution has no exact root pin for it",
+			KindYanked, false)
 		return false, nil
 	}
 

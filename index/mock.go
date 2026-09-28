@@ -43,6 +43,10 @@ type MockIndex struct {
 	// off -- which is what production does today, and the state a test is most
 	// likely to be wrong about.
 	tagsComplete bool
+
+	// yanksCaptured backs YanksCaptured, same default-false reasoning as
+	// tagsComplete.
+	yanksCaptured bool
 }
 
 type mockPackage struct {
@@ -124,6 +128,23 @@ func (m *MockIndex) WheelTagsComplete() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.tagsComplete
+}
+
+// SetYanksCaptured declares this mock's yank data complete, which is what
+// licenses a caller to filter on PackageMetadata.Yanked at all. Same
+// separate-from-SetMetadata reasoning as SetWheelTagsComplete.
+func (m *MockIndex) SetYanksCaptured(captured bool) *MockIndex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.yanksCaptured = captured
+	return m
+}
+
+// YanksCaptured implements YankIndex.
+func (m *MockIndex) YanksCaptured() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.yanksCaptured
 }
 
 // pkgLocked returns the entry for name, creating it if absent. Callers must

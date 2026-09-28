@@ -21,19 +21,7 @@ import (
 func buildDepsField(t *testing.T, byVersion map[string]VersionDeps, names []string) string {
 	t.Helper()
 
-	// Build a pool with one entry per version, in a stable order.
-	versions := make([]string, 0, len(byVersion))
-	for v := range byVersion {
-		versions = append(versions, v)
-	}
-	// Sorted so the fixture is deterministic run to run.
-	for i := 0; i < len(versions); i++ {
-		for j := i + 1; j < len(versions); j++ {
-			if versions[j] < versions[i] {
-				versions[i], versions[j] = versions[j], versions[i]
-			}
-		}
-	}
+	versions := sortedVersionKeys(byVersion)
 
 	nameIndex := make(map[string]int, len(names))
 	for i, n := range names {
@@ -69,6 +57,23 @@ func buildDepsField(t *testing.T, byVersion map[string]VersionDeps, names []stri
 	}
 
 	return string(append([]byte{depsFormatStored}, body.Bytes()...))
+}
+
+// sortedVersionKeys returns byVersion's keys sorted, so a fixture built from
+// them is deterministic run to run.
+func sortedVersionKeys(byVersion map[string]VersionDeps) []string {
+	versions := make([]string, 0, len(byVersion))
+	for v := range byVersion {
+		versions = append(versions, v)
+	}
+	for i := 0; i < len(versions); i++ {
+		for j := i + 1; j < len(versions); j++ {
+			if versions[j] < versions[i] {
+				versions[i], versions[j] = versions[j], versions[i]
+			}
+		}
+	}
+	return versions
 }
 
 // buildDepsdictField encodes a depsdict with the given names and no zstd

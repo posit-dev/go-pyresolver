@@ -57,6 +57,10 @@ const (
 	// KindNoDistributions is a version that publishes no wheels and no sdist, so
 	// there is nothing to install regardless of the target.
 	KindNoDistributions UnusableKind = "no-distributions"
+
+	// KindYanked is a version withdrawn per PEP 592, rejected because no root
+	// requirement pins it exactly.
+	KindYanked UnusableKind = "yanked"
 )
 
 // Reportable reports whether a record names a fact worth putting in front of
@@ -68,7 +72,7 @@ const (
 // reasons be silently dropped from failure reports.
 func (k UnusableKind) Reportable() bool {
 	switch k {
-	case KindMetadataUnavailable, KindNoCompatibleWheel, KindNoDistributions:
+	case KindMetadataUnavailable, KindNoCompatibleWheel, KindNoDistributions, KindYanked:
 		return true
 	case KindOther:
 		return false

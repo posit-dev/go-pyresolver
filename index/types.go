@@ -131,6 +131,13 @@ type PackageMetadata struct {
 	// is indistinguishable from one whose tags were never derived. See
 	// WheelTagIndex.
 	TagsCaptured bool
+
+	// Yanked reports whether this version was withdrawn per PEP 592.
+	//
+	// Only meaningful when the index also reports YankIndex.YanksCaptured;
+	// see that method for why per-version capture is not on its own enough to
+	// filter on this field.
+	Yanked bool
 }
 
 // SupportsPython reports whether this version's Requires-Python admits the given

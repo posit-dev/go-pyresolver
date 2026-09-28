@@ -138,6 +138,21 @@ func (m *MultiIndex) WheelTagsComplete() bool {
 	return true
 }
 
+// YanksCaptured implements YankIndex as the AND over every source, same
+// reasoning as WheelTagsComplete: an OR would license filtering versions
+// served by a source whose yank data was never derived.
+func (m *MultiIndex) YanksCaptured() bool {
+	if len(m.sources) == 0 {
+		return false
+	}
+	for _, src := range m.sources {
+		if !YanksCaptured(src) {
+			return false
+		}
+	}
+	return true
+}
+
 // NewMultiIndex returns a MultiIndex over sources, consulted in the given order.
 //
 // It panics on a nil source. That is a programming error with no data behind it,

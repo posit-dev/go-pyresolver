@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/posit-dev/go-pyresolver/index"
@@ -365,4 +366,96 @@ func TestPackse(t *testing.T) {
 
 	t.Logf("packse: %d scenarios = %d pass + %d known-fail + %d divergence + %d unsupported + %d out-of-scope",
 		len(scenarios), pass, known, diverged, unsupported, outScope)
+}
+
+// resolveYankedScenarioViaProvider resolves s the same way
+// resolvePackseScenario does, except the index carries
+// PackageMetadata.Yanked (not just file-level yanks) and YanksCaptured()
+// true, so filtering runs through provider.usable()'s KindYanked check --
+// including the root == pin exemption -- rather than
+// FilteredIndex.ExcludeYanked, which is file-level and cannot see
+// requirements.
+func resolveYankedScenarioViaProvider(t *testing.T, s tomlScenario) (*resolver.Resolution, error) {
+	t.Helper()
+
+	py, err := scenarioPython(s)
+	if err != nil {
+		t.Fatalf("build python target: %v", err)
+	}
+	target, err := buildTarget(py, s.ResolverOptions.PythonPlatform)
+	if err != nil {
+		t.Fatalf("build tags target: %v", err)
+	}
+	env, err := buildEnvironment(target, py)
+	if err != nil {
+		t.Fatalf("build marker environment: %v", err)
+	}
+	filter, err := wheelTagFilter(target, fmt.Sprintf("cp%d%d on %s/%s", py.major, py.minor, target.OS, target.Arch))
+	if err != nil {
+		t.Fatalf("build wheel tag filter: %v", err)
+	}
+
+	idx := buildMockIndex(t, s.Name, s.Packages)
+	idx.SetYanksCaptured(true)
+
+	opts := resolver.Options{
+		Environment:   env,
+		PythonVersion: version.MustParse(py.full),
+		WheelTags:     filter,
+	}
+	if s.ResolverOptions.Prereleases {
+		opts.AllowPrerelease = allPackageNames(s.Packages)
+	}
+
+	reqs := mustRequirements(t, s.Root.Requires...)
+	return resolver.Resolve(context.Background(), reqs, idx, opts)
+}
+
+// yankProviderKnownDivergence lists yanked/ scenarios where resolving
+// through the provider path disagrees with packse's own expectation, each
+// with a one-line reason. Never t.Skip a scenario instead of listing it
+// here -- see knownFail's doc comment above for why.
+var yankProviderKnownDivergence = map[string]string{}
+
+// TestPackseYankedViaProvider runs the 9 yanked/ scenarios a second time
+// through the provider's KindYanked check instead of
+// FilteredIndex.ExcludeYanked. This is what actually exercises the root ==
+// pin exemption (decision 5): transitive-package-only-yanked-in-range-opt-in
+// and transitive-yanked-and-unyanked-dependency-opt-in, which TestPackse
+// lists on knownFail because ExcludeYanked can't see the root pin, are
+// expected to match packse here.
+func TestPackseYankedViaProvider(t *testing.T) {
+	scenarios := loadPackseScenarios(t)
+	var ran int
+	for _, ps := range scenarios {
+		if !strings.HasPrefix(ps.relName, "yanked/") {
+			continue
+		}
+		ran++
+		name := ps.relName
+		s := ps.scenario
+
+		t.Run(name, func(t *testing.T) {
+			res, resolveErr := resolveYankedScenarioViaProvider(t, s)
+
+			if reason, ok := yankProviderKnownDivergence[name]; ok {
+				matched, _ := matchOutcome(t, res, resolveErr, s.Expected.Satisfiable, s.Expected.Packages)
+				if matched {
+					t.Errorf("%s unexpectedly matched packse (%s), remove it from yankProviderKnownDivergence",
+						name, reason)
+				}
+				return
+			}
+
+			matched, detail := matchOutcome(t, res, resolveErr, s.Expected.Satisfiable, s.Expected.Packages)
+			if !matched {
+				t.Errorf("%s: %s", name, detail)
+			}
+		})
+	}
+
+	if ran != 9 {
+		t.Errorf("expected 9 yanked/ scenarios, found %d -- update this test (and yankProviderKnownDivergence) "+
+			"if the corpus changed", ran)
+	}
 }

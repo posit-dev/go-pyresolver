@@ -273,6 +273,9 @@ type RawRecord struct {
 	// which reads as uncaptured. Setting TagsCaptured without real tags claims the
 	// version publishes no wheels, and a consumer will reject it.
 	TagsCaptured bool
+
+	// Yanked reports whether this version was withdrawn per PEP 592.
+	Yanked bool
 }
 
 // ParseRecord builds the parsed metadata triple from the strings a record
@@ -354,6 +357,7 @@ func ParseRecord(raw RawRecord) (PackageMetadata, error) {
 	meta.WheelTags = raw.WheelTags
 	meta.HasSdist = raw.HasSdist
 	meta.TagsCaptured = raw.TagsCaptured
+	meta.Yanked = raw.Yanked
 
 	return meta, nil
 }
