@@ -71,6 +71,11 @@ type File struct {
 
 	// offsets maps canonical name to the byte offset of that package's record.
 	offsets map[string]int64
+
+	// yanksCaptured is the yank marker: whether record 0's deps blob carries a
+	// yank section. False is the safe default (pre-cutover files, and files
+	// mid-backfill before the marker is written).
+	yanksCaptured bool
 }
 
 // Open reads path and indexes it.
@@ -152,6 +157,22 @@ func (file *File) scan() error {
 		// rather than seeking back for it later.
 		if first {
 			first = false
+
+			// The reader only advances forward and "deps" precedes "depsdict"/
+			// "tagsdict" in field order, so record 0's deps must be captured here
+			// to check for the yank marker once dict/tags are loaded below.
+			var deps0 string
+			if err := r.AdvanceTo(buf, "deps"); err != nil {
+				if !errors.Is(err, rsf.ErrNoSuchField) {
+					return fmt.Errorf("pypirsf: advancing to deps on record 0: %w", err)
+				}
+			} else {
+				deps0, err = r.ReadStringField(buf)
+				if err != nil {
+					return fmt.Errorf("pypirsf: reading deps on record 0: %w", err)
+				}
+			}
+
 			if err := file.loadDictLocked(r, buf); err != nil {
 				return err
 			}
@@ -159,6 +180,20 @@ func (file *File) scan() error {
 			// forward only, and tagsdict is the last field in the record.
 			if err := file.loadTagsLocked(r, buf); err != nil {
 				return err
+			}
+
+			if deps0 != "" {
+				blob, err := decompress(deps0, file.dict)
+				if err != nil {
+					return fmt.Errorf("pypirsf: decompressing record 0 deps: %w", err)
+				}
+				if blob != nil {
+					captured, err := hasTrailingYankSection(blob, file.dict.Names(), file.tags)
+					if err != nil {
+						return fmt.Errorf("pypirsf: checking record 0 for yank marker: %w", err)
+					}
+					file.yanksCaptured = captured
+				}
 			}
 		}
 
@@ -281,6 +316,12 @@ func (file *File) TagDict() *TagDict { return file.tags }
 // the outside like the filter working well. False means disable tag filtering
 // entirely.
 func (file *File) WheelTagsComplete() bool { return file.tags.Complete() }
+
+// YanksCaptured reports whether this file's yank data can be filtered on: it
+// is the marker check on record 0's deps blob (byte-layout contract), true
+// only once a producer has run its yank backfill over the whole file. False
+// means disable yank filtering entirely, same rationale as WheelTagsComplete.
+func (file *File) YanksCaptured() bool { return file.yanksCaptured }
 
 // Len reports how many package records the file contains.
 func (file *File) Len() int { return len(file.offsets) }

@@ -101,52 +101,64 @@ func decodeDepSet(r *bytes.Reader, names []string) (VersionDeps, error) {
 // slots. This is the producer's identity rule, and the decoder only has to not
 // assume otherwise -- but see the loop below for why the tag section forces this
 // function's shape.
-func unmarshalBlob(b []byte, names []string, td *TagDict) (map[string]VersionDeps, error) {
+// versionSlot pairs a version string with its slot index in the pool.
+type versionSlot struct {
+	ver  string
+	slot uint64
+}
+
+// decodeBlobBody reads the pool and the version-to-slot index shared by every
+// deps blob, leaving r positioned at whatever optional sections (tags, yank)
+// follow.
+func decodeBlobBody(b []byte, names []string) (*bytes.Reader, []VersionDeps, []versionSlot, error) {
 	r := bytes.NewReader(b)
 
 	poolCount, err := readUvarint(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	pool := make([]VersionDeps, 0, capHint(poolCount, r, 3))
 	for i := uint64(0); i < poolCount; i++ {
 		ds, err := decodeDepSet(r, names)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 		pool = append(pool, ds)
 	}
 
-	// ⚠️ The version index CANNOT be flattened into the result map as it is read
-	// any more. Tags arrive AFTER the index and are written onto the pool, so a
-	// copy taken during the index walk would predate its own tags and every
-	// version would come back uncaptured -- with no error, which is the failure
-	// shape this whole layer is prone to. Collect the pairs, apply the tags, then
-	// flatten.
-	type versionSlot struct {
-		ver  string
-		slot uint64
-	}
 	versionCount, err := readUvarint(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	pairs := make([]versionSlot, 0, capHint(versionCount, r, 2))
 	for i := uint64(0); i < versionCount; i++ {
 		ver, err := readStr(r)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 		idx, err := readUvarint(r)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 		if idx >= uint64(len(pool)) {
-			return nil, fmt.Errorf("pypirsf: pool index %d out of range (%d entries)", idx, len(pool))
+			return nil, nil, nil, fmt.Errorf("pypirsf: pool index %d out of range (%d entries)", idx, len(pool))
 		}
 		pairs = append(pairs, versionSlot{ver: ver, slot: idx})
 	}
 
+	return r, pool, pairs, nil
+}
+
+func unmarshalBlob(b []byte, names []string, td *TagDict) (map[string]VersionDeps, error) {
+	r, pool, pairs, err := decodeBlobBody(b, names)
+	if err != nil {
+		return nil, err
+	}
+
+	// ⚠️ The version index CANNOT be flattened into the result map before tags
+	// and yanks are applied: both arrive after the index and are written onto
+	// the pool (tags) or looked up by version-list position (yank), so a copy
+	// taken earlier would predate them.
 	if err := decodeTagSection(r, pool, td); err != nil {
 		return nil, err
 	}
@@ -154,6 +166,18 @@ func unmarshalBlob(b []byte, names []string, td *TagDict) (map[string]VersionDep
 	out := make(map[string]VersionDeps, len(pairs))
 	for _, p := range pairs {
 		out[p.ver] = pool[p.slot]
+	}
+
+	if r.Len() > 0 {
+		yanked, err := decodeYankSection(r, len(pairs))
+		if err != nil {
+			return nil, err
+		}
+		for _, idx := range yanked {
+			vd := out[pairs[idx].ver]
+			vd.Yanked = true
+			out[pairs[idx].ver] = vd
+		}
 	}
 
 	return out, nil

@@ -72,4 +72,11 @@ type VersionDeps struct {
 	// backfilled snapshot the captured minority is not a corpus you can filter
 	// against.
 	TagsCaptured bool
+
+	// Yanked reports that this version was withdrawn per PEP 592.
+	//
+	// A version not marked Yanked when the file's marker is absent means
+	// nothing — it does not mean "not yanked". Check File.YanksCaptured (or
+	// index.YanksCaptured) before trusting this field at all.
+	Yanked bool
 }
