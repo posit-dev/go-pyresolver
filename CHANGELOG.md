@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-28
+
 ### Added
 
 - RSF deps blobs can carry a yank section; the provider skips yanked versions unless a root
