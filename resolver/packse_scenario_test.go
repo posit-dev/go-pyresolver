@@ -310,6 +310,7 @@ func buildMockIndex(t *testing.T, name string, pkgs map[string]tomlPackage) *ind
 				WheelTags:      facts.wheelTags,
 				HasSdist:       facts.hasSdist,
 				TagsCaptured:   true,
+				Yanked:         v.Yanked,
 			})
 			if err != nil {
 				t.Fatalf("%s %s %s: %v", name, pkgName, verStr, err)
