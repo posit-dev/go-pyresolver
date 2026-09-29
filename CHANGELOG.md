@@ -27,6 +27,9 @@ served it.
   data (rstudio/pypi-manifest#99 never merged) and is superseded by the layout above. The
   decoder (`EnsureYankSection`, `MinimalYankMarkerField`, `decodeYankSection`) is left in place,
   untouched, in case anything still writes it; it is no longer consulted for `YanksCaptured()`.
+- Read cost stays within S1's +/-5% bar: `BenchmarkOpenSnapshot` on a corpus-scale file with the
+  sentinel record is within ~3.5% of the same corpus without one; `ResolveCold`/`ResolveWarm`
+  show no measurable regression. See the PR for full numbers.
 
 ## [0.13.0] - 2026-09-28
 
