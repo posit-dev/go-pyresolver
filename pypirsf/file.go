@@ -85,6 +85,13 @@ type File struct {
 	// merely that a sentinel record exists. False (including "no sentinel at
 	// all") is the safe default -- disable yank filtering entirely.
 	historyCaptured bool
+
+	// historyErr records why the sentinel record, if one was present, failed
+	// to decode. A decode failure (bad formatVersion, malformed payload) does
+	// not fail Open(): it degrades to the same safe default as no sentinel at
+	// all, so it is kept here for diagnostics rather than surfaced as an
+	// error every caller of Open() would otherwise have to handle.
+	historyErr error
 }
 
 // Open reads path and indexes it.
@@ -164,7 +171,12 @@ func (file *File) scan() error {
 		// without adding it to offsets, so it never appears in Packages/Has/Len.
 		if cname == ldSentinelCname {
 			if err := file.loadYankHistoryLocked(r, buf); err != nil {
-				return fmt.Errorf("pypirsf: reading yank-history sentinel at %d: %w", recordStart, err)
+				// A sentinel that exists but fails to decode degrades to the
+				// same safe default as no sentinel at all (filtering
+				// disabled), rather than failing Open() for the whole file.
+				file.history = nil
+				file.historyCaptured = false
+				file.historyErr = fmt.Errorf("pypirsf: reading yank-history sentinel at %d: %w", recordStart, err)
 			}
 
 			remaining := recordEnd - r.Pos()
@@ -350,6 +362,12 @@ func (file *File) WheelTagsComplete() bool { return file.tags.Complete() }
 // stray v0.13.0-style design-B marker must NOT flip to true; that design
 // never reached production and is superseded by the sentinel record.
 func (file *File) YanksCaptured() bool { return file.historyCaptured }
+
+// HistoryError returns why the yank-history sentinel failed to decode, or nil
+// if it decoded fine or the file carries no sentinel at all. It never fails
+// Open(); YanksCaptured() already reports false in this case, so this is only
+// for diagnostics.
+func (file *File) HistoryError() error { return file.historyErr }
 
 // Len reports how many package records the file contains.
 func (file *File) Len() int { return len(file.offsets) }

@@ -83,7 +83,7 @@ func decodeYankHistory(blob []byte) (h *yankHistory, captured bool, err error) {
 	if err != nil {
 		return nil, false, err
 	}
-	h = &yankHistory{byPkg: make(map[string]map[string][]yankTransition, numPkgs)}
+	h = &yankHistory{byPkg: make(map[string]map[string][]yankTransition, capHint(numPkgs, r, 2))}
 
 	for p := uint64(0); p < numPkgs; p++ {
 		cname, err := readStr(r)
@@ -94,7 +94,7 @@ func decodeYankHistory(blob []byte) (h *yankHistory, captured bool, err error) {
 		if err != nil {
 			return nil, false, err
 		}
-		vm := make(map[string][]yankTransition, numVers)
+		vm := make(map[string][]yankTransition, capHint(numVers, r, 2))
 		for v := uint64(0); v < numVers; v++ {
 			version, err := readStr(r)
 			if err != nil {

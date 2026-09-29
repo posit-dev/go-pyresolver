@@ -314,3 +314,79 @@ func TestLDDoesNotMistakeDesignBForHistory(t *testing.T) {
 			"design-B must not enable filtering under the new layout")
 	}
 }
+
+// TestLDHugeCountsAreCappedNotAllocated proves numPkgs and numVers go through
+// capHint like every other count in this package, instead of sizing the map
+// directly: a payload that declares a huge count but does not back it with
+// real data must fail with a clean decode error, not attempt an oversized
+// map allocation.
+func TestLDHugeCountsAreCappedNotAllocated(t *testing.T) {
+	t.Run("huge numPkgs", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.WriteByte(1) // format version
+		buf.WriteByte(1) // captured
+		putUvarint(&buf, 1<<62)
+		// No package data follows: a real payload this large would be many
+		// times the file's own size.
+		if _, _, err := decodeYankHistory(buf.Bytes()); err == nil {
+			t.Fatal("decodeYankHistory: want error for a numPkgs the payload cannot back, got nil")
+		}
+	})
+
+	t.Run("huge numVers", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.WriteByte(1)        // format version
+		buf.WriteByte(1)        // captured
+		putUvarint(&buf, 1)     // numPkgs
+		putStr(&buf, "flask")   // cname
+		putUvarint(&buf, 1<<62) // numVers
+		// No version data follows.
+		if _, _, err := decodeYankHistory(buf.Bytes()); err == nil {
+			t.Fatal("decodeYankHistory: want error for a numVers the payload cannot back, got nil")
+		}
+	})
+}
+
+// TestLDCorruptSentinelFailsOpen proves a sentinel record that exists but
+// fails to decode (bad format version here) degrades to the same safe
+// default as no sentinel at all, rather than failing Open() for the whole
+// file: YanksCaptured() is false, HistoryError() reports why, and every real
+// package still loads.
+func TestLDCorruptSentinelFailsOpen(t *testing.T) {
+	names := []string{"werkzeug"}
+	flask := PackageRecord{
+		CanonicalName: "flask",
+		ProjectName:   "Flask",
+		Snapshots:     []SnapshotRecord{{Snapshot: "2026080100", Version: "1.0.0", ReleaseDate: "\x00\x01", Summary: "s"}},
+		Deps:          buildDepsField(t, map[string]VersionDeps{"1.0.0": {}}, names),
+		Depsdict:      buildDepsdictField(names),
+	}
+
+	var corrupt bytes.Buffer
+	corrupt.WriteByte(99) // unsupported format version
+	field := string(append([]byte{depsFormatStored}, corrupt.Bytes()...))
+
+	path := writeFixtureRSF(t, []PackageRecord{flask, sentinelRecord(field)})
+	f, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: want no error for a corrupt sentinel, got %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if f.YanksCaptured() {
+		t.Error("YanksCaptured() = true with a corrupt sentinel payload")
+	}
+	if f.HistoryError() == nil {
+		t.Error("HistoryError() = nil, want the decode error to be recorded")
+	}
+	if f.Len() != 1 {
+		t.Errorf("Len() = %d, want 1 (flask must still load)", f.Len())
+	}
+	deps, err := f.Deps("flask")
+	if err != nil {
+		t.Fatalf("Deps: want flask to still load, got %v", err)
+	}
+	if deps["1.0.0"].Yanked {
+		t.Error("Yanked = true with no usable yank data")
+	}
+}
