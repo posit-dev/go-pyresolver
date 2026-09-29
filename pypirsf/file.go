@@ -70,12 +70,21 @@ type File struct {
 	tags *TagDict
 
 	// offsets maps canonical name to the byte offset of that package's record.
+	// The yank-history sentinel record, if present, is never added here -- it
+	// is not a package.
 	offsets map[string]int64
 
-	// yanksCaptured is the yank marker: whether record 0's deps blob carries a
-	// yank section. False is the safe default (pre-cutover files, and files
-	// mid-backfill before the marker is written).
-	yanksCaptured bool
+	// history is the decoded yank-history sentinel payload, or nil when the
+	// file carries no sentinel record at all. Deps applies it to every
+	// version it names regardless of historyCaptured -- filtering is what
+	// historyCaptured gates, not decoding.
+	history *yankHistory
+
+	// historyCaptured is the sentinel payload's own marker byte: true only
+	// once the producer's backfill has checked every non-deleted element, not
+	// merely that a sentinel record exists. False (including "no sentinel at
+	// all") is the safe default -- disable yank filtering entirely.
+	historyCaptured bool
 }
 
 // Open reads path and indexes it.
@@ -151,27 +160,30 @@ func (file *File) scan() error {
 		if err != nil {
 			return fmt.Errorf("pypirsf: reading cname at %d: %w", recordStart, err)
 		}
+		// The yank-history sentinel is not a package: decode it and move on,
+		// without adding it to offsets, so it never appears in Packages/Has/Len.
+		if cname == ldSentinelCname {
+			if err := file.loadYankHistoryLocked(r, buf); err != nil {
+				return fmt.Errorf("pypirsf: reading yank-history sentinel at %d: %w", recordStart, err)
+			}
+
+			remaining := recordEnd - r.Pos()
+			if remaining < 0 {
+				return fmt.Errorf("pypirsf: record at %d overran its declared size by %d bytes",
+					recordStart, -remaining)
+			}
+			if err := r.Discard(remaining, buf, rsf.Top); err != nil {
+				return fmt.Errorf("pypirsf: skipping to next record after %d: %w", recordStart, err)
+			}
+			continue
+		}
+
 		file.offsets[cname] = int64(recordStart)
 
 		// The global dictionary lives on the first record only. Read it here
 		// rather than seeking back for it later.
 		if first {
 			first = false
-
-			// The reader only advances forward and "deps" precedes "depsdict"/
-			// "tagsdict" in field order, so record 0's deps must be captured here
-			// to check for the yank marker once dict/tags are loaded below.
-			var deps0 string
-			if err := r.AdvanceTo(buf, "deps"); err != nil {
-				if !errors.Is(err, rsf.ErrNoSuchField) {
-					return fmt.Errorf("pypirsf: advancing to deps on record 0: %w", err)
-				}
-			} else {
-				deps0, err = r.ReadStringField(buf)
-				if err != nil {
-					return fmt.Errorf("pypirsf: reading deps on record 0: %w", err)
-				}
-			}
 
 			if err := file.loadDictLocked(r, buf); err != nil {
 				return err
@@ -180,20 +192,6 @@ func (file *File) scan() error {
 			// forward only, and tagsdict is the last field in the record.
 			if err := file.loadTagsLocked(r, buf); err != nil {
 				return err
-			}
-
-			if deps0 != "" {
-				blob, err := decompress(deps0, file.dict)
-				if err != nil {
-					return fmt.Errorf("pypirsf: decompressing record 0 deps: %w", err)
-				}
-				if blob != nil {
-					captured, err := hasTrailingYankSection(blob, file.dict.Names(), file.tags)
-					if err != nil {
-						return fmt.Errorf("pypirsf: checking record 0 for yank marker: %w", err)
-					}
-					file.yanksCaptured = captured
-				}
 			}
 		}
 
@@ -286,6 +284,34 @@ func (file *File) loadTagsLocked(r rsf.Reader, buf *bufio.Reader) error {
 	return nil
 }
 
+// loadYankHistoryLocked reads the sentinel record's deps field, with the
+// reader positioned right after cname, and decodes it into file.history.
+func (file *File) loadYankHistoryLocked(r rsf.Reader, buf *bufio.Reader) error {
+	if err := r.AdvanceTo(buf, "deps"); err != nil {
+		return fmt.Errorf("advancing to deps: %w", err)
+	}
+	field, err := r.ReadStringField(buf)
+	if err != nil {
+		return fmt.Errorf("reading deps: %w", err)
+	}
+	if field == "" {
+		return fmt.Errorf("sentinel record has no deps payload")
+	}
+
+	blob, err := decompress(field, file.dict)
+	if err != nil {
+		return fmt.Errorf("decompressing: %w", err)
+	}
+	history, captured, err := decodeYankHistory(blob)
+	if err != nil {
+		return fmt.Errorf("decoding: %w", err)
+	}
+	file.history = history
+	file.historyCaptured = captured
+
+	return nil
+}
+
 // Close releases the file and the shared decoder.
 func (file *File) Close() error {
 	var dictErr error
@@ -317,11 +343,13 @@ func (file *File) TagDict() *TagDict { return file.tags }
 // entirely.
 func (file *File) WheelTagsComplete() bool { return file.tags.Complete() }
 
-// YanksCaptured reports whether this file's yank data can be filtered on: it
-// is the marker check on record 0's deps blob (byte-layout contract), true
-// only once a producer has run its yank backfill over the whole file. False
-// means disable yank filtering entirely, same rationale as WheelTagsComplete.
-func (file *File) YanksCaptured() bool { return file.yanksCaptured }
+// YanksCaptured reports whether this file's yank data can be filtered on: the
+// sentinel record's own "captured" marker byte, true only once the producer's
+// backfill has checked every non-deleted element. False means disable yank
+// filtering entirely, same rationale as WheelTagsComplete -- and is what a
+// stray v0.13.0-style design-B marker must NOT flip to true; that design
+// never reached production and is superseded by the sentinel record.
+func (file *File) YanksCaptured() bool { return file.historyCaptured }
 
 // Len reports how many package records the file contains.
 func (file *File) Len() int { return len(file.offsets) }
@@ -391,5 +419,12 @@ func (file *File) Deps(cname string) (map[string]VersionDeps, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pypirsf: %q: %w", cname, err)
 	}
+
+	// Latest snapshot element only; as-of-snapshot resolution is future work
+	// (rstudio/package-manager#20929).
+	if file.history != nil {
+		file.history.applyLatest(cname, deps)
+	}
+
 	return deps, nil
 }

@@ -13,6 +13,21 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `pypirsf` reads yank state from the new per-snapshot layout: a synthetic sentinel record
+  (design LD) appended as the file's last record, decoded via `rstudio/pypi-manifest`'s wire
+  format. `YanksCaptured()` now answers from that record's own "captured" marker byte instead of
+  a v0.13.0-style trailing-bytes check on record 0. Reads the latest state only; as-of-snapshot
+  resolution is future work (rstudio/package-manager#20929).
+
+### Notes
+
+- v0.13.0's yank support (RSF deps-blob trailing section, "design B") never carried production
+  data (rstudio/pypi-manifest#99 never merged) and is superseded by the layout above. The
+  decoder (`EnsureYankSection`, `MinimalYankMarkerField`, `decodeYankSection`) is left in place,
+  untouched, in case anything still writes it; it is no longer consulted for `YanksCaptured()`.
+
 ## [0.13.0] - 2026-09-28
 
 ### Added

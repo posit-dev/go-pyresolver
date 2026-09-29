@@ -312,10 +312,10 @@ func TestMinimalYankMarkerField(t *testing.T) {
 	}
 }
 
-// TestFileYanksCapturedNeedsRecordZeroMarker proves the marker is read only
-// from record 0's deps blob, matching the byte-layout contract: a file where
-// SOME package (not record 0) has a yank section still reports
-// YanksCaptured() false, and readers must not filter on it.
+// TestFileYanksCapturedNeedsRecordZeroMarker proves the v0.13.0 design-B
+// record-0 marker is superseded: it never drives YanksCaptured() any more,
+// with or without a sentinel record. See TestLDSentinelDrivesYanksCaptured for
+// the mechanism that replaced it.
 func TestFileYanksCapturedNeedsRecordZeroMarker(t *testing.T) {
 	names := []string{"werkzeug", "jinja2"}
 	dictField := buildDepsdictField(names)
@@ -363,8 +363,8 @@ func TestFileYanksCapturedNeedsRecordZeroMarker(t *testing.T) {
 		}
 		defer func() { _ = f.Close() }()
 
-		if !f.YanksCaptured() {
-			t.Error("YanksCaptured() = false with a marker on record 0")
+		if f.YanksCaptured() {
+			t.Error("YanksCaptured() = true from a superseded design-B marker with no sentinel record")
 		}
 	})
 
