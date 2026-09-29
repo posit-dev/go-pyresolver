@@ -20,6 +20,8 @@ served it.
   format. `YanksCaptured()` now answers from that record's own "captured" marker byte instead of
   a v0.13.0-style trailing-bytes check on record 0. Reads the latest state only; as-of-snapshot
   resolution is future work (rstudio/package-manager#20929).
+- `pypirsf.File.HistoryError()` reports why the yank-history record failed to decode. A corrupt
+  record no longer fails `Open`; yank data is treated as absent.
 
 ### Notes
 

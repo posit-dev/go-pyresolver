@@ -348,10 +348,11 @@ func TestLDHugeCountsAreCappedNotAllocated(t *testing.T) {
 }
 
 // TestLDCorruptSentinelFailsOpen proves a sentinel record that exists but
-// fails to decode (bad format version here) degrades to the same safe
-// default as no sentinel at all, rather than failing Open() for the whole
-// file: YanksCaptured() is false, HistoryError() reports why, and every real
-// package still loads.
+// fails to decode degrades to the same safe default as no sentinel at all,
+// rather than failing Open() for the whole file. A valid twin marks flask
+// 1.0.0 yanked (control); the corrupt twin has the same first package but is
+// cut off mid-way through a second one, so a reader that kept the partly
+// decoded history would still report 1.0.0 as yanked.
 func TestLDCorruptSentinelFailsOpen(t *testing.T) {
 	names := []string{"werkzeug"}
 	flask := PackageRecord{
@@ -361,32 +362,54 @@ func TestLDCorruptSentinelFailsOpen(t *testing.T) {
 		Deps:          buildDepsField(t, map[string]VersionDeps{"1.0.0": {}}, names),
 		Depsdict:      buildDepsdictField(names),
 	}
+	valid := buildYankHistoryDepsField(true, map[string]map[string][]historyTransition{
+		"flask": {"1.0.0": {{key: "1000000000", yanked: true}}},
+		"zzz":   {"9.9.9": {{key: "1000000000", yanked: true}}},
+	})
+	open := func(t *testing.T, field string) *File {
+		t.Helper()
+		f, err := Open(writeFixtureRSF(t, []PackageRecord{flask, sentinelRecord(field)}))
+		if err != nil {
+			t.Fatalf("Open: want no error, got %v", err)
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		return f
+	}
+	yanked := func(t *testing.T, f *File) bool {
+		t.Helper()
+		deps, err := f.Deps("flask")
+		if err != nil {
+			t.Fatalf("Deps: want flask to still load, got %v", err)
+		}
+		return deps["1.0.0"].Yanked
+	}
 
-	var corrupt bytes.Buffer
-	corrupt.WriteByte(99) // unsupported format version
-	field := string(append([]byte{depsFormatStored}, corrupt.Bytes()...))
+	t.Run("control valid sentinel yanks", func(t *testing.T) {
+		f := open(t, valid)
+		if f.HistoryError() != nil {
+			t.Fatalf("HistoryError() = %v on a valid sentinel", f.HistoryError())
+		}
+		if !f.YanksCaptured() {
+			t.Error("YanksCaptured() = false on a valid sentinel")
+		}
+		if !yanked(t, f) {
+			t.Fatal("control: flask 1.0.0 must read as yanked from the valid sentinel")
+		}
+	})
 
-	path := writeFixtureRSF(t, []PackageRecord{flask, sentinelRecord(field)})
-	f, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open: want no error for a corrupt sentinel, got %v", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	if f.YanksCaptured() {
-		t.Error("YanksCaptured() = true with a corrupt sentinel payload")
-	}
-	if f.HistoryError() == nil {
-		t.Error("HistoryError() = nil, want the decode error to be recorded")
-	}
-	if f.Len() != 1 {
-		t.Errorf("Len() = %d, want 1 (flask must still load)", f.Len())
-	}
-	deps, err := f.Deps("flask")
-	if err != nil {
-		t.Fatalf("Deps: want flask to still load, got %v", err)
-	}
-	if deps["1.0.0"].Yanked {
-		t.Error("Yanked = true with no usable yank data")
-	}
+	t.Run("corrupt sentinel reads as absent", func(t *testing.T) {
+		f := open(t, valid[:len(valid)-1]) // drop the last transition's flag byte
+		if f.HistoryError() == nil {
+			t.Error("HistoryError() = nil, want the decode error to be recorded")
+		}
+		if f.YanksCaptured() {
+			t.Error("YanksCaptured() = true with a corrupt sentinel payload")
+		}
+		if f.Len() != 1 {
+			t.Errorf("Len() = %d, want 1 (flask must still load)", f.Len())
+		}
+		if yanked(t, f) {
+			t.Error("flask 1.0.0 Yanked = true from a corrupt sentinel: partial history leaked")
+		}
+	})
 }
