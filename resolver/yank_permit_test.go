@@ -3,10 +3,12 @@
 package resolver_test
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/posit-dev/go-pyresolver/index"
 	"github.com/posit-dev/go-pyresolver/resolver"
 )
 
@@ -160,23 +162,104 @@ func TestOptionOffSolvesOnce(t *testing.T) {
 	wantPins(t, res, map[string]string{"app": "1.0", "foo": "1.0"}, []pinView{{"foo", "1.0", "root"}})
 }
 
-// With the option on, a failure that goes through a permit names the pinner,
-// not the virtual package.
-func TestPermitFailureNamesThePin(t *testing.T) {
+// app 2.0 pins yanked foo 1.0, so foo 1.0 gets a permit. foo 1.1 is yanked
+// too and has no pinner; x needs it. The pin on 1.0 must not make 1.1 usable.
+func TestPinnedVersionDoesNotPermitOtherYankedVersionOfSameName(t *testing.T) {
 	idx := newYankIndex()
-	addRelease(t, idx, "a", "2.0", false, "foo==1.0", "q")
-	addRelease(t, idx, "q", "1.0", false, "foo<1")
+	addRelease(t, idx, "app", "2.0", false, "foo==1.0")
+	addRelease(t, idx, "app", "1.0", false)
+	addRelease(t, idx, "foo", "0.9", false)
+	addRelease(t, idx, "foo", "1.0", true)
+	addRelease(t, idx, "foo", "1.1", true)
+	addRelease(t, idx, "x", "1.0", false, "foo>=1.1")
+	addRelease(t, idx, "x", "2.0", false, "foo>=1.1")
+	addRelease(t, idx, "x", "3.0", false, "foo>=1.1")
+
+	count, restore := resolver.CountSolves()
+	defer restore()
+	_, err := resolveYank(t, idx, true, "app", "foo>=0.5", "x")
+	wantYankedKind(t, err, "foo", "1.1")
+	if count() < 2 {
+		t.Errorf("solves = %d, want the pin on foo 1.0 discovered (>= 2)", count())
+	}
+}
+
+func permitLeakIndex(t *testing.T) *index.MockIndex {
+	idx := newYankIndex()
+	addRelease(t, idx, "a", "2.0", false, "foo==1.0", "c<2")
+	addRelease(t, idx, "a", "1.0", false)
+	addRelease(t, idx, "c", "1.0", false)
+	addRelease(t, idx, "c", "2.0", false)
 	addRelease(t, idx, "foo", "0.9", false)
 	addRelease(t, idx, "foo", "1.0", true)
 	addRelease(t, idx, "b", "1.0", false, "foo>=1")
+	addRelease(t, idx, "b", "2.0", false, "foo>=1")
+	addRelease(t, idx, "b", "3.0", false, "foo>=1")
+	return idx
+}
 
-	_, err := resolveYank(t, idx, true, "a", "b")
+// The failure goes through foo 1.0's permit (its pinner a 2.0 needs c<2, the
+// root wants c>=2). The report must name a 2.0 and never the virtual package.
+func TestPermitFailureNamesThePin(t *testing.T) {
+	count, restore := resolver.CountSolves()
+	defer restore()
+	_, err := resolveYank(t, permitLeakIndex(t), true, "a", "b", "c>=2")
 	if err == nil {
 		t.Fatal("want failure")
 	}
 	msg := err.Error()
 	t.Log(msg)
+	if count() < 2 {
+		t.Fatalf("solves = %d, want the failure to come from a solve with the permit", count())
+	}
 	if strings.Contains(msg, "permit") {
 		t.Errorf("error leaks the permit package: %s", msg)
+	}
+	if !strings.Contains(msg, "a 2.0") {
+		t.Errorf("error does not name the pinner a 2.0: %s", msg)
+	}
+}
+
+// A successful resolution through a permit reports real packages only.
+func TestPermitResolutionReportsOnlyRealPackages(t *testing.T) {
+	idx := newYankIndex()
+	addRelease(t, idx, "foo", "0.9", false)
+	addRelease(t, idx, "foo", "1.0", true)
+	addRelease(t, idx, "x", "2.0", true)
+	addRelease(t, idx, "x", "1.0", false, "a")
+	addRelease(t, idx, "a", "1.0", false, "foo==1.0")
+
+	res, err := resolveYank(t, idx, true, "x", "foo>=0.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := len(res.Pinned) + len(res.YankedPins) + len(res.Unusable); count == 0 {
+		t.Fatal("empty resolution")
+	}
+	if dump := fmt.Sprintf("%+v", res); strings.Contains(dump, "permit") || strings.Contains(dump, "exact pin to") {
+		t.Errorf("resolution names a permit package: %s", dump)
+	}
+}
+
+// Known limit: a pinner denied in one solve stays denied in later ones.
+//
+// c 2.0 needs foo>=1 (only yanked foo 1.0). Solve 2 lets foo 1.0 in through a
+// permit whose pinner a is reachable only via that permit, so it denies (foo 1.0,
+// a). The fallback c 1.0 -> a -> foo==1.0 is then refused too, though pip
+// backtracks to it and installs c 1.0, a 1.0, foo 1.0. This pins the current
+// behaviour (a failure); if the denial becomes per-solve, flip the assertion.
+func TestDeniedPinnerStaysDeniedInLaterSolves(t *testing.T) {
+	idx := newYankIndex()
+	addRelease(t, idx, "c", "2.0", false, "foo>=1")
+	addRelease(t, idx, "c", "1.0", false, "a")
+	addRelease(t, idx, "a", "1.0", false, "foo==1.0")
+	addRelease(t, idx, "foo", "1.0", true)
+
+	count, restore := resolver.CountSolves()
+	defer restore()
+	_, err := resolveYank(t, idx, true, "c")
+	wantYankedKind(t, err, "foo", "1.0")
+	if count() < 3 {
+		t.Errorf("solves = %d, want >= 3 (discover, deny, refuse)", count())
 	}
 }

@@ -816,7 +816,7 @@ func BenchmarkResolveCold(b *testing.B) {
 	for _, entry := range benchCorpus {
 		b.Run(entry.Name, func(b *testing.B) {
 			reqs := mustRequirements(b, entry.Requirements...)
-			opts := testOptions(b)
+			opts := benchOptions(b)
 
 			var (
 				c      counts
@@ -860,7 +860,7 @@ func BenchmarkResolveWarm(b *testing.B) {
 	for _, entry := range benchCorpus {
 		b.Run(entry.Name, func(b *testing.B) {
 			reqs := mustRequirements(b, entry.Requirements...)
-			opts := testOptions(b)
+			opts := benchOptions(b)
 			idx := freshIndex(b, file)
 
 			// Prime it. Everything the corpus entry touches is decoded once
@@ -927,4 +927,13 @@ func BenchmarkOpenSnapshot(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(records), "records")
+}
+
+// benchOptions is testOptions, with YankExemptTransitivePins on when
+// BENCH_YANK_TRANSITIVE is set, so the option's cost can be measured.
+func benchOptions(b testing.TB) resolver.Options {
+	b.Helper()
+	opts := testOptions(b)
+	opts.YankExemptTransitivePins = os.Getenv("BENCH_YANK_TRANSITIVE") != ""
+	return opts
 }
