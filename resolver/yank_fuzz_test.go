@@ -106,11 +106,13 @@ func addDeadEnd(r *rand.Rand, c yfCase) {
 	dead := []string{"z>=9.0"}
 	c.Packages["w"] = map[string]yfRelease{"1.0": {Requires: dead}, "2.0": {Requires: dead}}
 	c.Packages["z"] = map[string]yfRelease{"1.0": {Requires: []string{}}}
-	for n, vs := range c.Packages {
+	for _, n := range slices.Sorted(mapKeys(c.Packages)) {
+		vs := c.Packages[n]
 		if n == "w" || n == "z" {
 			continue
 		}
-		for v, rel := range vs {
+		for _, v := range slices.Sorted(mapKeys(vs)) {
+			rel := vs[v]
 			if r.IntN(4) == 0 {
 				rel.Requires = append(rel.Requires, "w")
 				vs[v] = rel
@@ -485,7 +487,7 @@ func shrinkMiss(t testing.TB, c yfCase) yfCase {
 
 // maxYankMissRate is set just above the measured completeness miss rate, so a
 // search regression fails the test. See TestYankTransitiveDifferential.
-const maxYankMissRate = 0.02
+const maxYankMissRate = 0.018
 
 func TestYankTransitiveDifferential(t *testing.T) {
 	n := 20000
