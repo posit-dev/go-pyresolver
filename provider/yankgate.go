@@ -3,6 +3,7 @@
 package provider
 
 import (
+	"github.com/posit-dev/go-pyresolver/index"
 	"github.com/posit-dev/go-pyresolver/pep440set"
 	"github.com/posit-dev/go-python-packaging/version"
 )
@@ -49,7 +50,7 @@ func (p *Provider) validateYankJustification(selected map[Package]pep440set.Set)
 				}
 			}
 			if m.pkg.Kind == KindRoot {
-				if p.yankExempt(x.pkg, x.ver) {
+				if p.rootPinsVersion(x.pkg, x.ver) {
 					pinned[x.id()] = true
 				}
 			} else if pinsVersion(y.pinsOf[key], x.pkg, x.ver) {
@@ -76,6 +77,22 @@ func (p *Provider) validateYankJustification(selected map[Package]pep440set.Set)
 		}
 	}
 	return inJ, bad
+}
+
+// rootPinsVersion reports whether an active root requirement pins pkg exactly
+// to v. It reads the requirements itself rather than trusting yankExempt.
+func (p *Provider) rootPinsVersion(pkg Package, v version.Version) bool {
+	for _, r := range p.opts.Requirements {
+		if index.NewPackageName(r.Name) != pkg.Name || !r.Marker.Evaluate(p.opts.Environment, nil) {
+			continue
+		}
+		for _, s := range exactPins(r) {
+			if s.Check(v) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // pinsVersion reports whether pins holds an exact `==` pin on pkg's project

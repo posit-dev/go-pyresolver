@@ -39,6 +39,12 @@ served it.
 - `pypirsf.File.HistoryError()` reports why the yank-history record failed to decode. A corrupt
   record no longer fails `Open`; yank data is treated as absent.
 
+### Fixed
+
+- A root `==` pin whose environment marker is false for the target no longer lets a yanked
+  version through. It is not a requirement, so it cannot exempt one. This applies with or
+  without `YankExemptTransitivePins`.
+
 ### Notes
 
 - v0.13.0's yank support (RSF deps-blob trailing section, "design B") never carried production

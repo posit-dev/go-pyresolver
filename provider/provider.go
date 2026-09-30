@@ -168,7 +168,7 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		ranked:               make(map[index.PackageName][]version.Version),
 		tagFilter:            tagFilteringEnabled(idx, opts.WheelTags),
 		yankFilter:           index.YanksCaptured(idx),
-		rootYankPins:         rootYankPins(opts.Requirements),
+		rootYankPins:         rootYankPins(opts.Requirements, opts.Environment),
 		yankedOffered:        make(map[yankKey]bool),
 	}
 	if opts.YankExemptTransitivePins && p.yankFilter {
