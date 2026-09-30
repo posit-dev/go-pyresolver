@@ -292,8 +292,15 @@ func Resolve(
 	})
 
 	// One solve, unless YankExemptTransitivePins found pins to learn: then
-	// NextSolve hands back a provider for another. See provider/yankpermit.go.
-	var sol *solver.Solution[provider.Package, pep440set.Set]
+	// NextSolve hands back a provider for another. A solution that fails its
+	// justification check is never returned. See provider/yankpermit.go.
+	var (
+		sol       *solver.Solution[provider.Package, pep440set.Set]
+		best      *solver.Solution[provider.Package, pep440set.Set]
+		bestP     *provider.Provider
+		failure   error
+		lastValid bool
+	)
 	for {
 		if onSolve != nil {
 			onSolve()
@@ -304,7 +311,10 @@ func Resolve(
 			s.MaxRounds = defaultMaxRounds
 		}
 
-		var err error
+		var (
+			err  error
+			next *provider.Provider
+		)
 		sol, err = s.Solve()
 		if err != nil {
 			explained := explain(err, p)
@@ -312,24 +322,34 @@ func Resolve(
 			if !errors.As(explained, &re) {
 				return nil, explained
 			}
-			next, nerr := p.NextSolve(nil)
-			if nerr != nil {
-				return nil, nerr
+			re.rootPinHint = opts.YankExemptTransitivePins
+			failure, lastValid = explained, false
+			next, _, err = p.NextSolve(nil)
+		} else {
+			failure = nil
+			next, lastValid, err = p.NextSolve(sol.Selected)
+			if lastValid {
+				best, bestP = sol, p
 			}
-			if next == nil {
-				return nil, explained
-			}
-			p = next
-			continue
 		}
-		next, err := p.NextSolve(sol.Selected)
 		if err != nil {
 			return nil, err
 		}
-		if next == nil {
+		if next == nil || (next.IsFallback() && best != nil) {
 			break
 		}
 		p = next
+	}
+	if !lastValid {
+		// The last solve failed or was not justified: fall back to the last
+		// justified solution, else report the failure.
+		if best == nil {
+			if failure == nil {
+				failure = errUnjustified
+			}
+			return nil, failure
+		}
+		sol, p = best, bestP
 	}
 	res, err := collapse(sol)
 	if err != nil {
@@ -343,6 +363,11 @@ func Resolve(
 	res.YankedPins = yankedPins(p.YankPins(sol.Selected))
 	return res, nil
 }
+
+// errUnjustified is returned when the last solve found a solution that
+// YankExemptTransitivePins does not justify and nothing is left to deny.
+// The fallback solve permits no transitive pin, so this is not expected.
+var errUnjustified = errors.New("resolver: no resolution justifies its transitive yank pins")
 
 // onSolve, when set by a test, is called before each solve.
 var onSolve func()

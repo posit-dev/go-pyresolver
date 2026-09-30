@@ -29,17 +29,14 @@ import (
 //
 // Pinners and requirers are learned from the versions a solve chose (never from
 // probes), and the resolver solves again when it learns something (NextSolve).
-// Need chains can still justify each other in a cycle that never reaches the
-// root, so each solution is checked: what the root reaches by real edges, where
-// a yanked version's own edges count only once one of its pinners is reached,
-// must be everything. A need edge that fails the check is denied and the
-// resolver solves again. Pins, requirer edges and denials only grow, and all
-// are bounded by the index, so the loop ends.
+// The encoding only guides the search. Every solution is checked by
+// validateYankJustification (yankgate.go); an invalid one is never returned.
+// Its permit and need edges whose pinner or requirer the check did not justify
+// are all denied, and the resolver solves again.
 
-// maxYankSolves is a defensive bound. Every extra solve adds a pin, a requirer
-// edge or a denial, and none of them shrink, so the real bound is the number of
-// those the index holds. Tripping this means that argument is broken.
-const maxYankSolves = 10000
+// maxYankSolves caps the solves for one resolution. The last one is a fallback
+// that permits no transitive pin, so it behaves as the option being off.
+const maxYankSolves = 32
 
 // yankKey names one version of one project.
 type yankKey struct {
@@ -86,6 +83,10 @@ type yankState struct {
 	known  map[yankKey][]yankNode      // pinners of a yanked version
 	reqs   map[Package][]yankNode      // requirers of a package
 	denied map[Package]map[string]bool // need edges that failed validation
+	// permitDenied holds pinners that failed validation, per yanked version.
+	permitDenied map[yankKey]map[string]bool
+	// fallback permits no transitive pin: the last solve.
+	fallback bool
 
 	live  map[yankKey][]yankNode // pinners whose need has a version, sorted
 	needs map[Package][]yankNode // reqs minus denied, root first
@@ -93,6 +94,8 @@ type yankState struct {
 	seen    map[yankKey]version.Version
 	pins    []seenPin
 	decided map[string]decidedDeps
+	pinsOf  map[string][]seenPin // exact pins of a chosen version, by decidedKey
+	yanked  map[string]bool      // chosen versions that are yanked, by decidedKey
 }
 
 func newYankState(prev *yankState) *yankState {
@@ -104,6 +107,10 @@ func newYankState(prev *yankState) *yankState {
 		needs:   make(map[Package][]yankNode),
 		seen:    make(map[yankKey]version.Version),
 		decided: make(map[string]decidedDeps),
+		pinsOf:  make(map[string][]seenPin),
+		yanked:  make(map[string]bool),
+
+		permitDenied: make(map[yankKey]map[string]bool),
 	}
 	if prev == nil {
 		return y
@@ -119,6 +126,12 @@ func newYankState(prev *yankState) *yankState {
 		y.denied[k] = make(map[string]bool, len(set))
 		for id := range set {
 			y.denied[k][id] = true
+		}
+	}
+	for k, set := range prev.permitDenied {
+		y.permitDenied[k] = make(map[string]bool, len(set))
+		for id := range set {
+			y.permitDenied[k][id] = true
 		}
 	}
 	return y
@@ -148,10 +161,13 @@ func (y *yankState) freeze() {
 			y.needs[pkg] = out
 		}
 	}
+	if y.fallback {
+		return
+	}
 	for k, list := range y.known {
 		var live []yankNode
 		for _, pn := range list {
-			if len(y.needs[pn.pkg]) > 0 {
+			if len(y.needs[pn.pkg]) > 0 && !y.permitDenied[k][pn.id()] {
 				live = append(live, pn)
 			}
 		}
@@ -200,6 +216,8 @@ func (y *yankState) recordDecided(pkg Package, v version.Version, deps []depende
 // discover records the exact `==` pins of a version the solver chose. `===`
 // is skipped: pep440set cannot express it, so its requirer is never chosen.
 func (y *yankState) discover(pkg Package, v version.Version, meta index.PackageMetadata, env marker.Environment) {
+	key := decidedKey(pkg, v)
+	y.yanked[key] = meta.Yanked
 	reqs := meta.RequiresDist
 	var active []string
 	if pkg.Extra != "" {
@@ -217,11 +235,13 @@ func (y *yankState) discover(pkg Package, v version.Version, meta index.PackageM
 			if s.Operator() != "==" {
 				continue
 			}
-			y.pins = append(y.pins, seenPin{
+			sp := seenPin{
 				name:   index.NewPackageName(r.Name),
 				spec:   s,
 				pinner: yankNode{pkg: pkg, ver: v},
-			})
+			}
+			y.pins = append(y.pins, sp)
+			y.pinsOf[key] = append(y.pinsOf[key], sp)
 		}
 	}
 }
@@ -332,58 +352,101 @@ func (p *Provider) virtualDependencies(pkg Package, v version.Version) ([]depend
 }
 
 // NextSolve is for the resolver package only. It is called after each solve
-// with the solution's selected set, or nil when the solve failed. It returns a
-// Provider for another solve when this one learned a pin or requirer, or its
-// solution failed validation, and nil when the result stands. Always nil
-// without YankExemptTransitivePins.
-func (p *Provider) NextSolve(selected map[Package]pep440set.Set) (*Provider, error) {
+// with the solution's selected set, or nil when the solve failed. valid reports
+// whether the solution passed validateYankJustification; an invalid one must
+// not be returned. next is a Provider for another solve when this one learned a
+// pin or requirer, or its solution was invalid, and nil when the result stands.
+// Always (nil, true, nil) without YankExemptTransitivePins.
+func (p *Provider) NextSolve(selected map[Package]pep440set.Set) (next *Provider, valid bool, err error) {
 	y := p.yank
 	if y == nil {
-		return nil, nil
+		return nil, true, nil
 	}
-	next := newYankState(y)
-	changed := false
+	valid = true
+	var justified map[string]bool
+	if selected != nil {
+		var bad []yankNode
+		justified, bad = p.validateYankJustification(selected)
+		valid = len(bad) == 0
+	}
+	if y.fallback {
+		return nil, valid, nil
+	}
 
+	ny := newYankState(y)
+	learned := false
 	for _, sp := range y.pins {
 		for k, v := range y.seen {
 			if k.name != sp.name || !sp.spec.Check(v) {
 				continue
 			}
-			if !slices.ContainsFunc(next.known[k], func(pn yankNode) bool { return pn.id() == sp.pinner.id() }) {
-				next.known[k] = append(next.known[k], sp.pinner)
-				changed = true
+			if !slices.ContainsFunc(ny.known[k], func(pn yankNode) bool { return pn.id() == sp.pinner.id() }) {
+				ny.known[k] = append(ny.known[k], sp.pinner)
+				learned = true
 			}
 		}
 	}
-	if len(next.known) == 0 {
-		// No pin to a yanked version anywhere: nothing to encode.
-		return nil, nil
+	if len(ny.known) > 0 && ny.learnRequirers(y.decided) {
+		learned = true
+	}
+	if learned {
+		// Denials were judged on what was known then; start over with more.
+		clear(ny.denied)
+		clear(ny.permitDenied)
+	}
+	if !valid && !denyUnjustified(p, selected, justified, ny) {
+		// Nothing to deny: not expected, but solve once more without
+		// transitive pins rather than loop.
+		ny.fallback = true
+	}
+	if valid && !learned {
+		return nil, valid, nil
 	}
 
-	if next.learnRequirers(y.decided) {
-		changed = true
-	}
-
-	if selected != nil {
-		denied, err := p.validate(selected, next)
-		if err != nil {
-			return nil, err
-		}
-		changed = changed || denied
-	}
-
-	if !changed {
-		return nil, nil
-	}
-	next.round = y.round + 1
-	if next.round >= maxYankSolves {
-		return nil, fmt.Errorf("provider: transitive yank pins did not settle after %d solves", next.round)
-	}
+	ny.round = y.round + 1
+	ny.fallback = ny.fallback || ny.round >= maxYankSolves-1
 	np := New(p.ctx, p.index, p.opts)
 	np.ranked = p.ranked
-	next.freeze()
-	np.yank = next
-	return np, nil
+	ny.freeze()
+	np.yank = ny
+	return np, valid, nil
+}
+
+// IsFallback is for the resolver package only: whether this provider permits
+// no transitive pin because the solve cap was reached.
+func (p *Provider) IsFallback() bool { return p.yank != nil && p.yank.fallback }
+
+// denyUnjustified denies, in next, every permit and need edge in the solution
+// whose pinner or requirer is outside justified, and reports whether it denied
+// any. An invalid solution always has one: its first unjustified version was
+// pulled in by a virtual edge whose entry is also unjustified.
+func denyUnjustified(p *Provider, selected map[Package]pep440set.Set, justified map[string]bool, next *yankState) bool {
+	denied := false
+	for pkg, set := range selected {
+		if pkg.Kind != kindYankPermit && pkg.Kind != kindYankNeed {
+			continue
+		}
+		v, _ := set.Singleton()
+		n, err := p.virtualEntry(pkg, v)
+		if err != nil || n.pkg.Kind == KindRoot || justified[n.id()] {
+			continue
+		}
+		if pkg.Kind == kindYankNeed {
+			target := needTarget(pkg)
+			if next.denied[target] == nil {
+				next.denied[target] = make(map[string]bool)
+			}
+			next.denied[target][n.id()] = true
+		} else {
+			k := yankKey{name: pkg.Name, ver: pkg.permitVersion}
+			if next.permitDenied[k] == nil {
+				next.permitDenied[k] = make(map[string]bool)
+			}
+			next.permitDenied[k][n.id()] = true
+		}
+		denied = true
+	}
+	return denied
 }
 
 // learnRequirers records every real edge the solve's chosen versions carried.
@@ -434,100 +497,6 @@ func (y *yankState) learnRequirers(decided map[string]decidedDeps) bool {
 		}
 	}
 	return slices.ContainsFunc(added, func(pkg Package) bool { return relevant[pkg] })
-}
-
-// validate checks a solution that used a permit: everything selected must be
-// reached from the root by real edges, where a yanked version's own edges
-// count only once one of its pinners is reached. Each need edge in the
-// solution whose requirer does not reach its target that way is denied in
-// next. It reports whether it denied anything.
-func (p *Provider) validate(selected map[Package]pep440set.Set, next *yankState) (bool, error) {
-	var needs []Package
-	for pkg := range selected {
-		if pkg.Kind == kindYankNeed {
-			needs = append(needs, pkg)
-		}
-	}
-	if len(needs) == 0 {
-		return false, nil
-	}
-	slices.SortFunc(needs, func(a, b Package) int { return strings.Compare(a.String(), b.String()) })
-
-	live, open := p.liveness(selected)
-	denied := false
-	for _, np := range needs {
-		v, _ := selected[np].Singleton()
-		r, err := p.virtualEntry(np, v)
-		if err != nil {
-			return false, err
-		}
-		if r.pkg.Kind == KindRoot {
-			continue
-		}
-		if rv, ok := selected[r.pkg].Singleton(); ok && rv.Equal(r.ver) && live[r.pkg] && open(r.pkg, r.ver) {
-			continue
-		}
-		target := needTarget(np)
-		if next.denied[target] == nil {
-			next.denied[target] = make(map[string]bool)
-		}
-		next.denied[target][r.id()] = true
-		denied = true
-	}
-	if denied {
-		return true, nil
-	}
-	for pkg := range selected {
-		if pkg.Kind == KindProject && !live[pkg] {
-			return false, fmt.Errorf("provider: %s is selected but not required, and no yank-pin edge explains it", pkg)
-		}
-	}
-	return false, nil
-}
-
-// liveness is the least fixpoint of what the root reaches through the real
-// edges of selected versions. A yanked version that got in through a permit is
-// open, and its edges followed, only once one of its pinners is live. open
-// reports that for a selected version after the fixpoint.
-func (p *Provider) liveness(selected map[Package]pep440set.Set) (map[Package]bool, func(Package, version.Version) bool) {
-	y := p.yank
-	live := map[Package]bool{Root(): true}
-	open := func(pkg Package, v version.Version) bool {
-		if pkg.Kind != KindProject || !p.yankedOffered[yankKeyOf(pkg.Name, v)] || p.yankExempt(pkg, v) {
-			return true
-		}
-		for _, pn := range y.known[yankKeyOf(pkg.Name, v)] {
-			if rv, ok := selected[pn.pkg].Singleton(); ok && rv.Equal(pn.ver) && live[pn.pkg] {
-				return true
-			}
-		}
-		return false
-	}
-
-	order := []Package{Root()}
-	expanded := make(map[Package]bool)
-	for grew := true; grew; {
-		grew = false
-		for i := 0; i < len(order); i++ {
-			pkg := order[i]
-			if expanded[pkg] {
-				continue
-			}
-			v, ok := selected[pkg].Singleton()
-			if !ok || !open(pkg, v) {
-				continue
-			}
-			expanded[pkg] = true
-			grew = true
-			for _, d := range y.decided[decidedKey(pkg, v)].deps {
-				if _, ok := selected[d.Package]; ok && d.Package.Kind == KindProject && !live[d.Package] {
-					live[d.Package] = true
-					order = append(order, d.Package)
-				}
-			}
-		}
-	}
-	return live, open
 }
 
 // YankPin is for the resolver package only: a yanked version in a solution and
