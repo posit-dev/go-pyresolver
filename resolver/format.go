@@ -3,6 +3,9 @@
 package resolver
 
 import (
+	"slices"
+	"strings"
+
 	"github.com/posit-dev/go-pyresolver/pep440set"
 	"github.com/posit-dev/go-pyresolver/provider"
 )
@@ -14,7 +17,40 @@ import (
 // It is unexported because a failure report's wording is not an API. A caller
 // wanting its own presentation reads ResolutionError.Report's Lines, each of
 // which carries the incompatibility behind the sentence.
-type pythonFormatter struct{}
+type pythonFormatter struct {
+	// permits names the packages behind a yank-pin virtual package's versions.
+	// Nil in tests that format plain packages.
+	permits *permitNames
+}
+
+// permitNames renders a yank-pin virtual package's version set as the real
+// packages it stands for. The report calls Set right after Package for the
+// same term, so the last package named is the one whose set is being rendered.
+type permitNames struct {
+	p    *provider.Provider
+	last provider.Package
+	seen []provider.Package
+}
+
+// noneMark stands in for a virtual version set that stands for no package, so
+// rewrite can turn the sentence around it into plain words.
+const noneMark = "\x00none\x00"
+
+// rewrite turns the report's sentences about yank-pin virtual packages into
+// ones about real packages: "no version of an exact pin on foo 1.0 matches
+// <none>" becomes "no other package pins foo 1.0".
+func (n *permitNames) rewrite(text string) string {
+	if n == nil {
+		return text
+	}
+	for _, pkg := range n.seen {
+		every, nothing, _ := provider.VirtualPhrases(pkg)
+		name := pkg.String()
+		text = strings.ReplaceAll(text, "no version of "+name+" matches "+noneMark, nothing)
+		text = strings.ReplaceAll(text, "every version of "+name, every)
+	}
+	return strings.ReplaceAll(text, noneMark, "from no other package")
+}
 
 // rootName is how the synthetic root package is named in a report.
 //
@@ -41,7 +77,13 @@ const rootName = "the root project"
 // The remaining cases stay one-to-one for the same reason -- a canonical name
 // can hold neither a space (so the root is distinct) nor a bracket (so
 // "flask[async]" cannot also be a project).
-func (pythonFormatter) Package(pkg provider.Package) string {
+func (f pythonFormatter) Package(pkg provider.Package) string {
+	if f.permits != nil {
+		f.permits.last = pkg
+		if _, _, ok := provider.VirtualPhrases(pkg); ok && !slices.Contains(f.permits.seen, pkg) {
+			f.permits.seen = append(f.permits.seen, pkg)
+		}
+	}
 	switch pkg.Kind {
 	case provider.KindPython:
 		return "Python"
@@ -66,7 +108,15 @@ func (pythonFormatter) Package(pkg provider.Package) string {
 // a Python user says it, and a decision is by far the most common thing a
 // report names. The two degenerate sets get words rather than punctuation,
 // because "*" and "" in the middle of a sentence read as a typo.
-func (pythonFormatter) Set(s pep440set.Set) string {
+func (f pythonFormatter) Set(s pep440set.Set) string {
+	if f.permits != nil {
+		if name, none, ok := f.permits.p.DescribePermit(f.permits.last, s); ok {
+			if none {
+				return noneMark
+			}
+			return name
+		}
+	}
 	if s.IsEmpty() {
 		return "no version"
 	}

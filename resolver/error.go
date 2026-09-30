@@ -49,6 +49,10 @@ type ResolutionError struct {
 	// cause is the solver error this was built from, so errors.As can reach
 	// *solver.Unsolvable and the derivation graph inside it.
 	cause error
+
+	// rootPinHint names the exact root pin in a yank note. Set only with
+	// YankExemptTransitivePins, so the default text stays as it was.
+	rootPinHint bool
 }
 
 // Error renders the explanation, followed by a note for each release that was
@@ -68,7 +72,7 @@ func (e *ResolutionError) Error() string {
 	}
 	for _, u := range e.relevantRejections() {
 		b.WriteString("\n\n")
-		b.WriteString(rejectionExplanation(u))
+		b.WriteString(rejectionExplanation(u, e.rootPinHint))
 	}
 	return b.String()
 }
@@ -95,7 +99,7 @@ func (e *ResolutionError) Unwrap() error { return e.cause }
 // The default arm is deliberately a real sentence rather than a panic or an empty
 // string: an error message is what someone sees when something has already gone
 // wrong, so a new kind that reaches here should read plainly, not vanish.
-func rejectionExplanation(u provider.Unusable) string {
+func rejectionExplanation(u provider.Unusable, rootPinHint bool) string {
 	switch u.Kind {
 	case provider.KindMetadataUnavailable:
 		return fmt.Sprintf(
@@ -117,6 +121,12 @@ func rejectionExplanation(u provider.Unusable) string {
 			u.Package.Name, u.Version, u.Reason)
 
 	case provider.KindYanked:
+		if rootPinHint {
+			return fmt.Sprintf(
+				"Note: %s %s exists, but %s. Add the exact pin %s==%s to your own "+
+					"requirements if you need it anyway.",
+				u.Package.Name, u.Version, u.Reason, u.Package.Name, u.Version)
+		}
 		return fmt.Sprintf(
 			"Note: %s %s exists, but %s. Pin %s to that exact version with == "+
 				"if you need it anyway.",
@@ -235,13 +245,19 @@ func incompatibilityNames(
 // derivation graph here. §9's ordering and line-numbering rules are the hard
 // part of presenting a PubGrub failure, go-pubgrub implements them, and a
 // second implementation would only be a second thing to get wrong.
-func explain(err error, unusable []provider.Unusable) error {
-	rep, ok := report.FromError[provider.Package, pep440set.Set](err, pythonFormatter{})
+func explain(err error, p *provider.Provider) error {
+	names := &permitNames{p: p}
+	rep, ok := report.FromError[provider.Package, pep440set.Set](err, pythonFormatter{permits: names})
+	if ok {
+		for i := range rep.Lines {
+			rep.Lines[i].Text = names.rewrite(rep.Lines[i].Text)
+		}
+	}
 	if !ok {
 		// Not a conflict: the solve could not be carried out. Reporting a
 		// provider failure as "these requirements conflict" would be a lie
 		// about whose problem it is.
 		return err
 	}
-	return &ResolutionError{Report: rep, Unusable: unusable, cause: err}
+	return &ResolutionError{Report: rep, Unusable: p.Unusable(), cause: err}
 }

@@ -54,6 +54,8 @@ func (p *Provider) Dependencies(pkg Package, ver pep440set.Set) ([]dependency, e
 		// a Requires-Python conflict explainable, not about giving Python its
 		// own dependency graph.
 		return nil, nil
+	case kindYankPermit, kindYankNeed:
+		return p.virtualDependencies(pkg, v)
 	}
 
 	deps, reason, err := p.projectDependencies(pkg, v)
@@ -68,6 +70,7 @@ func (p *Provider) Dependencies(pkg Package, ver pep440set.Set) ([]dependency, e
 		// would resolve around a requirement that was never expressed.
 		return nil, fmt.Errorf("provider: dependencies of %s %s: %s", pkg, v, reason)
 	}
+	p.yank.recordDecided(pkg, v, deps)
 	return deps, nil
 }
 
@@ -91,7 +94,9 @@ func (p *Provider) rootDependencies() ([]dependency, error) {
 		return nil, fmt.Errorf("provider: the requested requirements cannot be resolved: %s", reason)
 	}
 	p.recordExtraRequests(Root(), version.Version{}, expanded)
-	return append(deps, expanded...), nil
+	deps = append(deps, expanded...)
+	p.yank.recordDecided(Root(), p.opts.RootVersion, deps)
+	return deps, nil
 }
 
 // projectDependencies computes the dependencies of one version of a real
@@ -111,7 +116,19 @@ func (p *Provider) projectDependencies(pkg Package, v version.Version) ([]depend
 		return nil, reason, nil
 	}
 
-	return p.dependenciesFrom(pkg, v, meta)
+	deps, reason, err := p.dependenciesFrom(pkg, v, meta)
+	if err != nil || reason != "" {
+		return deps, reason, err
+	}
+	if p.yank != nil {
+		// Only the solver's own Dependencies call reaches here, never the
+		// usability probe, so only a chosen version's pins are discovered.
+		p.yank.discover(pkg, v, meta, p.opts.Environment)
+		if dep, ok := p.permitDependency(pkg, v, meta); ok {
+			deps = append(deps, dep)
+		}
+	}
+	return deps, "", nil
 }
 
 // metadata reads one version's metadata, translating the index's refusals into a

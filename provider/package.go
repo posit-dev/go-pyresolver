@@ -60,7 +60,19 @@ type Package struct {
 	// two solver nodes for one extra, and it will not match the normalized
 	// names PackageMetadata.ProvidesExtra carries.
 	Extra string
+
+	// permitVersion is the yanked version a kindYankPermit package permits.
+	// Empty for every other kind.
+	permitVersion string
 }
+
+// kindYankPermit and kindYankNeed are the virtual packages behind
+// YankExemptTransitivePins; see yankpermit.go. They never reach a Resolution:
+// collapse keeps only KindProject.
+const (
+	kindYankPermit Kind = KindPython + 1 + iota
+	kindYankNeed
+)
 
 // Root returns the synthetic root package.
 func Root() Package { return Package{Kind: KindRoot} }
@@ -105,6 +117,10 @@ func (p Package) String() string {
 		return "<root>"
 	case KindPython:
 		return "python"
+	case kindYankPermit:
+		return "an exact pin on " + string(p.Name) + " " + p.permitVersion
+	case kindYankNeed:
+		return "a requirement on " + needTarget(p).String()
 	default:
 		if p.Extra == "" {
 			return string(p.Name)

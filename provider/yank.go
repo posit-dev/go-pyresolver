@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/posit-dev/go-pyresolver/index"
+	"github.com/posit-dev/go-python-packaging/marker"
 	"github.com/posit-dev/go-python-packaging/requirement"
 	"github.com/posit-dev/go-python-packaging/version"
 )
@@ -14,10 +15,14 @@ import (
 // that exempt a yanked version: a root `==` with no wildcard, or a root
 // `===`. Only reqs (Options.Requirements, the root's own requirements) are
 // considered -- a transitive `==`, found while expanding a dependency, never
-// reaches this function and so never exempts.
-func rootYankPins(reqs []requirement.Requirement) map[index.PackageName][]version.Specifier {
+// reaches this function and so never exempts. A requirement whose marker is
+// false for env is not a requirement, so its pin does not count.
+func rootYankPins(reqs []requirement.Requirement, env marker.Environment) map[index.PackageName][]version.Specifier {
 	out := make(map[index.PackageName][]version.Specifier)
 	for _, r := range reqs {
+		if !r.Marker.Evaluate(env, nil) {
+			continue
+		}
 		name := index.NewPackageName(r.Name)
 		for _, s := range r.Specifiers.List() {
 			if s.Operator() == "===" || (s.Operator() == "==" && !strings.HasSuffix(s.Version(), ".*")) {

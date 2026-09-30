@@ -151,3 +151,32 @@ func TestOnlyYankedNoPinFailsNamingKindYanked(t *testing.T) {
 		t.Fatalf("expected 1.0.0 recorded unusable with KindYanked, got ok=%v kind=%v", ok, u.Kind)
 	}
 }
+
+// A yanked version whose only known pinner nothing else requires is refused,
+// and the reason names that pinner. Option off keeps main's wording.
+func TestRefusedKnownPinNamesThePinner(t *testing.T) {
+	for _, tc := range []struct {
+		transitive bool
+		want       string
+	}{
+		{false, "it was yanked from the index and this resolution has no exact root pin for it"},
+		{true, "it was yanked from the index, and its exact pin from a 1.0 could not be used in this resolution (a 1.0 is not otherwise required)"},
+	} {
+		opts := testOptions(t)
+		opts.YankExemptTransitivePins = tc.transitive
+		p := provider.New(context.Background(), yankIndex(t), opts)
+		if tc.transitive {
+			p.SeedUnneededPinner("acme", "1.0.0", provider.Project("a"), "1.0")
+		}
+		if _, _, _, err := p.Candidates(provider.Project("acme"), pep440set.All()); err != nil {
+			t.Fatal(err)
+		}
+		u, ok := findUnusable(t, p, "1.0.0")
+		if !ok || u.Kind != provider.KindYanked {
+			t.Fatalf("transitive=%v: 1.0.0 not refused as yanked: %+v", tc.transitive, u)
+		}
+		if u.Reason != tc.want {
+			t.Errorf("transitive=%v: reason = %q, want %q", tc.transitive, u.Reason, tc.want)
+		}
+	}
+}

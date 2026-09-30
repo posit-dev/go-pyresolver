@@ -71,6 +71,15 @@ type Options struct {
 	// Nil leaves tag filtering off, and so does an index whose tag data is
 	// incomplete. See WheelTagFilter.
 	WheelTags *WheelTagFilter
+
+	// YankExemptTransitivePins also lets a yanked version through when a
+	// selected package's own requirement pins it with `==` and no wildcard, as
+	// pip does. Root pins exempt either way. Default false, which matches uv.
+	//
+	// The exemption is per version (`foo==1.0` never exempts 1.1), a range never
+	// exempts, and `===` cannot exempt transitively because pep440set cannot
+	// express it. The resolver drives this over several solves; see NextSolve.
+	YankExemptTransitivePins bool
 }
 
 // Provider implements solver.Provider[Package, pep440set.Set].
@@ -132,6 +141,13 @@ type Provider struct {
 	// rootYankPins is the per-package set of root `==`/`===` specifiers that
 	// exempt a yanked version from rejection. See rootYankPins and yankExempt.
 	rootYankPins map[index.PackageName][]version.Specifier
+
+	// yank holds the transitive-pin state. Nil unless
+	// Options.YankExemptTransitivePins is set and the index captures yanks.
+	yank *yankState
+
+	// yankedOffered holds the yanked versions usable let through.
+	yankedOffered map[yankKey]bool
 }
 
 // New returns a Provider for one resolution.
@@ -142,7 +158,7 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 	if opts.RootVersion.String() == "" {
 		opts.RootVersion = version.MustParse("0")
 	}
-	return &Provider{
+	p := &Provider{
 		ctx:                  ctx,
 		index:                idx,
 		opts:                 opts,
@@ -152,8 +168,13 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		ranked:               make(map[index.PackageName][]version.Version),
 		tagFilter:            tagFilteringEnabled(idx, opts.WheelTags),
 		yankFilter:           index.YanksCaptured(idx),
-		rootYankPins:         rootYankPins(opts.Requirements),
+		rootYankPins:         rootYankPins(opts.Requirements, opts.Environment),
+		yankedOffered:        make(map[yankKey]bool),
 	}
+	if opts.YankExemptTransitivePins && p.yankFilter {
+		p.yank = newYankState(nil)
+	}
+	return p
 }
 
 // Candidates implements solver.Provider.
@@ -251,6 +272,8 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 		return singleVersion(p.opts.RootVersion, allowed)
 	case KindPython:
 		return singleVersion(p.opts.PythonVersion, allowed)
+	case kindYankPermit, kindYankNeed:
+		return p.virtualCandidates(allowed, pkg)
 	}
 
 	ranked, err := p.rankedVersions(pkg)
@@ -542,11 +565,13 @@ func (p *Provider) usable(pkg Package, v version.Version) (bool, error) {
 		return false, nil
 	}
 
-	if p.yankFilter && meta.Yanked && !p.yankExempt(pkg, v) {
-		p.record(pkg, v,
-			"it was yanked from the index and this resolution has no exact root pin for it",
-			KindYanked, false)
+	if p.yankFilter && meta.Yanked && !p.yankExempt(pkg, v) && !p.yank.permitted(pkg.Name, v) {
+		p.record(pkg, v, yankedReason(p.yank.refusedPinners(pkg.Name, v)), KindYanked, false)
 		return false, nil
+	}
+	if p.yankFilter && meta.Yanked {
+		// Remembered so YankedPins can report it without a second read.
+		p.yankedOffered[yankKeyOf(pkg.Name, v)] = true
 	}
 
 	_, reason, err = p.dependenciesFrom(pkg, v, meta)

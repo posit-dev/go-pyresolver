@@ -15,6 +15,24 @@ served it.
 
 ### Added
 
+- `resolver.Options.YankExemptTransitivePins` (and the same field on `provider.Options`), off by
+  default. When set, a yanked version is usable if an exact `==` pin on it comes from a package
+  genuinely in the solution, as in pip: a transitive pin exempts it only when the requirer is
+  itself required. A range never exempts. Each such version is gated by a `permit` virtual
+  package (satisfied by a pinner that selects the pin), and each pinner by a `need` virtual
+  package (satisfied by a requirer that is itself needed, back to the root). That encoding only
+  guides the search: every solution is checked by a separate fixpoint over its real edges (a
+  yanked version joins only through an already-justified exact pinner), and one that fails is
+  never returned. Its unjustified edges are denied together and the resolver solves again, at
+  most 32 times; the last solve permits no transitive pin. A differential fuzz test checks this
+  against a brute-force oracle. With the option off the resolver solves once and its messages
+  are unchanged. `Resolution.YankedPins` lists each yanked version selected through a pin
+  (package, version, requester) so callers can warn.
+  Limits: `===` cannot be used transitively (`pep440set` cannot express it). Pins are found only
+  in versions the solver actually chooses, so a root range on a yanked-only package can fail
+  before its pinner is ever chosen (about 1.5% of the fuzz cases that have a valid answer). Of
+  95 fuzz cases run through pip 26.2.1, pip resolves one of these misses (it backtracks to the
+  pinner); the other 56 fail in pip too.
 - `pypirsf` reads yank state from the new per-snapshot layout: a synthetic sentinel record
   (design LD) appended as the file's last record, decoded via `rstudio/pypi-manifest`'s wire
   format. `YanksCaptured()` now answers from that record's own "captured" marker byte instead of
@@ -22,6 +40,12 @@ served it.
   resolution is future work (rstudio/package-manager#20929).
 - `pypirsf.File.HistoryError()` reports why the yank-history record failed to decode. A corrupt
   record no longer fails `Open`; yank data is treated as absent.
+
+### Fixed
+
+- A root `==` pin whose environment marker is false for the target no longer lets a yanked
+  version through. It is not a requirement, so it cannot exempt one. This applies with or
+  without `YankExemptTransitivePins`.
 
 ### Notes
 

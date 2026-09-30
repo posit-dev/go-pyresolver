@@ -4,6 +4,7 @@ package resolver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -99,6 +100,18 @@ type Options struct {
 	// against one shared index is the intended use, and a filter reused across
 	// cells answers the first cell's question under the second cell's name.
 	WheelTags *provider.WheelTagFilter
+
+	// YankExemptTransitivePins lets a yanked version be selected when a
+	// selected package's own requirement pins it with `==` and no wildcard, as
+	// pip does. A root `==` pin always exempts; this adds the transitive case.
+	// Default false, which matches uv: a transitive pin to a yanked version
+	// fails with provider.KindYanked, and so does a range in either mode.
+	//
+	// A transitive `===` never exempts: pep440set cannot express it, so a
+	// requirement using it fails as unrepresentable. Resolution.YankedPins
+	// lists what was selected this way. With it on, a resolution can take more
+	// than one solve.
+	YankExemptTransitivePins bool
 }
 
 // Resolution is a successful resolution: one version chosen for every package
@@ -194,6 +207,23 @@ type Resolution struct {
 	// One entry per (requester, package, extra), sorted by (package, extra,
 	// requester).
 	MissingExtras []MissingExtra
+
+	// YankedPins lists each yanked version the resolution selected with each
+	// requirer in the solution that pins it exactly, root or transitive, so a
+	// caller can warn. Sorted by (package, requester).
+	YankedPins []YankedPin
+}
+
+// YankedPin is a selected yanked version and one requirer that pins it.
+type YankedPin struct {
+	// Package is the project whose yanked Version was selected.
+	Package index.PackageName
+
+	// Version is the yanked version.
+	Version version.Version
+
+	// RequestedBy is who wrote the pin: the root, or a selected package.
+	RequestedBy Requester
 }
 
 // MissingExtra is a requested extra that the pinned version does not declare,
@@ -257,17 +287,69 @@ func Resolve(
 		Requirements:  reqs,
 		RootVersion:   rootVersion,
 		WheelTags:     opts.WheelTags,
+
+		YankExemptTransitivePins: opts.YankExemptTransitivePins,
 	})
 
-	s := solver.New(provider.Root(), pep440set.Exactly(rootVersion), p)
-	s.MaxRounds = opts.MaxRounds
-	if s.MaxRounds == 0 {
-		s.MaxRounds = defaultMaxRounds
-	}
+	// One solve, unless YankExemptTransitivePins found pins to learn: then
+	// NextSolve hands back a provider for another. A solution that fails its
+	// justification check is never returned. See provider/yankpermit.go.
+	var (
+		sol       *solver.Solution[provider.Package, pep440set.Set]
+		best      *solver.Solution[provider.Package, pep440set.Set]
+		bestP     *provider.Provider
+		failure   error
+		lastValid bool
+	)
+	for {
+		if onSolve != nil {
+			onSolve()
+		}
+		s := solver.New(provider.Root(), pep440set.Exactly(rootVersion), p)
+		s.MaxRounds = opts.MaxRounds
+		if s.MaxRounds == 0 {
+			s.MaxRounds = defaultMaxRounds
+		}
 
-	sol, err := s.Solve()
-	if err != nil {
-		return nil, explain(err, p.Unusable())
+		var (
+			err  error
+			next *provider.Provider
+		)
+		sol, err = s.Solve()
+		if err != nil {
+			explained := explain(err, p)
+			var re *ResolutionError
+			if !errors.As(explained, &re) {
+				return nil, explained
+			}
+			re.rootPinHint = opts.YankExemptTransitivePins
+			failure, lastValid = explained, false
+			next, _, err = p.NextSolve(nil)
+		} else {
+			failure = nil
+			next, lastValid, err = p.NextSolve(sol.Selected)
+			if lastValid {
+				best, bestP = sol, p
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		if next == nil || (next.IsFallback() && best != nil) {
+			break
+		}
+		p = next
+	}
+	if !lastValid {
+		// The last solve failed or was not justified: fall back to the last
+		// justified solution, else report the failure.
+		if best == nil {
+			if failure == nil {
+				failure = errUnjustified
+			}
+			return nil, failure
+		}
+		sol, p = best, bestP
 	}
 	res, err := collapse(sol)
 	if err != nil {
@@ -278,7 +360,37 @@ func Resolve(
 	res.Unusable = p.Unusable()
 	filterUndeclaredExtras(res, p.UndeclaredExtras())
 	res.MissingExtras = missingExtras(res, p.ExtraRequests(), p.UndeclaredExtras())
+	res.YankedPins = yankedPins(p.YankPins(sol.Selected))
 	return res, nil
+}
+
+// errUnjustified is returned when the last solve found a solution that
+// YankExemptTransitivePins does not justify and nothing is left to deny.
+// The fallback solve permits no transitive pin, so this is not expected.
+var errUnjustified = errors.New("resolver: no resolution justifies its transitive yank pins")
+
+// onSolve, when set by a test, is called before each solve.
+var onSolve func()
+
+// yankedPins converts the provider's pins, sorted by (package, requester).
+func yankedPins(pins []provider.YankPin) []YankedPin {
+	var out []YankedPin
+	for _, pin := range pins {
+		by := Requester{Root: true}
+		if pin.Requester.Kind != provider.KindRoot {
+			by = Requester{Package: pin.Requester.Name, Version: pin.RequesterVersion}
+		}
+		out = append(out, YankedPin{Package: pin.Package, Version: pin.Version, RequestedBy: by})
+	}
+	slices.SortFunc(out, func(a, b YankedPin) int {
+		if c := strings.Compare(a.Package.String(), b.Package.String()); c != 0 {
+			return c
+		}
+		return strings.Compare(requesterKey(a.RequestedBy), requesterKey(b.RequestedBy))
+	})
+	return slices.CompactFunc(out, func(a, b YankedPin) bool {
+		return a.Package == b.Package && requesterKey(a.RequestedBy) == requesterKey(b.RequestedBy)
+	})
 }
 
 // undeclaredKey identifies one (package, version, extra) triple so
