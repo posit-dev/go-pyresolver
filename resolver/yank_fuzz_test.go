@@ -33,6 +33,8 @@ import (
 type yfRelease struct {
 	Yanked   bool     `json:"yanked"`
 	Requires []string `json:"requires"`
+	// Extras maps an extra this release declares to the requirements it adds.
+	Extras map[string][]string `json:"extras,omitempty"`
 }
 
 type yfCase struct {
@@ -50,7 +52,14 @@ func (c yfCase) clone() yfCase {
 	for n, vs := range c.Packages {
 		out.Packages[n] = map[string]yfRelease{}
 		for v, rel := range vs {
-			out.Packages[n][v] = yfRelease{Yanked: rel.Yanked, Requires: slices.Clone(rel.Requires)}
+			d := yfRelease{Yanked: rel.Yanked, Requires: slices.Clone(rel.Requires)}
+			for x, reqs := range rel.Extras {
+				if d.Extras == nil {
+					d.Extras = map[string][]string{}
+				}
+				d.Extras[x] = slices.Clone(reqs)
+			}
+			out.Packages[n][v] = d
 		}
 	}
 	return out
@@ -99,6 +108,80 @@ func genYankCase(r *rand.Rand, minPkgs, maxPkgs int) yfCase {
 	return c
 }
 
+// yfMarkers are the markers genRichCase attaches, with their value for
+// testEnv (CPython 3.11 on Linux). The oracle reads this table, not the parser.
+var yfMarkers = []struct {
+	text   string
+	active bool
+}{
+	{`sys_platform == "linux"`, true},
+	{`sys_platform == "win32"`, false},
+	{`python_version >= "3.8"`, true},
+	{`python_version < "3.0"`, false},
+}
+
+// genRichCase is genYankCase plus environment markers (true and false, pins
+// included), a second requirement on the same dependency, and an extra "x" on
+// one or two packages that adds dependencies and that some requirers request.
+func genRichCase(r *rand.Rand, minPkgs, maxPkgs int) yfCase {
+	c := genYankCase(r, minPkgs, maxPkgs)
+	var names []string
+	for _, n := range slices.Sorted(mapKeys(c.Packages)) {
+		if n != "w" && n != "z" {
+			names = append(names, n)
+		}
+	}
+	spec := func(target string) string {
+		v := strconv.Itoa(1+r.IntN(len(c.Packages[target])+1)) + ".0"
+		switch r.IntN(6) {
+		case 1:
+			return target + ">=" + v
+		case 2, 4, 5:
+			return target + "==" + v
+		case 3:
+			return target + "<" + v
+		}
+		return target
+	}
+	withExtra := map[string]bool{}
+	for _, j := range r.Perm(len(names))[:1+r.IntN(2)] {
+		withExtra[names[j]] = true
+	}
+	decorate := func(reqs []string) []string {
+		out := slices.Clone(reqs)
+		if len(out) > 0 && r.IntN(4) == 0 {
+			out = append(out, spec(oParse(out[r.IntN(len(out))]).name))
+		}
+		for i := range out {
+			if t := oParse(out[i]).name; withExtra[t] && r.IntN(3) == 0 {
+				out[i] = t + "[x]" + out[i][len(t):]
+			}
+			if r.IntN(4) == 0 {
+				out[i] += "; " + yfMarkers[r.IntN(len(yfMarkers))].text
+			}
+		}
+		return out
+	}
+	c.Root = decorate(c.Root)
+	for _, n := range slices.Sorted(mapKeys(c.Packages)) {
+		for _, v := range slices.Sorted(mapKeys(c.Packages[n])) {
+			rel := c.Packages[n][v]
+			rel.Requires = decorate(rel.Requires)
+			if withExtra[n] {
+				var deps []string
+				for _, j := range r.Perm(len(names))[:r.IntN(3)] {
+					if names[j] != n {
+						deps = append(deps, spec(names[j]))
+					}
+				}
+				rel.Extras = map[string][]string{"x": decorate(deps)}
+			}
+			c.Packages[n][v] = rel
+		}
+	}
+	return c
+}
+
 // addDeadEnd adds w, whose two releases both need a z that does not exist, and
 // has some versions require it. The solver decides such a version and only
 // later backs off, which is how a pinner gets abandoned.
@@ -124,8 +207,11 @@ func addDeadEnd(r *rand.Rand, c yfCase) {
 // --- oracle ---
 
 type oReq struct {
-	name, op string
-	ver      []int
+	name, op, extra string
+	ver             []int
+	// active is false when the marker is false for testEnv. implicit marks an
+	// extra's edge to its own base version, which is not a pin.
+	active, implicit bool
 }
 
 func oVersion(s string) []int {
@@ -154,15 +240,38 @@ func oCompare(a, b []int) int {
 }
 
 func oParse(s string) oReq {
+	q := oReq{active: true}
+	if k := strings.Index(s, ";"); k >= 0 {
+		m := strings.TrimSpace(s[k+1:])
+		s = strings.TrimSpace(s[:k])
+		found := false
+		for _, ym := range yfMarkers {
+			if ym.text == m {
+				q.active, found = ym.active, true
+			}
+		}
+		if !found {
+			panic("oracle: unknown marker " + m)
+		}
+	}
 	i := strings.IndexAny(s, "<>=")
 	if i < 0 {
-		return oReq{name: s}
+		i = len(s)
+	}
+	q.name = s[:i]
+	if b := strings.Index(q.name, "["); b >= 0 {
+		q.extra = strings.TrimSuffix(q.name[b+1:], "]")
+		q.name = q.name[:b]
 	}
 	j := i
 	for j < len(s) && strings.ContainsRune("<>=", rune(s[j])) {
 		j++
 	}
-	return oReq{name: s[:i], op: s[i:j], ver: oVersion(s[j:])}
+	q.op = s[i:j]
+	if q.op != "" {
+		q.ver = oVersion(s[j:])
+	}
+	return q
 }
 
 func (q oReq) check(v []int) bool {
@@ -181,18 +290,57 @@ func (q oReq) check(v []int) bool {
 }
 
 // oracleValid applies the rule to sel, a map of package to version. With
-// rootOnly, only root pins justify a yanked version (the option off).
+// rootOnly, only root pins justify a yanked version (the option off). A
+// requirement whose marker is false is ignored. Each requested extra is its own
+// node: its requirements are the extra's plus an edge (not a pin) to its base.
 func oracleValid(c yfCase, sel map[string]string, rootOnly bool) bool {
-	reqsOf := func(n string) []oReq {
+	type node struct{ n, x string }
+	active := func(ss []string) []oReq {
 		var out []oReq
-		for _, s := range c.Packages[n][sel[n]].Requires {
-			out = append(out, oParse(s))
+		for _, s := range ss {
+			if q := oParse(s); q.active {
+				out = append(out, q)
+			}
 		}
 		return out
 	}
-	var root []oReq
-	for _, s := range c.Root {
-		root = append(root, oParse(s))
+	reqsOf := func(nd node) []oReq {
+		rel := c.Packages[nd.n][sel[nd.n]]
+		if nd.x == "" {
+			return active(rel.Requires)
+		}
+		return append(active(rel.Extras[nd.x]),
+			oReq{name: nd.n, op: "==", ver: oVersion(sel[nd.n]), active: true, implicit: true})
+	}
+	root := active(c.Root)
+	for n, v := range sel {
+		if _, ok := c.Packages[n][v]; !ok {
+			return false
+		}
+	}
+
+	// The selected nodes: every base in sel, and every extra some selected
+	// node requests.
+	selected := map[node]bool{}
+	for n := range sel {
+		selected[node{n, ""}] = true
+	}
+	queue := [][]oReq{root}
+	for n := range sel {
+		queue = append(queue, reqsOf(node{n, ""}))
+	}
+	for len(queue) > 0 {
+		reqs := queue[0]
+		queue = queue[1:]
+		for _, q := range reqs {
+			if _, ok := sel[q.name]; !ok {
+				return false
+			}
+			if nd := (node{q.name, q.extra}); q.extra != "" && !selected[nd] {
+				selected[nd] = true
+				queue = append(queue, reqsOf(nd))
+			}
+		}
 	}
 	satisfied := func(reqs []oReq) bool {
 		for _, q := range reqs {
@@ -206,40 +354,43 @@ func oracleValid(c yfCase, sel map[string]string, rootOnly bool) bool {
 	if !satisfied(root) {
 		return false
 	}
-	for n, v := range sel {
-		if _, ok := c.Packages[n][v]; !ok || !satisfied(reqsOf(n)) {
+	for nd := range selected {
+		if !satisfied(reqsOf(nd)) {
 			return false
 		}
 	}
 
-	justified := map[string]bool{}
+	justified := map[node]bool{}
 	members := [][]oReq{root}
 	for grew := true; grew; {
 		grew = false
-		for n, v := range sel {
-			if justified[n] {
+		for nd := range selected {
+			if justified[nd] {
 				continue
 			}
+			v := sel[nd.n]
 			edge, pin := false, false
 			for i, reqs := range members {
 				for _, q := range reqs {
-					if q.name != n || !q.check(oVersion(v)) {
+					if q.name != nd.n || !q.check(oVersion(v)) {
 						continue
 					}
-					edge = true
-					if q.op == "==" && (i == 0 || !rootOnly) {
+					if nd.x == "" || q.extra == nd.x {
+						edge = true
+					}
+					if q.op == "==" && !q.implicit && (i == 0 || !rootOnly) {
 						pin = true
 					}
 				}
 			}
-			if edge && (pin || !c.Packages[n][v].Yanked) {
-				justified[n] = true
-				members = append(members, reqsOf(n))
+			if edge && (pin || !c.Packages[nd.n][v].Yanked) {
+				justified[nd] = true
+				members = append(members, reqsOf(nd))
 				grew = true
 			}
 		}
 	}
-	return len(justified) == len(sel)
+	return len(justified) == len(selected)
 }
 
 // oracleAll enumerates every valid resolution, pruning an assignment as soon
@@ -258,7 +409,7 @@ func oracleAll(c yfCase) []map[string]string {
 	consistent := func(reqs []string) bool {
 		for _, s := range reqs {
 			q := oParse(s)
-			if !assigned[q.name] {
+			if !q.active || !assigned[q.name] {
 				continue
 			}
 			v, ok := sel[q.name]
@@ -370,9 +521,23 @@ func indexFromCase(t testing.TB, c yfCase) *index.MockIndex {
 	idx := newYankIndex()
 	for n, vs := range c.Packages {
 		for v, rel := range vs {
+			reqs := slices.Clone(rel.Requires)
+			var provides []string
+			for _, x := range slices.Sorted(mapKeys(rel.Extras)) {
+				provides = append(provides, x)
+				for _, s := range rel.Extras[x] {
+					if k := strings.Index(s, ";"); k >= 0 {
+						s = s[:k] + "; (" + strings.TrimSpace(s[k+1:]) + ") and extra == \"" + x + "\""
+					} else {
+						s += "; extra == \"" + x + "\""
+					}
+					reqs = append(reqs, s)
+				}
+			}
 			idx.SetMetadata(n, v, index.PackageMetadata{
-				RequiresDist: mustRequirements(t, rel.Requires...),
-				Yanked:       rel.Yanked,
+				RequiresDist:  mustRequirements(t, reqs...),
+				ProvidesExtra: provides,
+				Yanked:        rel.Yanked,
 			})
 		}
 	}
@@ -475,6 +640,11 @@ func shrinkMiss(t testing.TB, c yfCase) yfCase {
 			for _, s := range rel.Requires {
 				mentioned[oParse(s).name] = true
 			}
+			for _, reqs := range rel.Extras {
+				for _, s := range reqs {
+					mentioned[oParse(s).name] = true
+				}
+			}
 		}
 	}
 	for n := range c.Packages {
@@ -574,4 +744,41 @@ func FuzzYankTransitive(f *testing.F) {
 	f.Fuzz(func(t *testing.T, a, b uint64) {
 		checkYankCase(t, genYankCase(rand.New(rand.NewPCG(a, b)), 3, 10))
 	})
+}
+
+// maxRichMissRate is maxYankMissRate for genRichCase.
+const maxRichMissRate = 0.014
+
+// TestYankTransitiveDifferentialRich is the differential over genRichCase:
+// markers, a second requirement on one dependency, and extras.
+func TestYankTransitiveDifferentialRich(t *testing.T) {
+	n := 10000
+	if testing.Short() || raceEnabled {
+		n = 1000
+	}
+	r := rand.New(rand.NewPCG(21025, 71))
+	var solvable, misses int
+	for i := range n {
+		c := genRichCase(r, 3, 6)
+		on, _ := checkYankCase(t, c)
+		if len(oracleAll(c)) == 0 {
+			continue
+		}
+		solvable++
+		if on == nil {
+			misses++
+			if misses <= 3 {
+				t.Logf("completeness miss %d (case %d), shrunk: %s", misses, i, shrinkMiss(t, c))
+			}
+		}
+	}
+	for range n / 4 {
+		checkYankCase(t, genRichCase(r, 7, 10))
+	}
+	rate := float64(misses) / float64(max(solvable, 1))
+	t.Logf("%d cases, %d with a valid resolution; completeness misses %d (%.3f%%)",
+		n, solvable, misses, 100*rate)
+	if rate > maxRichMissRate {
+		t.Errorf("completeness miss rate %.3f%% is above %.3f%%", 100*rate, 100*maxRichMissRate)
+	}
 }
