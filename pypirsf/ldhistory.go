@@ -7,15 +7,17 @@ import (
 	"fmt"
 )
 
-// ldSentinelCname is the reserved canonical name the yank-history record is
-// stored under: a leading NUL byte, which no PEP 503-normalized project name
-// can contain, so it cannot collide with or be requested as a real package.
+// YankHistoryRecordName is the reserved canonical name the yank-history record
+// is stored under. '~' (0x7e) is not valid in a PEP 503-normalized name, so it
+// cannot collide with a real package, and it sorts after every real name.
 //
 // It is written as the LAST physical record in the file (never record 0), so
 // it is never mistaken for the v0.13.0 design-B marker, which that reader
 // only ever checked on record 0. See rstudio/package-manager#21025 S1's
 // report for the full byte layout.
-const ldSentinelCname = "\x00ppm-yank-history-v1"
+const YankHistoryRecordName = "~ppm-yank-history-v1"
+
+const ldSentinelCname = YankHistoryRecordName
 
 // yankTransition is one recorded change of a version's yanked state, keyed by
 // the RSF snapshot key it happened at.
