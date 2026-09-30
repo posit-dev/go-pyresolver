@@ -15,6 +15,12 @@ served it.
 
 ### Added
 
+- `resolver.Options.YankExemptTransitivePins` (and the same field on `provider.Options`), off by
+  default. When set, a yanked version is also usable when a dependency's own requirement pins it
+  with an exact `==` (no wildcard), matching pip; uv and the default reject it with
+  `KindYanked`. A range never exempts. `Resolution.YankedPins` lists each yanked version
+  selected through a root or transitive pin, with the package, version and requester, so
+  callers can warn. `===` is not expressible in `pep440set`, so it still fails as unrepresentable.
 - `pypirsf` reads yank state from the new per-snapshot layout: a synthetic sentinel record
   (design LD) appended as the file's last record, decoded via `rstudio/pypi-manifest`'s wire
   format. `YanksCaptured()` now answers from that record's own "captured" marker byte instead of

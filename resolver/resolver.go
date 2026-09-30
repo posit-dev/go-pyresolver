@@ -4,6 +4,7 @@ package resolver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -99,6 +100,17 @@ type Options struct {
 	// against one shared index is the intended use, and a filter reused across
 	// cells answers the first cell's question under the second cell's name.
 	WheelTags *provider.WheelTagFilter
+
+	// YankExemptTransitivePins lets a yanked version be selected when a
+	// dependency's requirement pins it exactly (`==` with no wildcard, or
+	// `===`), as pip does. A root pin of that form always exempts; this adds
+	// the transitive case. Default false, which matches uv: a transitive pin
+	// to a yanked version fails with provider.KindYanked.
+	//
+	// Every yanked version selected through a pin is listed in
+	// Resolution.YankedPins so the caller can warn. A range (`foo>=1.0`) never
+	// exempts.
+	YankExemptTransitivePins bool
 }
 
 // Resolution is a successful resolution: one version chosen for every package
@@ -194,6 +206,29 @@ type Resolution struct {
 	// One entry per (requester, package, extra), sorted by (package, extra,
 	// requester).
 	MissingExtras []MissingExtra
+
+	// YankedPins lists each yanked version the resolution selected because an
+	// exact pin asked for it, root or transitive (pip and uv both install a
+	// root pin with a warning; this is that warning). Empty when no yanked
+	// version was selected.
+	//
+	// It describes the FINAL solution only: a pin from a version the solver
+	// backtracked past is not reported. One entry per (package, requester),
+	// sorted by (package, requester).
+	YankedPins []YankedPin
+}
+
+// YankedPin is a yanked version that was selected because a requirement pinned
+// it exactly.
+type YankedPin struct {
+	// Package is the project whose yanked Version was selected.
+	Package index.PackageName
+
+	// Version is the yanked version.
+	Version version.Version
+
+	// RequestedBy is who wrote the pin: the root, or a pinned package.
+	RequestedBy Requester
 }
 
 // MissingExtra is a requested extra that the pinned version does not declare,
@@ -248,7 +283,40 @@ func Resolve(
 	if err := validate(opts); err != nil {
 		return nil, err
 	}
+	res, stale, _, err := resolveOnce(ctx, reqs, idx, opts, nil)
+	var re *ResolutionError
+	if err != nil && errors.As(err, &re) && opts.YankExemptTransitivePins && index.YanksCaptured(idx) {
+		// The solver can reject a yanked version before it decides the package
+		// whose pin would have allowed it. Learn the pins from a solve that
+		// ignores yanks, then solve again knowing them.
+		_, _, seeds, derr := resolveOnce(ctx, reqs, noYankIndex{idx}, opts, nil)
+		if derr == nil && len(seeds) > 0 {
+			res, stale, _, err = resolveOnce(ctx, reqs, idx, opts, seeds)
+		}
+	}
+	if stale {
+		// A yanked version was selected on the strength of a pin from a branch
+		// the solver later left. Nothing live justifies it, so solve again with
+		// root pins only rather than report an exemption nobody asked for.
+		opts.YankExemptTransitivePins = false
+		res, _, _, err = resolveOnce(ctx, reqs, idx, opts, nil)
+	}
+	return res, err
+}
 
+// noYankIndex hides the wrapped index's yank data, so nothing is rejected as
+// yanked. Embedding the interface drops YanksCaptured from the method set.
+type noYankIndex struct{ index.MetadataIndex }
+
+// resolveOnce runs one solve. seeds are transitive pins known up front; pins
+// returns the transitive pins the solve found.
+func resolveOnce(
+	ctx context.Context,
+	reqs []requirement.Requirement,
+	idx index.MetadataIndex,
+	opts Options,
+	seeds []provider.YankPin,
+) (res *Resolution, stale bool, pins []provider.YankPin, err error) {
 	p := provider.New(ctx, idx, provider.Options{
 		Environment:   opts.Environment,
 		PythonVersion: opts.PythonVersion,
@@ -257,6 +325,9 @@ func Resolve(
 		Requirements:  reqs,
 		RootVersion:   rootVersion,
 		WheelTags:     opts.WheelTags,
+
+		YankExemptTransitivePins: opts.YankExemptTransitivePins,
+		SeedYankPins:             seeds,
 	})
 
 	s := solver.New(provider.Root(), pep440set.Exactly(rootVersion), p)
@@ -267,18 +338,94 @@ func Resolve(
 
 	sol, err := s.Solve()
 	if err != nil {
-		return nil, explain(err, p.Unusable())
+		return nil, false, nil, explain(err, p.Unusable())
 	}
-	res, err := collapse(sol)
+	res, err = collapse(sol)
 	if err != nil {
-		return nil, err
+		return nil, false, nil, err
 	}
 	// Read from the same provider the failure path reads, so a release set aside
 	// is reported identically whether the resolution went on to succeed or not.
 	res.Unusable = p.Unusable()
 	filterUndeclaredExtras(res, p.UndeclaredExtras())
 	res.MissingExtras = missingExtras(res, p.ExtraRequests(), p.UndeclaredExtras())
-	return res, nil
+	if index.YanksCaptured(idx) {
+		res.YankedPins, stale, err = yankedPins(ctx, idx, res, p.YankPins())
+		if err != nil {
+			return nil, false, nil, err
+		}
+	}
+	return res, stale, liveTransitivePins(res, p.YankPins()), nil
+}
+
+// liveTransitivePins keeps the non-root pins whose requester is pinned in res
+// at the version that wrote them.
+func liveTransitivePins(res *Resolution, pins []provider.YankPin) []provider.YankPin {
+	var out []provider.YankPin
+	for _, pin := range pins {
+		if pin.Requester.Kind != provider.KindProject {
+			continue
+		}
+		if rv, ok := res.Pinned[pin.Requester.Name]; ok && rv.Equal(pin.RequesterVersion) {
+			out = append(out, pin)
+		}
+	}
+	return out
+}
+
+// yankedPins reports each yanked version in res that a live pin selected. A
+// pin is live when its requester is the root or is pinned at the version that
+// wrote it. stale is true when a yanked version has no live pin at all.
+func yankedPins(
+	ctx context.Context, idx index.MetadataIndex, res *Resolution, pins []provider.YankPin,
+) (out []YankedPin, stale bool, err error) {
+	for _, name := range res.Order {
+		v := res.Pinned[name]
+		meta, err := idx.Metadata(ctx, name, v)
+		if err != nil {
+			if errors.Is(err, index.ErrMetadataUnavailable) || errors.Is(err, index.ErrMetadataUnusable) {
+				continue
+			}
+			return nil, false, fmt.Errorf("resolver: metadata for %s %s: %w", name, v, err)
+		}
+		if !meta.Yanked {
+			continue
+		}
+		live := false
+		for _, pin := range pins {
+			if pin.Package != name || !pin.Specifier.Check(v) {
+				continue
+			}
+			var by Requester
+			switch pin.Requester.Kind {
+			case provider.KindRoot:
+				by = Requester{Root: true}
+			case provider.KindProject:
+				rv, ok := res.Pinned[pin.Requester.Name]
+				if !ok || !rv.Equal(pin.RequesterVersion) {
+					continue
+				}
+				by = Requester{Package: pin.Requester.Name, Version: pin.RequesterVersion}
+			default:
+				continue
+			}
+			live = true
+			out = append(out, YankedPin{Package: name, Version: v, RequestedBy: by})
+		}
+		if !live {
+			stale = true
+		}
+	}
+	slices.SortFunc(out, func(a, b YankedPin) int {
+		if c := strings.Compare(a.Package.String(), b.Package.String()); c != 0 {
+			return c
+		}
+		return strings.Compare(requesterKey(a.RequestedBy), requesterKey(b.RequestedBy))
+	})
+	out = slices.CompactFunc(out, func(a, b YankedPin) bool {
+		return a.Package == b.Package && requesterKey(a.RequestedBy) == requesterKey(b.RequestedBy)
+	})
+	return out, stale, nil
 }
 
 // undeclaredKey identifies one (package, version, extra) triple so

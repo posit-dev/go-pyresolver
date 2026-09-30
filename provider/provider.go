@@ -71,6 +71,22 @@ type Options struct {
 	// Nil leaves tag filtering off, and so does an index whose tag data is
 	// incomplete. See WheelTagFilter.
 	WheelTags *WheelTagFilter
+
+	// YankExemptTransitivePins also lets a yanked version through when a
+	// dependency's own requirement pins it exactly (`==` with no wildcard, or
+	// `===`), as pip does. Root pins always exempt; this adds the transitive
+	// case. Default false, which matches uv: a transitive pin to a yanked
+	// version fails with KindYanked.
+	//
+	// The exemption is per pin: `foo==1.0` exempts foo 1.0 and nothing else, and
+	// a range such as `foo>=1.0` never exempts. It has no effect on an index
+	// whose yank data is incomplete, since nothing is rejected then.
+	YankExemptTransitivePins bool
+
+	// SeedYankPins are transitive pins an earlier pass found, known up front so
+	// a package the solver examines before the pin's requester is decided is
+	// not rejected. Only used with YankExemptTransitivePins.
+	SeedYankPins []YankPin
 }
 
 // Provider implements solver.Provider[Package, pep440set.Set].
@@ -129,9 +145,12 @@ type Provider struct {
 	// reasoning as tagFilter.
 	yankFilter bool
 
-	// rootYankPins is the per-package set of root `==`/`===` specifiers that
-	// exempt a yanked version from rejection. See rootYankPins and yankExempt.
-	rootYankPins map[index.PackageName][]version.Specifier
+	// yankPins holds every exact `==`/`===` pin that exempts a yanked version
+	// from rejection, in first-seen order; yankPinsByName is the same set keyed
+	// by project for yankExempt, and yankPinsSeen its dedupe key set.
+	yankPins       []YankPin
+	yankPinsByName map[index.PackageName][]YankPin
+	yankPinsSeen   map[string]bool
 }
 
 // New returns a Provider for one resolution.
@@ -142,7 +161,7 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 	if opts.RootVersion.String() == "" {
 		opts.RootVersion = version.MustParse("0")
 	}
-	return &Provider{
+	p := &Provider{
 		ctx:                  ctx,
 		index:                idx,
 		opts:                 opts,
@@ -152,8 +171,18 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		ranked:               make(map[index.PackageName][]version.Version),
 		tagFilter:            tagFilteringEnabled(idx, opts.WheelTags),
 		yankFilter:           index.YanksCaptured(idx),
-		rootYankPins:         rootYankPins(opts.Requirements),
+		yankPinsByName:       make(map[index.PackageName][]YankPin),
+		yankPinsSeen:         make(map[string]bool),
 	}
+	for _, pin := range rootYankPins(opts.Requirements) {
+		p.addYankPin(pin)
+	}
+	if opts.YankExemptTransitivePins {
+		for _, pin := range opts.SeedYankPins {
+			p.addYankPin(pin)
+		}
+	}
+	return p
 }
 
 // Candidates implements solver.Provider.
@@ -544,12 +573,12 @@ func (p *Provider) usable(pkg Package, v version.Version) (bool, error) {
 
 	if p.yankFilter && meta.Yanked && !p.yankExempt(pkg, v) {
 		p.record(pkg, v,
-			"it was yanked from the index and this resolution has no exact root pin for it",
+			"it was yanked from the index and this resolution has no exact pin for it",
 			KindYanked, false)
 		return false, nil
 	}
 
-	_, reason, err = p.dependenciesFrom(pkg, v, meta)
+	_, reason, err = p.dependenciesFrom(pkg, v, meta, false)
 	if err != nil {
 		return false, err
 	}
