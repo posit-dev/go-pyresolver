@@ -14,7 +14,19 @@ import (
 // It is unexported because a failure report's wording is not an API. A caller
 // wanting its own presentation reads ResolutionError.Report's Lines, each of
 // which carries the incompatibility behind the sentence.
-type pythonFormatter struct{}
+type pythonFormatter struct {
+	// permits names the pinners behind a yank-permit package's versions. Nil
+	// in tests that format plain packages.
+	permits *permitNames
+}
+
+// permitNames renders a permit's version set as the pins it stands for. The
+// report calls Set right after Package for the same term, so the last package
+// named is the one whose set is being rendered.
+type permitNames struct {
+	p    *provider.Provider
+	last provider.Package
+}
 
 // rootName is how the synthetic root package is named in a report.
 //
@@ -41,7 +53,10 @@ const rootName = "the root project"
 // The remaining cases stay one-to-one for the same reason -- a canonical name
 // can hold neither a space (so the root is distinct) nor a bracket (so
 // "flask[async]" cannot also be a project).
-func (pythonFormatter) Package(pkg provider.Package) string {
+func (f pythonFormatter) Package(pkg provider.Package) string {
+	if f.permits != nil {
+		f.permits.last = pkg
+	}
 	switch pkg.Kind {
 	case provider.KindPython:
 		return "Python"
@@ -66,7 +81,12 @@ func (pythonFormatter) Package(pkg provider.Package) string {
 // a Python user says it, and a decision is by far the most common thing a
 // report names. The two degenerate sets get words rather than punctuation,
 // because "*" and "" in the middle of a sentence read as a typo.
-func (pythonFormatter) Set(s pep440set.Set) string {
+func (f pythonFormatter) Set(s pep440set.Set) string {
+	if f.permits != nil {
+		if name, ok := f.permits.p.DescribePermit(f.permits.last, s); ok {
+			return name
+		}
+	}
 	if s.IsEmpty() {
 		return "no version"
 	}

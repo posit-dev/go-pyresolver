@@ -10,7 +10,6 @@ import (
 	"github.com/posit-dev/go-pyresolver/pep440set"
 	"github.com/posit-dev/go-pyresolver/provider"
 	"github.com/posit-dev/go-python-packaging/requirement"
-	"github.com/posit-dev/go-python-packaging/version"
 )
 
 // yankIndex builds a two-version "acme" index (1.0.0 yanked, 0.9.0 clean),
@@ -150,48 +149,5 @@ func TestOnlyYankedNoPinFailsNamingKindYanked(t *testing.T) {
 	u, ok := findUnusable(t, p, "1.0.0")
 	if !ok || u.Kind != provider.KindYanked {
 		t.Fatalf("expected 1.0.0 recorded unusable with KindYanked, got ok=%v kind=%v", ok, u.Kind)
-	}
-}
-
-// A decided dependency's exact pin exempts only the version it names: with
-// foo 1.0 and 1.1 both yanked, asking for any foo picks the pinned 1.0, not
-// the newer yanked 1.1.
-func TestTransitivePinExemptsOnlyPinnedVersion(t *testing.T) {
-	build := func(t *testing.T) *index.MockIndex {
-		idx := index.NewMockIndex("test").SetYanksCaptured(true).
-			AddVersion("app", "1.0", "foo==1.0").
-			AddVersion("foo", "0.9").AddVersion("foo", "1.0").AddVersion("foo", "1.1")
-		yanked, err := index.ParseRecord(index.RawRecord{Yanked: true})
-		if err != nil {
-			t.Fatalf("ParseRecord: %v", err)
-		}
-		idx.SetMetadata("foo", "1.0", yanked)
-		idx.SetMetadata("foo", "1.1", yanked)
-		return idx
-	}
-	best := func(t *testing.T, transitive bool) string {
-		opts := testOptions(t)
-		opts.YankExemptTransitivePins = transitive
-		p := provider.New(context.Background(), build(t), opts)
-		app := provider.Project("app")
-		if _, _, _, err := p.Candidates(app, pep440set.All()); err != nil {
-			t.Fatalf("Candidates(app): %v", err)
-		}
-		if _, err := p.Dependencies(app, pep440set.Exactly(version.MustParse("1.0"))); err != nil {
-			t.Fatalf("Dependencies(app): %v", err)
-		}
-		set, found, _, err := p.Candidates(provider.Project("foo"), pep440set.All())
-		if err != nil || !found {
-			t.Fatalf("Candidates(foo): found=%v err=%v", found, err)
-		}
-		v, _ := set.Singleton()
-		return v.String()
-	}
-
-	if got := best(t, false); got != "0.9" {
-		t.Errorf("option off: best foo = %s, want 0.9", got)
-	}
-	if got := best(t, true); got != "1.0" {
-		t.Errorf("option on: best foo = %s, want 1.0 (pinned, yanked), not 1.1", got)
 	}
 }

@@ -235,13 +235,13 @@ func incompatibilityNames(
 // derivation graph here. §9's ordering and line-numbering rules are the hard
 // part of presenting a PubGrub failure, go-pubgrub implements them, and a
 // second implementation would only be a second thing to get wrong.
-func explain(err error, unusable []provider.Unusable) error {
-	rep, ok := report.FromError[provider.Package, pep440set.Set](err, pythonFormatter{})
+func explain(err error, p *provider.Provider) error {
+	rep, ok := report.FromError[provider.Package, pep440set.Set](err, pythonFormatter{permits: &permitNames{p: p}})
 	if !ok {
 		// Not a conflict: the solve could not be carried out. Reporting a
 		// provider failure as "these requirements conflict" would be a lie
 		// about whose problem it is.
 		return err
 	}
-	return &ResolutionError{Report: rep, Unusable: unusable, cause: err}
+	return &ResolutionError{Report: rep, Unusable: p.Unusable(), cause: err}
 }

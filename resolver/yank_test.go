@@ -94,9 +94,8 @@ func TestTransitiveExactPinToYankedVersion(t *testing.T) {
 	}
 }
 
-// `===` exempts in the provider, but pep440set cannot express it, so a
-// requirement using it makes its requester unusable in either mode. Pinned
-// here so a future pep440set that can express `===` revisits the exemption.
+// pep440set cannot express `===`, so a requirement using it makes its
+// requester unusable in either mode, and it never exempts transitively.
 func TestTransitiveArbitraryEqualityIsUnrepresentable(t *testing.T) {
 	idx := newYankIndex()
 	addRelease(t, idx, "app", "1.0", false, "foo===1.0")
@@ -183,21 +182,17 @@ func TestTransitivePinWinsOverCompatibleRange(t *testing.T) {
 	}
 }
 
-// Same, but 1.0 is the only release of foo, so the range alone matches only a
-// yanked version. The pin discovered later must still carry it.
-func TestTransitivePinWinsWhenOnlyYankedVersionExists(t *testing.T) {
+// Same, but 1.0 is the only release of foo, so the root's range alone matches
+// only a yanked version and foo has nothing usable before app is chosen. pip
+// fails here too (the same shape as its case M); see yank_permit_test.go.
+func TestTransitivePinWhenOnlyYankedVersionExistsFails(t *testing.T) {
 	idx := newYankIndex()
 	addRelease(t, idx, "app", "1.0", false, "foo==1.0")
 	addRelease(t, idx, "foo", "1.0", true)
 
 	for _, reqs := range [][]string{{"app", "foo>=1.0"}, {"foo>=1.0", "app"}} {
-		res, err := resolveYank(t, idx, true, reqs...)
-		if err != nil {
-			t.Fatalf("%v: %v", reqs, err)
-		}
-		if got := pins(t, res)["foo"]; got != "1.0" {
-			t.Errorf("%v: foo = %s, want 1.0", reqs, got)
-		}
+		_, err := resolveYank(t, idx, true, reqs...)
+		wantYankedKind(t, err, "foo", "1.0")
 	}
 }
 

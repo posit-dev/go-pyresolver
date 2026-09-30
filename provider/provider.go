@@ -73,20 +73,13 @@ type Options struct {
 	WheelTags *WheelTagFilter
 
 	// YankExemptTransitivePins also lets a yanked version through when a
-	// dependency's own requirement pins it exactly (`==` with no wildcard, or
-	// `===`), as pip does. Root pins always exempt; this adds the transitive
-	// case. Default false, which matches uv: a transitive pin to a yanked
-	// version fails with KindYanked.
+	// selected package's own requirement pins it with `==` and no wildcard, as
+	// pip does. Root pins exempt either way. Default false, which matches uv.
 	//
-	// The exemption is per pin: `foo==1.0` exempts foo 1.0 and nothing else, and
-	// a range such as `foo>=1.0` never exempts. It has no effect on an index
-	// whose yank data is incomplete, since nothing is rejected then.
+	// The exemption is per version (`foo==1.0` never exempts 1.1), a range never
+	// exempts, and `===` cannot exempt transitively because pep440set cannot
+	// express it. The resolver drives this over several solves; see NextSolve.
 	YankExemptTransitivePins bool
-
-	// SeedYankPins are transitive pins an earlier pass found, known up front so
-	// a package the solver examines before the pin's requester is decided is
-	// not rejected. Only used with YankExemptTransitivePins.
-	SeedYankPins []YankPin
 }
 
 // Provider implements solver.Provider[Package, pep440set.Set].
@@ -145,12 +138,16 @@ type Provider struct {
 	// reasoning as tagFilter.
 	yankFilter bool
 
-	// yankPins holds every exact `==`/`===` pin that exempts a yanked version
-	// from rejection, in first-seen order; yankPinsByName is the same set keyed
-	// by project for yankExempt, and yankPinsSeen its dedupe key set.
-	yankPins       []YankPin
-	yankPinsByName map[index.PackageName][]YankPin
-	yankPinsSeen   map[string]bool
+	// rootYankPins is the per-package set of root `==`/`===` specifiers that
+	// exempt a yanked version from rejection. See rootYankPins and yankExempt.
+	rootYankPins map[index.PackageName][]version.Specifier
+
+	// yank holds the transitive-pin state. Nil unless
+	// Options.YankExemptTransitivePins is set and the index captures yanks.
+	yank *yankState
+
+	// yankedOffered holds the yanked versions usable let through.
+	yankedOffered map[yankKey]bool
 }
 
 // New returns a Provider for one resolution.
@@ -171,16 +168,11 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		ranked:               make(map[index.PackageName][]version.Version),
 		tagFilter:            tagFilteringEnabled(idx, opts.WheelTags),
 		yankFilter:           index.YanksCaptured(idx),
-		yankPinsByName:       make(map[index.PackageName][]YankPin),
-		yankPinsSeen:         make(map[string]bool),
+		rootYankPins:         rootYankPins(opts.Requirements),
+		yankedOffered:        make(map[yankKey]bool),
 	}
-	for _, pin := range rootYankPins(opts.Requirements) {
-		p.addYankPin(pin)
-	}
-	if opts.YankExemptTransitivePins {
-		for _, pin := range opts.SeedYankPins {
-			p.addYankPin(pin)
-		}
+	if opts.YankExemptTransitivePins && p.yankFilter {
+		p.yank = newYankState(nil)
 	}
 	return p
 }
@@ -280,6 +272,8 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 		return singleVersion(p.opts.RootVersion, allowed)
 	case KindPython:
 		return singleVersion(p.opts.PythonVersion, allowed)
+	case kindYankPermit:
+		return p.permitCandidates(allowed, pkg)
 	}
 
 	ranked, err := p.rankedVersions(pkg)
@@ -571,14 +565,18 @@ func (p *Provider) usable(pkg Package, v version.Version) (bool, error) {
 		return false, nil
 	}
 
-	if p.yankFilter && meta.Yanked && !p.yankExempt(pkg, v) {
+	if p.yankFilter && meta.Yanked && !p.yankExempt(pkg, v) && !p.yank.permitted(pkg.Name, v) {
 		p.record(pkg, v,
-			"it was yanked from the index and this resolution has no exact pin for it",
+			"it was yanked from the index and this resolution has no exact root pin for it",
 			KindYanked, false)
 		return false, nil
 	}
+	if p.yankFilter && meta.Yanked {
+		// Remembered so YankedPins can report it without a second read.
+		p.yankedOffered[yankKeyOf(pkg.Name, v)] = true
+	}
 
-	_, reason, err = p.dependenciesFrom(pkg, v, meta, false)
+	_, reason, err = p.dependenciesFrom(pkg, v, meta)
 	if err != nil {
 		return false, err
 	}
