@@ -20,15 +20,17 @@ served it.
   genuinely in the solution, as in pip: a transitive pin exempts it only when the requirer is
   itself required. A range never exempts. Each such version is gated by a `permit` virtual
   package (satisfied by a pinner that selects the pin), and each pinner by a `need` virtual
-  package (satisfied by a requirer that is itself needed, back to the root). Liveness is a least
-  fixpoint from the root, so a yanked version cannot justify its own pinner. Newly discovered
-  pins or requirer edges restart the solve. With the option off the resolver solves once and its
-  messages are unchanged. `Resolution.YankedPins` lists each yanked version selected through a
-  pin (package, version, requester) so callers can warn.
-  Limits: `===` cannot be used transitively (`pep440set` cannot express it), so such a pinner
-  still fails as unrepresentable. A denied `need` edge stays denied for the rest of the
-  resolution, so a resolution pip reaches by another route may fail here. Pins are found only
-  in versions the solver actually chooses.
+  package (satisfied by a requirer that is itself needed, back to the root). That encoding only
+  guides the search: every solution is checked by a separate fixpoint over its real edges (a
+  yanked version joins only through an already-justified exact pinner), and one that fails is
+  never returned. Its unjustified edges are denied together and the resolver solves again, at
+  most 32 times; the last solve permits no transitive pin. A differential fuzz test checks this
+  against a brute-force oracle. With the option off the resolver solves once and its messages
+  are unchanged. `Resolution.YankedPins` lists each yanked version selected through a pin
+  (package, version, requester) so callers can warn.
+  Limits: `===` cannot be used transitively (`pep440set` cannot express it). Pins are found only
+  in versions the solver actually chooses, so a root range on a yanked-only package can fail
+  before its pinner is ever chosen (about 1.5% of the fuzz cases that have a valid answer).
 - `pypirsf` reads yank state from the new per-snapshot layout: a synthetic sentinel record
   (design LD) appended as the file's last record, decoded via `rstudio/pypi-manifest`'s wire
   format. `YanksCaptured()` now answers from that record's own "captured" marker byte instead of
