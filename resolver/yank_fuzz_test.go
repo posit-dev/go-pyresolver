@@ -1,0 +1,575 @@
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
+package resolver_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math/rand/v2"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/posit-dev/go-pyresolver/index"
+	"github.com/posit-dev/go-pyresolver/resolver"
+)
+
+// Differential test for YankExemptTransitivePins against a brute-force oracle.
+// The oracle below re-implements the rule on its own and shares no code with
+// the resolver:
+//
+// A resolution is valid iff (1) it satisfies the root requirements and every
+// requirement of every selected version, and (3) every selected version is in
+// J, where (2) J is the least fixpoint from {root}: X joins when a member of J
+// has a requirement on X's package that X satisfies and, if X is yanked, a
+// member of J pins X's package with `==` to exactly X's version.
+
+// yfRelease and yfCase are the export schema the pip harness reads.
+type yfRelease struct {
+	Yanked   bool     `json:"yanked"`
+	Requires []string `json:"requires"`
+}
+
+type yfCase struct {
+	Packages map[string]map[string]yfRelease `json:"packages"`
+	Root     []string                        `json:"root"`
+}
+
+func (c yfCase) String() string {
+	b, _ := json.Marshal(c)
+	return string(b)
+}
+
+func (c yfCase) clone() yfCase {
+	out := yfCase{Packages: map[string]map[string]yfRelease{}, Root: slices.Clone(c.Root)}
+	for n, vs := range c.Packages {
+		out.Packages[n] = map[string]yfRelease{}
+		for v, rel := range vs {
+			out.Packages[n][v] = yfRelease{Yanked: rel.Yanked, Requires: slices.Clone(rel.Requires)}
+		}
+	}
+	return out
+}
+
+// genYankCase draws an index of minPkgs-maxPkgs packages of 1-4 versions,
+// random edges with any, >=v, ==v (weighted up) or <v, about 30% of versions
+// yanked, cycles allowed. v can name a version that does not exist.
+func genYankCase(r *rand.Rand, minPkgs, maxPkgs int) yfCase {
+	names := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}[:minPkgs+r.IntN(maxPkgs-minPkgs+1)]
+	nv := map[string]int{}
+	for _, n := range names {
+		nv[n] = 1 + r.IntN(4)
+	}
+	spec := func(target string) string {
+		v := strconv.Itoa(1+r.IntN(nv[target]+1)) + ".0"
+		switch r.IntN(6) {
+		case 1:
+			return target + ">=" + v
+		case 2, 4, 5:
+			return target + "==" + v
+		case 3:
+			return target + "<" + v
+		}
+		return target
+	}
+	c := yfCase{Packages: map[string]map[string]yfRelease{}}
+	for _, n := range names {
+		c.Packages[n] = map[string]yfRelease{}
+		for i := 1; i <= nv[n]; i++ {
+			rel := yfRelease{Yanked: r.IntN(10) < 3, Requires: []string{}}
+			for _, j := range r.Perm(len(names))[:r.IntN(4)] {
+				if names[j] != n {
+					rel.Requires = append(rel.Requires, spec(names[j]))
+				}
+			}
+			c.Packages[n][strconv.Itoa(i)+".0"] = rel
+		}
+	}
+	for _, j := range r.Perm(len(names))[:1+r.IntN(3)] {
+		c.Root = append(c.Root, spec(names[j]))
+	}
+	if r.IntN(3) == 0 {
+		addDeadEnd(r, c)
+	}
+	return c
+}
+
+// addDeadEnd adds w, whose two releases both need a z that does not exist, and
+// has some versions require it. The solver decides such a version and only
+// later backs off, which is how a pinner gets abandoned.
+func addDeadEnd(r *rand.Rand, c yfCase) {
+	dead := []string{"z>=9.0"}
+	c.Packages["w"] = map[string]yfRelease{"1.0": {Requires: dead}, "2.0": {Requires: dead}}
+	c.Packages["z"] = map[string]yfRelease{"1.0": {Requires: []string{}}}
+	for n, vs := range c.Packages {
+		if n == "w" || n == "z" {
+			continue
+		}
+		for v, rel := range vs {
+			if r.IntN(4) == 0 {
+				rel.Requires = append(rel.Requires, "w")
+				vs[v] = rel
+			}
+		}
+	}
+}
+
+// --- oracle ---
+
+type oReq struct {
+	name, op string
+	ver      []int
+}
+
+func oVersion(s string) []int {
+	var out []int
+	for _, p := range strings.Split(s, ".") {
+		n, _ := strconv.Atoi(p)
+		out = append(out, n)
+	}
+	return out
+}
+
+func oCompare(a, b []int) int {
+	for i := range max(len(a), len(b)) {
+		var x, y int
+		if i < len(a) {
+			x = a[i]
+		}
+		if i < len(b) {
+			y = b[i]
+		}
+		if x != y {
+			return x - y
+		}
+	}
+	return 0
+}
+
+func oParse(s string) oReq {
+	i := strings.IndexAny(s, "<>=")
+	if i < 0 {
+		return oReq{name: s}
+	}
+	j := i
+	for j < len(s) && strings.ContainsRune("<>=", rune(s[j])) {
+		j++
+	}
+	return oReq{name: s[:i], op: s[i:j], ver: oVersion(s[j:])}
+}
+
+func (q oReq) check(v []int) bool {
+	c := oCompare(v, q.ver)
+	switch q.op {
+	case "":
+		return true
+	case ">=":
+		return c >= 0
+	case "==":
+		return c == 0
+	case "<":
+		return c < 0
+	}
+	panic("oracle: unknown operator " + q.op)
+}
+
+// oracleValid applies the rule to sel, a map of package to version. With
+// rootOnly, only root pins justify a yanked version (the option off).
+func oracleValid(c yfCase, sel map[string]string, rootOnly bool) bool {
+	reqsOf := func(n string) []oReq {
+		var out []oReq
+		for _, s := range c.Packages[n][sel[n]].Requires {
+			out = append(out, oParse(s))
+		}
+		return out
+	}
+	var root []oReq
+	for _, s := range c.Root {
+		root = append(root, oParse(s))
+	}
+	satisfied := func(reqs []oReq) bool {
+		for _, q := range reqs {
+			v, ok := sel[q.name]
+			if !ok || !q.check(oVersion(v)) {
+				return false
+			}
+		}
+		return true
+	}
+	if !satisfied(root) {
+		return false
+	}
+	for n, v := range sel {
+		if _, ok := c.Packages[n][v]; !ok || !satisfied(reqsOf(n)) {
+			return false
+		}
+	}
+
+	justified := map[string]bool{}
+	members := [][]oReq{root}
+	for grew := true; grew; {
+		grew = false
+		for n, v := range sel {
+			if justified[n] {
+				continue
+			}
+			edge, pin := false, false
+			for i, reqs := range members {
+				for _, q := range reqs {
+					if q.name != n || !q.check(oVersion(v)) {
+						continue
+					}
+					edge = true
+					if q.op == "==" && (i == 0 || !rootOnly) {
+						pin = true
+					}
+				}
+			}
+			if edge && (pin || !c.Packages[n][v].Yanked) {
+				justified[n] = true
+				members = append(members, reqsOf(n))
+				grew = true
+			}
+		}
+	}
+	return len(justified) == len(sel)
+}
+
+// oracleAll enumerates every valid resolution, pruning an assignment as soon
+// as two chosen packages (or the root) disagree.
+func oracleAll(c yfCase) []map[string]string {
+	names := slices.Sorted(func(yield func(string) bool) {
+		for n := range c.Packages {
+			if !yield(n) {
+				return
+			}
+		}
+	})
+	var out []map[string]string
+	sel := map[string]string{}
+	assigned := map[string]bool{}
+	consistent := func(reqs []string) bool {
+		for _, s := range reqs {
+			q := oParse(s)
+			if !assigned[q.name] {
+				continue
+			}
+			v, ok := sel[q.name]
+			if !ok || !q.check(oVersion(v)) {
+				return false
+			}
+		}
+		return true
+	}
+	var walk func(i int)
+	walk = func(i int) {
+		if !consistent(c.Root) {
+			return
+		}
+		for n, v := range sel {
+			if !consistent(c.Packages[n][v].Requires) {
+				return
+			}
+		}
+		if i == len(names) {
+			if oracleValid(c, sel, false) {
+				out = append(out, mapsClone(sel))
+			}
+			return
+		}
+		n := names[i]
+		assigned[n] = true
+		walk(i + 1)
+		for v := range c.Packages[n] {
+			sel[n] = v
+			walk(i + 1)
+			delete(sel, n)
+		}
+		delete(assigned, n)
+	}
+	walk(0)
+	return out
+}
+
+func mapsClone(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// newestFirst approximates pip's pick among valid answers: packages ordered
+// by first mention walking breadth-first from the root requirements, then by
+// name; the answer that is newest at the first package where two differ wins,
+// with absent below every version. pip's real order depends on its backtracking.
+func newestFirst(c yfCase, valid []map[string]string) map[string]string {
+	var order []string
+	seen := map[string]bool{}
+	queue := slices.Clone(c.Root)
+	for len(queue) > 0 {
+		n := oParse(queue[0]).name
+		queue = queue[1:]
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		order = append(order, n)
+		for _, v := range slices.Sorted(mapKeys(c.Packages[n])) {
+			queue = append(queue, c.Packages[n][v].Requires...)
+		}
+	}
+	for _, n := range slices.Sorted(mapKeys(c.Packages)) {
+		if !seen[n] {
+			order = append(order, n)
+		}
+	}
+	better := func(a, b map[string]string) bool {
+		for _, n := range order {
+			av, aok := a[n]
+			bv, bok := b[n]
+			if aok != bok {
+				return aok
+			}
+			if cmp := oCompare(oVersion(av), oVersion(bv)); aok && cmp != 0 {
+				return cmp > 0
+			}
+		}
+		return false
+	}
+	var best map[string]string
+	for _, v := range valid {
+		if best == nil || better(v, best) {
+			best = v
+		}
+	}
+	return best
+}
+
+func mapKeys[V any](m map[string]V) func(func(string) bool) {
+	return func(yield func(string) bool) {
+		for k := range m {
+			if !yield(k) {
+				return
+			}
+		}
+	}
+}
+
+// --- running the resolver on a case ---
+
+func indexFromCase(t testing.TB, c yfCase) *index.MockIndex {
+	t.Helper()
+	idx := newYankIndex()
+	for n, vs := range c.Packages {
+		for v, rel := range vs {
+			idx.SetMetadata(n, v, index.PackageMetadata{
+				RequiresDist: mustRequirements(t, rel.Requires...),
+				Yanked:       rel.Yanked,
+			})
+		}
+	}
+	return idx
+}
+
+// resolveCase returns the resolver's selection, or nil when it reports a
+// conflict. Any other error fails the test.
+func resolveCase(t testing.TB, c yfCase, transitive bool) map[string]string {
+	t.Helper()
+	opts := testOptions(t)
+	opts.YankExemptTransitivePins = transitive
+	res, err := resolver.Resolve(context.Background(), mustRequirements(t, c.Root...), indexFromCase(t, c), opts)
+	if err != nil {
+		var re *resolver.ResolutionError
+		if !errors.As(err, &re) {
+			t.Fatalf("case %s: transitive=%v: unexpected error: %v", c, transitive, err)
+		}
+		return nil
+	}
+	out := map[string]string{}
+	for n, v := range res.Pinned {
+		out[n.String()] = v.String()
+	}
+	return out
+}
+
+// checkYankCase asserts soundness and option-off parity for one case.
+func checkYankCase(t testing.TB, c yfCase) (on, off map[string]string) {
+	t.Helper()
+	on = resolveCase(t, c, true)
+	if on != nil && !oracleValid(c, on, false) {
+		t.Fatalf("SOUNDNESS: case %s: resolver returned %v, which the oracle rejects", c, on)
+	}
+	off = resolveCase(t, c, false)
+	if off != nil && !oracleValid(c, off, true) {
+		t.Fatalf("OPTION OFF: case %s: resolver returned %v, which selects a yanked version "+
+			"without a root pin or breaks a requirement", c, off)
+	}
+	if off != nil && on == nil {
+		t.Fatalf("case %s: resolves with the option off (%v) but not with it on", c, off)
+	}
+	return on, off
+}
+
+// shrinkMiss removes versions, edges, root requirements and yanks while the
+// resolver still misses a valid resolution.
+func shrinkMiss(t testing.TB, c yfCase) yfCase {
+	isMiss := func(c yfCase) bool {
+		return len(oracleAll(c)) > 0 && resolveCase(t, c, true) == nil
+	}
+	for changed := true; changed; {
+		changed = false
+		var tries []yfCase
+		for i := range c.Root {
+			if len(c.Root) > 1 {
+				d := c.clone()
+				d.Root = slices.Delete(d.Root, i, i+1)
+				tries = append(tries, d)
+			}
+		}
+		for _, n := range slices.Sorted(mapKeys(c.Packages)) {
+			for _, v := range slices.Sorted(mapKeys(c.Packages[n])) {
+				rel := c.Packages[n][v]
+				if len(c.Packages[n]) > 1 {
+					d := c.clone()
+					delete(d.Packages[n], v)
+					tries = append(tries, d)
+				}
+				if rel.Yanked {
+					d := c.clone()
+					r := d.Packages[n][v]
+					r.Yanked = false
+					d.Packages[n][v] = r
+					tries = append(tries, d)
+				}
+				for i := range rel.Requires {
+					d := c.clone()
+					r := d.Packages[n][v]
+					r.Requires = slices.Delete(r.Requires, i, i+1)
+					d.Packages[n][v] = r
+					tries = append(tries, d)
+				}
+			}
+		}
+		for _, d := range tries {
+			if isMiss(d) {
+				c, changed = d, true
+				break
+			}
+		}
+	}
+	// Drop packages nothing mentions.
+	mentioned := map[string]bool{}
+	for _, s := range c.Root {
+		mentioned[oParse(s).name] = true
+	}
+	for _, vs := range c.Packages {
+		for _, rel := range vs {
+			for _, s := range rel.Requires {
+				mentioned[oParse(s).name] = true
+			}
+		}
+	}
+	for n := range c.Packages {
+		if !mentioned[n] {
+			delete(c.Packages, n)
+		}
+	}
+	return c
+}
+
+// maxYankMissRate is set just above the measured completeness miss rate, so a
+// search regression fails the test. See TestYankTransitiveDifferential.
+const maxYankMissRate = 0.02
+
+func TestYankTransitiveDifferential(t *testing.T) {
+	n := 20000
+	if testing.Short() || raceEnabled {
+		n = 2000
+	}
+	exportDir := os.Getenv("YANK_FUZZ_EXPORT")
+	r := rand.New(rand.NewPCG(21025, 70))
+
+	var solvable, misses, preferenceDiffs, compared, exported int
+	var results []map[string]any
+	export := func(c yfCase, kind string, ours, newest map[string]string) {
+		exported++
+		name := fmt.Sprintf("case-%05d-%s.json", exported, kind)
+		b, err := json.MarshalIndent(c, "", " ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(exportDir, name), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		results = append(results, map[string]any{"case": name, "kind": kind, "ours": ours, "newest_first": newest})
+	}
+
+	for i := range n {
+		c := genYankCase(r, 3, 6)
+		on, _ := checkYankCase(t, c)
+		valid := oracleAll(c)
+		if len(valid) == 0 {
+			continue
+		}
+		solvable++
+		newest := newestFirst(c, valid)
+		if on == nil {
+			misses++
+			if misses <= 3 {
+				t.Logf("completeness miss %d (case %d), shrunk: %s", misses, i, shrinkMiss(t, c))
+			}
+			if exportDir != "" {
+				export(c, "miss", nil, newest)
+			}
+			continue
+		}
+		compared++
+		if fmt.Sprint(on) != fmt.Sprint(newest) {
+			preferenceDiffs++
+		}
+		if exportDir != "" && i%100 == 0 {
+			export(c, "hit", on, newest)
+		}
+	}
+
+	// Larger indexes, too big to enumerate: soundness and option-off only.
+	for range n / 4 {
+		checkYankCase(t, genYankCase(r, 7, 10))
+	}
+
+	rate := float64(misses) / float64(max(solvable, 1))
+	t.Logf("%d cases, %d with a valid resolution; completeness misses %d (%.3f%%); "+
+		"answer differs from the newest-first valid answer in %d of %d (%.1f%%)",
+		n, solvable, misses, 100*rate, preferenceDiffs, compared,
+		100*float64(preferenceDiffs)/float64(max(compared, 1)))
+	if rate > maxYankMissRate {
+		t.Errorf("completeness miss rate %.3f%% is above %.3f%%", 100*rate, 100*maxYankMissRate)
+	}
+	if exportDir != "" {
+		b, err := json.MarshalIndent(results, "", " ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(exportDir, "results.json"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("exported %d cases to %s", exported, exportDir)
+	}
+}
+
+// FuzzYankTransitive checks soundness and option-off parity on generated
+// cases, for long offline runs: go test -run xxx -fuzz FuzzYankTransitive ./resolver
+func FuzzYankTransitive(f *testing.F) {
+	for _, seed := range []uint64{1, 2, 3, 21025} {
+		f.Add(seed, seed*7)
+	}
+	f.Fuzz(func(t *testing.T, a, b uint64) {
+		checkYankCase(t, genYankCase(rand.New(rand.NewPCG(a, b)), 3, 10))
+	})
+}
