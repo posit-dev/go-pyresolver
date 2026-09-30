@@ -102,3 +102,19 @@ func TestManyUnjustifiedRequirersDeniedTogether(t *testing.T) {
 		t.Errorf("solves = %d, want the denials batched (<= 8)", count())
 	}
 }
+
+// Known limit, case-00006: pip 26.2.1 installs a 4.0 (yanked) and b 1.0, where
+// b 1.0 pins a==4.0. pip gets there by backtracking b down to 1.0; our solve
+// fails on a before it ever decides b 1.0, and pins are learned only from
+// decided versions. Probing every root requirement's versions closes this one
+// but also resolves 38 of the 56 exported cases pip fails, so it was not done.
+// The shrunk form (root a>=3.0, b<4.0, only b 1.0 and a 4.0) fails in pip too.
+func TestCase00006KnownLimit(t *testing.T) {
+	c := mustCase(t, `{"packages":{"a":{"1.0":{"yanked":false,"requires":[]},"2.0":{"yanked":false,"requires":["c==3.0"]},"3.0":{"yanked":false,"requires":["c<3.0","b"]},"4.0":{"yanked":true,"requires":[]}},"b":{"1.0":{"yanked":false,"requires":["a==4.0"]},"2.0":{"yanked":false,"requires":["d==3.0","a<5.0"]},"3.0":{"yanked":true,"requires":["c==3.0"]}},"c":{"1.0":{"yanked":true,"requires":[]},"2.0":{"yanked":false,"requires":["b==2.0","a==4.0"]}},"d":{"1.0":{"yanked":false,"requires":["b==3.0","a<1.0"]},"2.0":{"yanked":false,"requires":["b>=4.0"]},"3.0":{"yanked":false,"requires":["b==3.0","c==1.0"]},"4.0":{"yanked":false,"requires":["a==5.0","b<2.0"]}}},"root":["a>=3.0","b<4.0"]}`)
+	if !oracleValid(c, map[string]string{"a": "4.0", "b": "1.0"}, false) {
+		t.Fatal("pip's answer should be valid per the rule")
+	}
+	if got := resolveCase(t, c, true); got != nil {
+		t.Fatalf("resolved to %v; the limit is gone, so turn this into a success test", got)
+	}
+}

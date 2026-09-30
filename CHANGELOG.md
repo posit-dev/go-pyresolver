@@ -30,7 +30,9 @@ served it.
   (package, version, requester) so callers can warn.
   Limits: `===` cannot be used transitively (`pep440set` cannot express it). Pins are found only
   in versions the solver actually chooses, so a root range on a yanked-only package can fail
-  before its pinner is ever chosen (about 1.5% of the fuzz cases that have a valid answer).
+  before its pinner is ever chosen (about 1.5% of the fuzz cases that have a valid answer). Of
+  95 fuzz cases run through pip 26.2.1, pip resolves one of these misses (it backtracks to the
+  pinner); the other 56 fail in pip too.
 - `pypirsf` reads yank state from the new per-snapshot layout: a synthetic sentinel record
   (design LD) appended as the file's last record, decoded via `rstudio/pypi-manifest`'s wire
   format. `YanksCaptured()` now answers from that record's own "captured" marker byte instead of
