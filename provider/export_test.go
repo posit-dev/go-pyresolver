@@ -149,3 +149,12 @@ func (p *Provider) InRangeRanked(pkg Package, allowed pep440set.Set) ([]version.
 	ranked := rankBySortRef(pkg.Name, inRange, p.opts.Policy)
 	return finalsFirst(pkg.Name, ranked, p.opts.Prereleases), nil
 }
+
+// SeedUnneededPinner records pinner at pinnerVer as a known exact pinner of
+// yanked name ver, with no known requirer, as if every requirer edge had been
+// denied. Needs YankExemptTransitivePins.
+func (p *Provider) SeedUnneededPinner(name, ver string, pinner Package, pinnerVer string) {
+	k := yankKeyOf(index.PackageName(name), version.MustParse(ver))
+	p.yank.known[k] = append(p.yank.known[k], yankNode{pkg: pinner, ver: version.MustParse(pinnerVer)})
+	p.yank.freeze()
+}

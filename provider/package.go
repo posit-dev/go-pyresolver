@@ -66,10 +66,13 @@ type Package struct {
 	permitVersion string
 }
 
-// kindYankPermit is the virtual package that makes a yanked version usable
-// only while a package that pins it exactly is selected. See yank.go. It never
-// reaches a Resolution: collapse keeps only KindProject.
-const kindYankPermit Kind = KindPython + 1
+// kindYankPermit and kindYankNeed are the virtual packages behind
+// YankExemptTransitivePins; see yankpermit.go. They never reach a Resolution:
+// collapse keeps only KindProject.
+const (
+	kindYankPermit Kind = KindPython + 1 + iota
+	kindYankNeed
+)
 
 // Root returns the synthetic root package.
 func Root() Package { return Package{Kind: KindRoot} }
@@ -115,7 +118,9 @@ func (p Package) String() string {
 	case KindPython:
 		return "python"
 	case kindYankPermit:
-		return "an exact pin to " + string(p.Name) + " " + p.permitVersion
+		return "an exact pin on " + string(p.Name) + " " + p.permitVersion
+	case kindYankNeed:
+		return "a requirement on " + needTarget(p).String()
 	default:
 		if p.Extra == "" {
 			return string(p.Name)

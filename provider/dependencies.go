@@ -54,8 +54,8 @@ func (p *Provider) Dependencies(pkg Package, ver pep440set.Set) ([]dependency, e
 		// a Requires-Python conflict explainable, not about giving Python its
 		// own dependency graph.
 		return nil, nil
-	case kindYankPermit:
-		return p.permitDependencies(pkg, v)
+	case kindYankPermit, kindYankNeed:
+		return p.virtualDependencies(pkg, v)
 	}
 
 	deps, reason, err := p.projectDependencies(pkg, v)

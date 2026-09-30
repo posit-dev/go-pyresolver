@@ -272,8 +272,8 @@ func (p *Provider) Candidates(pkg Package, allowed pep440set.Set) (pep440set.Set
 		return singleVersion(p.opts.RootVersion, allowed)
 	case KindPython:
 		return singleVersion(p.opts.PythonVersion, allowed)
-	case kindYankPermit:
-		return p.permitCandidates(allowed, pkg)
+	case kindYankPermit, kindYankNeed:
+		return p.virtualCandidates(allowed, pkg)
 	}
 
 	ranked, err := p.rankedVersions(pkg)
@@ -566,9 +566,7 @@ func (p *Provider) usable(pkg Package, v version.Version) (bool, error) {
 	}
 
 	if p.yankFilter && meta.Yanked && !p.yankExempt(pkg, v) && !p.yank.permitted(pkg.Name, v) {
-		p.record(pkg, v,
-			"it was yanked from the index and this resolution has no exact root pin for it",
-			KindYanked, false)
+		p.record(pkg, v, yankedReason(p.yank.refusedPinners(pkg.Name, v)), KindYanked, false)
 		return false, nil
 	}
 	if p.yankFilter && meta.Yanked {

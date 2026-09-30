@@ -12,6 +12,11 @@ import (
 	"github.com/posit-dev/go-pyresolver/resolver"
 )
 
+// leaksVirtual reports whether text names a yank-pin virtual package.
+func leaksVirtual(text string) bool {
+	return strings.Contains(text, "exact pin on") || strings.Contains(text, "requirement on")
+}
+
 // wantPins checks the exact selected set and YankedPins.
 func wantPins(t *testing.T, res *resolver.Resolution, want map[string]string, yanked []pinView) {
 	t.Helper()
@@ -148,8 +153,8 @@ func TestOptionOffSolvesOnce(t *testing.T) {
 	if count() != 1 {
 		t.Errorf("failing solve: solves = %d, want 1", count())
 	}
-	if strings.Contains(err.Error(), "exact pin to") {
-		t.Errorf("error names a permit package: %v", err)
+	if leaksVirtual(err.Error()) {
+		t.Errorf("error names a virtual package: %v", err)
 	}
 
 	res, err := resolveYank(t, idx, false, "app", "foo==1.0")
@@ -212,8 +217,8 @@ func TestPermitFailureNamesThePin(t *testing.T) {
 	if count() < 2 {
 		t.Fatalf("solves = %d, want the failure to come from a solve with the permit", count())
 	}
-	if strings.Contains(msg, "permit") {
-		t.Errorf("error leaks the permit package: %s", msg)
+	if strings.Contains(msg, "permit") || strings.Contains(msg, "version of an exact pin") || strings.Contains(msg, "\x00") {
+		t.Errorf("error leaks a virtual package: %s", msg)
 	}
 	if !strings.Contains(msg, "a 2.0") {
 		t.Errorf("error does not name the pinner a 2.0: %s", msg)
@@ -236,30 +241,188 @@ func TestPermitResolutionReportsOnlyRealPackages(t *testing.T) {
 	if count := len(res.Pinned) + len(res.YankedPins) + len(res.Unusable); count == 0 {
 		t.Fatal("empty resolution")
 	}
-	if dump := fmt.Sprintf("%+v", res); strings.Contains(dump, "permit") || strings.Contains(dump, "exact pin to") {
-		t.Errorf("resolution names a permit package: %s", dump)
+	if dump := fmt.Sprintf("%+v", res); strings.Contains(dump, "permit") || leaksVirtual(dump) {
+		t.Errorf("resolution names a virtual package: %s", dump)
 	}
 }
 
-// Known limit: a pinner denied in one solve stays denied in later ones.
-//
-// c 2.0 needs foo>=1 (only yanked foo 1.0). Solve 2 lets foo 1.0 in through a
-// permit whose pinner a is reachable only via that permit, so it denies (foo 1.0,
-// a). The fallback c 1.0 -> a -> foo==1.0 is then refused too, though pip
-// backtracks to it and installs c 1.0, a 1.0, foo 1.0. This pins the current
-// behaviour (a failure); if the denial becomes per-solve, flip the assertion.
-func TestDeniedPinnerStaysDeniedInLaterSolves(t *testing.T) {
+// pip 26.2.1: c 2.0 needs foo>=1 and only yanked foo 1.0 matches, so pip backs
+// off to c 1.0 -> a -> foo==1.0 and installs foo 1.0. Also with a clean foo
+// 0.5 that c 2.0 cannot use.
+func TestBackedOffRequirerStillPins(t *testing.T) {
+	for _, clean := range []bool{false, true} {
+		t.Run(fmt.Sprintf("clean_0.5=%v", clean), func(t *testing.T) {
+			idx := newYankIndex()
+			addRelease(t, idx, "c", "2.0", false, "foo>=1")
+			addRelease(t, idx, "c", "1.0", false, "a")
+			addRelease(t, idx, "a", "1.0", false, "foo==1.0")
+			addRelease(t, idx, "foo", "1.0", true)
+			if clean {
+				addRelease(t, idx, "foo", "0.5", false)
+			}
+
+			_, err := resolveYank(t, idx, false, "c")
+			wantYankedKind(t, err, "foo", "1.0")
+
+			res, err := resolveYank(t, idx, true, "c")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantPins(t, res, map[string]string{"c": "1.0", "a": "1.0", "foo": "1.0"},
+				[]pinView{{"foo", "1.0", "a 1.0"}})
+		})
+	}
+}
+
+// The case above with one more hop, c 1.0 -> e -> a. The need chain must run
+// a -> e -> c -> root: one that stopped at e would let the solver keep c 2.0
+// with an e nothing needs, and denying that edge would lose pip's answer.
+func TestBackedOffRequirerTwoHops(t *testing.T) {
 	idx := newYankIndex()
 	addRelease(t, idx, "c", "2.0", false, "foo>=1")
-	addRelease(t, idx, "c", "1.0", false, "a")
+	addRelease(t, idx, "c", "1.0", false, "e")
+	addRelease(t, idx, "e", "1.0", false, "a")
 	addRelease(t, idx, "a", "1.0", false, "foo==1.0")
 	addRelease(t, idx, "foo", "1.0", true)
 
+	res, err := resolveYank(t, idx, true, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPins(t, res, map[string]string{"c": "1.0", "e": "1.0", "a": "1.0", "foo": "1.0"},
+		[]pinView{{"foo", "1.0", "a 1.0"}})
+}
+
+// pip 26.2.1 case S: yanked foo 1.0 requires a, and a pins foo==1.0. Once c 2.0
+// (which needs a and an unsatisfiable w) is gone, only foo 1.0 itself needs a,
+// so a cannot vouch for it. pip installs b, c 1.0, foo 0.9 and no a.
+func TestYankedVersionCannotJustifyItsOwnPinner(t *testing.T) {
+	idx := newYankIndex()
+	addRelease(t, idx, "foo", "0.9", false)
+	addRelease(t, idx, "foo", "1.0", true, "a")
+	addRelease(t, idx, "a", "1.0", false, "foo==1.0")
+	addRelease(t, idx, "b", "1.0", false, "foo")
+	addRelease(t, idx, "c", "2.0", false, "a", "w")
+	addRelease(t, idx, "c", "1.0", false)
+	// Two releases of w, so the solver chooses a before it finds w unsatisfiable
+	// and learns a's pin. pip's answer does not depend on it.
+	addRelease(t, idx, "w", "2.0", false, "z>=9")
+	addRelease(t, idx, "w", "1.0", false, "z>=9")
+	addRelease(t, idx, "z", "1.0", false)
+
 	count, restore := resolver.CountSolves()
 	defer restore()
-	_, err := resolveYank(t, idx, true, "c")
-	wantYankedKind(t, err, "foo", "1.0")
-	if count() < 3 {
-		t.Errorf("solves = %d, want >= 3 (discover, deny, refuse)", count())
+	res, err := resolveYank(t, idx, true, "b", "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPins(t, res, map[string]string{"b": "1.0", "c": "1.0", "foo": "0.9"}, nil)
+	if count() < 2 {
+		t.Errorf("solves = %d, want a's pin learned (>= 2)", count())
+	}
+}
+
+// pip 26.2.1 case U: p 1.0 and q 1.0 are yanked, and each one's only pinner is
+// required only by the other. pip installs p 0.9 and q 0.9.
+func TestMutuallyPinnedYankedVersionsNotSelected(t *testing.T) {
+	idx := newYankIndex()
+	addRelease(t, idx, "p", "0.9", false)
+	addRelease(t, idx, "p", "1.0", true, "qx")
+	addRelease(t, idx, "q", "0.9", false)
+	addRelease(t, idx, "q", "1.0", true, "px")
+	addRelease(t, idx, "px", "1.0", false, "q==1.0")
+	addRelease(t, idx, "qx", "1.0", false, "p==1.0")
+
+	res, err := resolveYank(t, idx, true, "p", "q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPins(t, res, map[string]string{"p": "0.9", "q": "0.9"}, nil)
+}
+
+// The mutual case with both pins learned first, from an abandoned c 2.0. Each
+// yanked version's pinner is then reachable only through the other yanked
+// version. Same rule as case S: neither may be selected.
+func TestMutuallyPinnedYankedVersionsWithLearnedPins(t *testing.T) {
+	idx := newYankIndex()
+	addRelease(t, idx, "foo", "0.9", false)
+	addRelease(t, idx, "foo", "1.0", true, "pb")
+	addRelease(t, idx, "bar", "0.9", false)
+	addRelease(t, idx, "bar", "1.0", true, "pf")
+	addRelease(t, idx, "pf", "1.0", false, "foo==1.0")
+	addRelease(t, idx, "pb", "1.0", false, "bar==1.0")
+	addRelease(t, idx, "b", "1.0", false, "foo")
+	addRelease(t, idx, "e", "1.0", false, "bar")
+	addRelease(t, idx, "c", "2.0", false, "pf", "pb", "w")
+	addRelease(t, idx, "c", "1.0", false)
+	addRelease(t, idx, "w", "2.0", false, "z>=9")
+	addRelease(t, idx, "w", "1.0", false, "z>=9")
+	addRelease(t, idx, "z", "1.0", false)
+
+	count, restore := resolver.CountSolves()
+	defer restore()
+	res, err := resolveYank(t, idx, true, "b", "e", "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPins(t, res, map[string]string{"b": "1.0", "e": "1.0", "c": "1.0", "foo": "0.9", "bar": "0.9"}, nil)
+	if count() < 2 {
+		t.Errorf("solves = %d, want the pins learned (>= 2)", count())
+	}
+}
+
+// a 2.0 pins foo==1.0 but is abandoned (c 2.0 needs a z that does not exist);
+// d 1.0 pins it too and stays. YankedPins must name d 1.0 only.
+func TestYankedPinsSkipsAbandonedPinner(t *testing.T) {
+	idx := newYankIndex()
+	addRelease(t, idx, "a", "2.0", false, "foo==1.0", "c>=2")
+	addRelease(t, idx, "a", "1.0", false)
+	addRelease(t, idx, "c", "2.0", false, "z>=9")
+	addRelease(t, idx, "z", "1.0", false)
+	addRelease(t, idx, "d", "1.0", false, "foo==1.0")
+	addRelease(t, idx, "foo", "0.9", false)
+	addRelease(t, idx, "foo", "1.0", true)
+
+	res, err := resolveYank(t, idx, true, "a", "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPins(t, res, map[string]string{"a": "1.0", "d": "1.0", "foo": "1.0"},
+		[]pinView{{"foo", "1.0", "d 1.0"}})
+}
+
+// A failure whose proof runs through a need package: foo 1.0's pinner a is
+// needed only by e 2.0, which needs an unsatisfiable w. The report must read
+// in terms of real packages.
+func TestNeedFailureReadsInRealPackages(t *testing.T) {
+	idx := newYankIndex()
+	// Three releases of c, so the solver takes e 2.0 and a (and learns a's
+	// pin) before it looks at c.
+	addRelease(t, idx, "c", "1.0", false, "foo>=1")
+	addRelease(t, idx, "c", "2.0", false, "foo>=1")
+	addRelease(t, idx, "c", "3.0", false, "foo>=1")
+	addRelease(t, idx, "foo", "1.0", true)
+	addRelease(t, idx, "e", "2.0", false, "a", "w")
+	addRelease(t, idx, "e", "1.0", false)
+	addRelease(t, idx, "a", "1.0", false, "foo==1.0")
+	addRelease(t, idx, "w", "2.0", false, "z>=9")
+	addRelease(t, idx, "w", "1.0", false, "z>=9")
+	addRelease(t, idx, "z", "1.0", false)
+
+	count, restore := resolver.CountSolves()
+	defer restore()
+	_, err := resolveYank(t, idx, true, "e", "c")
+	if err == nil {
+		t.Fatal("want failure")
+	}
+	msg := err.Error()
+	t.Log(msg)
+	if count() < 2 {
+		t.Fatalf("solves = %d, want the failure to come from a solve with the pin", count())
+	}
+	for _, bad := range []string{"version of a requirement on", "version of an exact pin on", "\x00"} {
+		if strings.Contains(msg, bad) {
+			t.Errorf("error contains %q: %s", bad, msg)
+		}
 	}
 }

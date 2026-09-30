@@ -236,7 +236,13 @@ func incompatibilityNames(
 // part of presenting a PubGrub failure, go-pubgrub implements them, and a
 // second implementation would only be a second thing to get wrong.
 func explain(err error, p *provider.Provider) error {
-	rep, ok := report.FromError[provider.Package, pep440set.Set](err, pythonFormatter{permits: &permitNames{p: p}})
+	names := &permitNames{p: p}
+	rep, ok := report.FromError[provider.Package, pep440set.Set](err, pythonFormatter{permits: names})
+	if ok {
+		for i := range rep.Lines {
+			rep.Lines[i].Text = names.rewrite(rep.Lines[i].Text)
+		}
+	}
 	if !ok {
 		// Not a conflict: the solve could not be carried out. Reporting a
 		// provider failure as "these requirements conflict" would be a lie

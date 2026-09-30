@@ -3,6 +3,9 @@
 package resolver
 
 import (
+	"slices"
+	"strings"
+
 	"github.com/posit-dev/go-pyresolver/pep440set"
 	"github.com/posit-dev/go-pyresolver/provider"
 )
@@ -15,17 +18,38 @@ import (
 // wanting its own presentation reads ResolutionError.Report's Lines, each of
 // which carries the incompatibility behind the sentence.
 type pythonFormatter struct {
-	// permits names the pinners behind a yank-permit package's versions. Nil
-	// in tests that format plain packages.
+	// permits names the packages behind a yank-pin virtual package's versions.
+	// Nil in tests that format plain packages.
 	permits *permitNames
 }
 
-// permitNames renders a permit's version set as the pins it stands for. The
-// report calls Set right after Package for the same term, so the last package
-// named is the one whose set is being rendered.
+// permitNames renders a yank-pin virtual package's version set as the real
+// packages it stands for. The report calls Set right after Package for the
+// same term, so the last package named is the one whose set is being rendered.
 type permitNames struct {
 	p    *provider.Provider
 	last provider.Package
+	seen []provider.Package
+}
+
+// noneMark stands in for a virtual version set that stands for no package, so
+// rewrite can turn the sentence around it into plain words.
+const noneMark = "\x00none\x00"
+
+// rewrite turns the report's sentences about yank-pin virtual packages into
+// ones about real packages: "no version of an exact pin on foo 1.0 matches
+// <none>" becomes "no other package pins foo 1.0".
+func (n *permitNames) rewrite(text string) string {
+	if n == nil {
+		return text
+	}
+	for _, pkg := range n.seen {
+		every, nothing, _ := provider.VirtualPhrases(pkg)
+		name := pkg.String()
+		text = strings.ReplaceAll(text, "no version of "+name+" matches "+noneMark, nothing)
+		text = strings.ReplaceAll(text, "every version of "+name, every)
+	}
+	return strings.ReplaceAll(text, noneMark, "from no other package")
 }
 
 // rootName is how the synthetic root package is named in a report.
@@ -56,6 +80,9 @@ const rootName = "the root project"
 func (f pythonFormatter) Package(pkg provider.Package) string {
 	if f.permits != nil {
 		f.permits.last = pkg
+		if _, _, ok := provider.VirtualPhrases(pkg); ok && !slices.Contains(f.permits.seen, pkg) {
+			f.permits.seen = append(f.permits.seen, pkg)
+		}
 	}
 	switch pkg.Kind {
 	case provider.KindPython:
@@ -83,7 +110,10 @@ func (f pythonFormatter) Package(pkg provider.Package) string {
 // because "*" and "" in the middle of a sentence read as a typo.
 func (f pythonFormatter) Set(s pep440set.Set) string {
 	if f.permits != nil {
-		if name, ok := f.permits.p.DescribePermit(f.permits.last, s); ok {
+		if name, none, ok := f.permits.p.DescribePermit(f.permits.last, s); ok {
+			if none {
+				return noneMark
+			}
 			return name
 		}
 	}
