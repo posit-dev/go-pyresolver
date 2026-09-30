@@ -16,16 +16,19 @@ served it.
 ### Added
 
 - `resolver.Options.YankExemptTransitivePins` (and the same field on `provider.Options`), off by
-  default. When set, a yanked version is also usable when a package the resolution selects pins
-  it with an exact `==` (no wildcard), as pip does. A range never exempts. With the option on the
-  resolver may solve more than once; with it off it solves once, as before.
-  `Resolution.YankedPins` lists each yanked version selected through a root or transitive pin,
-  with the package, version and requester, so callers can warn.
-  Limits: `===` pins are not expressible in `pep440set`, so a package that pins with `===` still
-  fails as unrepresentable. A pinner that would be installed only to allow the yanked version is
-  refused, as pip would not install it; that refusal lasts for the rest of the resolution, so a
-  resolution pip reaches by backing off to another branch may fail here. Pins are found only in
-  versions the solver actually chooses.
+  default. When set, a yanked version is usable if an exact `==` pin on it comes from a package
+  genuinely in the solution, as in pip: a transitive pin exempts it only when the requirer is
+  itself required. A range never exempts. Each such version is gated by a `permit` virtual
+  package (satisfied by a pinner that selects the pin), and each pinner by a `need` virtual
+  package (satisfied by a requirer that is itself needed, back to the root). Liveness is a least
+  fixpoint from the root, so a yanked version cannot justify its own pinner. Newly discovered
+  pins or requirer edges restart the solve. With the option off the resolver solves once and its
+  messages are unchanged. `Resolution.YankedPins` lists each yanked version selected through a
+  pin (package, version, requester) so callers can warn.
+  Limits: `===` cannot be used transitively (`pep440set` cannot express it), so such a pinner
+  still fails as unrepresentable. A denied `need` edge stays denied for the rest of the
+  resolution, so a resolution pip reaches by another route may fail here. Pins are found only
+  in versions the solver actually chooses.
 - `pypirsf` reads yank state from the new per-snapshot layout: a synthetic sentinel record
   (design LD) appended as the file's last record, decoded via `rstudio/pypi-manifest`'s wire
   format. `YanksCaptured()` now answers from that record's own "captured" marker byte instead of
