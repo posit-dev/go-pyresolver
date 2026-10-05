@@ -26,16 +26,67 @@ type yankTransition struct {
 	yanked bool
 }
 
-// yankHistory is the decoded payload of the yank-history sentinel record:
+// YankHistory is the decoded payload of the yank-history sentinel record:
 // every version that was EVER yanked at least once, with its transitions in
 // ascending key order. A (cname, version) pair absent entirely means it was
 // never yanked.
 //
-// Latest state only: rstudio/package-manager#21025's Q2 ruling reads yanks
-// from the latest state only, no as-of-snapshot view; that is future work,
-// rstudio/package-manager#20929.
-type yankHistory struct {
-	byPkg map[string]map[string][]yankTransition
+// Open applies the latest state only (see applyLatest); callers that need the
+// state as of a snapshot use YankedAt.
+type YankHistory struct {
+	byPkg    map[string]map[string][]yankTransition
+	captured bool
+}
+
+// DecodeYankHistory decodes the deps field of the yank-history sentinel record
+// (format byte plus payload, the same input form as DecodePackage). d is needed
+// only when the field is zstd-compressed.
+func DecodeYankHistory(field string, d *Dict) (*YankHistory, error) {
+	blob, err := decompress(field, d)
+	if err != nil {
+		return nil, err
+	}
+	h, captured, err := decodeYankHistory(blob)
+	if err != nil {
+		return nil, err
+	}
+	h.captured = captured
+	return h, nil
+}
+
+// Captured reports whether the producer checked every element in the file, so
+// that a version absent from the history is a trustworthy "never yanked". A nil
+// history is not captured.
+func (h *YankHistory) Captured() bool { return h != nil && h.captured }
+
+// YankedAt reports whether the version was yanked as of snapshot key: the state
+// of its last transition with key <= the given key. No history, or no
+// transition at or before key, means not yanked. Keys are compared as strings,
+// as the producer does (rstudio/pypi-manifest YankedAt); they are 10-digit Unix
+// timestamps, so string and numeric order agree. cname is the canonical name;
+// version is the string exactly as the deps blob keys it.
+func (h *YankHistory) YankedAt(cname, version, key string) bool {
+	if h == nil {
+		return false
+	}
+	yanked := false
+	for _, tr := range h.byPkg[cname][version] {
+		if tr.key > key {
+			break
+		}
+		yanked = tr.yanked
+	}
+	return yanked
+}
+
+// YankedLatest reports the version's latest state: that of its last
+// transition, or false when it has no history. Same naming rules as YankedAt.
+func (h *YankHistory) YankedLatest(cname, version string) bool {
+	if h == nil {
+		return false
+	}
+	trans := h.byPkg[cname][version]
+	return len(trans) > 0 && trans[len(trans)-1].yanked
 }
 
 // yankHistoryFormatVersion is the sentinel payload's first byte. Matches
@@ -45,6 +96,7 @@ type yankHistory struct {
 const yankHistoryFormatVersion = 1
 
 // decodeYankHistory decodes an already-decompressed sentinel deps blob body.
+// DecodeYankHistory is the exported entry point.
 //
 // Layout (all integers uvarint, all strings uvarint-length prefixed), per S2:
 //
@@ -65,7 +117,7 @@ const yankHistoryFormatVersion = 1
 // checked". This is the file's real "unknown vs none" signal -- LD's payload
 // has no per-package or per-version unknown state, only this one file-wide
 // bit.
-func decodeYankHistory(blob []byte) (h *yankHistory, captured bool, err error) {
+func decodeYankHistory(blob []byte) (h *YankHistory, captured bool, err error) {
 	r := bytes.NewReader(blob)
 
 	formatVersion, err := r.ReadByte()
@@ -85,7 +137,7 @@ func decodeYankHistory(blob []byte) (h *yankHistory, captured bool, err error) {
 	if err != nil {
 		return nil, false, err
 	}
-	h = &yankHistory{byPkg: make(map[string]map[string][]yankTransition, capHint(numPkgs, r, 2))}
+	h = &YankHistory{byPkg: make(map[string]map[string][]yankTransition, capHint(numPkgs, r, 2))}
 
 	for p := uint64(0); p < numPkgs; p++ {
 		cname, err := readStr(r)
@@ -134,7 +186,10 @@ func decodeYankHistory(blob []byte) (h *yankHistory, captured bool, err error) {
 // record for, to the state of its LAST transition -- the latest state, per
 // the Q2 ruling. A version with no transitions recorded is left untouched
 // (never yanked).
-func (h *yankHistory) applyLatest(cname string, deps map[string]VersionDeps) {
+func (h *YankHistory) applyLatest(cname string, deps map[string]VersionDeps) {
+	if h == nil {
+		return
+	}
 	pkgHist, ok := h.byPkg[cname]
 	if !ok {
 		return

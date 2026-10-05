@@ -15,6 +15,8 @@ served it.
 
 ### Added
 
+- `pypirsf.DecodeYankHistory` decodes the yank-history record. `YankedAt` gives the yank state
+  as of a snapshot key (same rule as the producer) and `YankedLatest` the latest. `Open` is unchanged.
 - `resolver.Options.YankExemptTransitivePins` (and the same field on `provider.Options`), off by
   default. When set, a yanked version is usable if an exact `==` pin on it comes from a package
   genuinely in the solution, as in pip: a transitive pin exempts it only when the requirer is
@@ -36,8 +38,8 @@ served it.
 - `pypirsf` reads yank state from the new per-snapshot layout: a synthetic sentinel record
   (design LD) appended as the file's last record, decoded via `rstudio/pypi-manifest`'s wire
   format. `YanksCaptured()` now answers from that record's own "captured" marker byte instead of
-  a v0.13.0-style trailing-bytes check on record 0. Reads the latest state only; as-of-snapshot
-  resolution is future work (rstudio/package-manager#20929).
+  a v0.13.0-style trailing-bytes check on record 0. `Open` reads the latest state only; for
+  the state as of a snapshot use `DecodeYankHistory` and `YankedAt`.
 - `pypirsf.File.HistoryError()` reports why the yank-history record failed to decode. A corrupt
   record no longer fails `Open`; yank data is treated as absent.
 
