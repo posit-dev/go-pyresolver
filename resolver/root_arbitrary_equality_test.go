@@ -75,6 +75,7 @@ func TestRootArbitraryEqualityIsStringEquality(t *testing.T) {
 
 	_, err := resolveYank(t, idx, false, "foo===1.0")
 	wantNoMatch(t, err, "foo")
+	wantNote(t, err, "Note: no published version of foo is string-equal to \"foo===1.0\"")
 
 	res, err := resolveYank(t, idx, false, "foo==1.0")
 	if err != nil {
@@ -136,4 +137,21 @@ func TestRootArbitraryEqualityNoMatch(t *testing.T) {
 
 	_, err = resolveYank(t, idx, false, "nosuch===1.0")
 	wantNoMatch(t, err, "nosuch")
+}
+
+func wantNote(t *testing.T, err error, text string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), text) {
+		t.Errorf("error %v does not contain %q", err, text)
+	}
+}
+
+// A non-PEP 440 operand matches no published version; the message states it.
+func TestRootArbitraryEqualityNonVersionOperand(t *testing.T) {
+	idx := newYankIndex()
+	addRelease(t, idx, "foo", "1.0", false)
+
+	_, err := resolveYank(t, idx, false, "foo===lolwat")
+	wantNoMatch(t, err, "foo")
+	wantNote(t, err, "Note: no published version of foo is string-equal to \"foo===lolwat\"")
 }

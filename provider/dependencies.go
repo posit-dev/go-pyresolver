@@ -135,9 +135,12 @@ func (p *Provider) expandRootRequirements() ([]dependency, string, error) {
 			}
 		}
 		if allowed.IsEmpty() {
-			// An empty set would drop the package from the report. Everything
-			// unpublished matches no version, and keeps the name in the message.
+			// An empty set drops the package from the report. Its stand-in reads
+			// oddly, so a root note states the user's real requirement.
 			allowed = published.Complement()
+			p.record(Root(), version.Version{}, fmt.Sprintf(
+				"no published version of %s is string-equal to %q (=== compares the version text exactly, as pip does)",
+				name, r.String()), KindOther, false)
 		}
 		out = append(out, dependency{Package: Project(name), Allowed: allowed})
 		for _, extra := range r.Extras {
