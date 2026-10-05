@@ -385,7 +385,6 @@ func TestRootRequirementsThatCannotBeExpressedAreAnError(t *testing.T) {
 		want string
 	}{
 		{"direct reference", "foo @ https://example.com/foo-1.0.whl", "https://example.com/foo-1.0.whl"},
-		{"unrepresentable specifier", "foo ===lolwat", "===lolwat"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := testOptions(t)

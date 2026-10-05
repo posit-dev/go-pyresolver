@@ -45,6 +45,8 @@ served it.
 
 ### Fixed
 
+- A root `===` requirement now resolves as an exact pin, comparing the version string as pip does
+  (`===1.0` does not match `1.0.0`), and keeps a yanked version it pins. It used to fail the whole resolve.
 - A root `==` pin whose environment marker is false for the target no longer lets a yanked
   version through. It is not a requirement, so it cannot exempt one. This applies with or
   without `YankExemptTransitivePins`.
