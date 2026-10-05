@@ -78,7 +78,7 @@ type File struct {
 	// file carries no sentinel record at all. Deps applies it to every
 	// version it names regardless of historyCaptured -- filtering is what
 	// historyCaptured gates, not decoding.
-	history *yankHistory
+	history *YankHistory
 
 	// historyCaptured is the sentinel payload's own marker byte: true only
 	// once the producer's backfill has checked every non-deleted element, not
@@ -310,16 +310,12 @@ func (file *File) loadYankHistoryLocked(r rsf.Reader, buf *bufio.Reader) error {
 		return fmt.Errorf("sentinel record has no deps payload")
 	}
 
-	blob, err := decompress(field, file.dict)
-	if err != nil {
-		return fmt.Errorf("decompressing: %w", err)
-	}
-	history, captured, err := decodeYankHistory(blob)
+	history, err := DecodeYankHistory(field, file.dict)
 	if err != nil {
 		return fmt.Errorf("decoding: %w", err)
 	}
 	file.history = history
-	file.historyCaptured = captured
+	file.historyCaptured = history.Captured()
 
 	return nil
 }
@@ -438,8 +434,8 @@ func (file *File) Deps(cname string) (map[string]VersionDeps, error) {
 		return nil, fmt.Errorf("pypirsf: %q: %w", cname, err)
 	}
 
-	// Latest snapshot element only; as-of-snapshot resolution is future work
-	// (rstudio/package-manager#20929).
+	// Latest state only; for the state as of a snapshot, decode the sentinel
+	// with DecodeYankHistory and use YankedAt.
 	if file.history != nil {
 		file.history.applyLatest(cname, deps)
 	}
