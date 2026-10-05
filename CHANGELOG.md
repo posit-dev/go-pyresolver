@@ -13,10 +13,22 @@ served it.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-05
+
 ### Added
 
 - `pypirsf.DecodeYankHistory` decodes the yank-history record. `YankedAt` gives the yank state
   as of a snapshot key (same rule as the producer) and `YankedLatest` the latest. `Open` is unchanged.
+
+### Fixed
+
+- A root `===` requirement now resolves as an exact pin, comparing the version string as pip does
+  (`===1.0` does not match `1.0.0`), and keeps a yanked version it pins. It used to fail the whole resolve.
+
+## [0.14.0] - 2026-09-30
+
+### Added
+
 - `resolver.Options.YankExemptTransitivePins` (and the same field on `provider.Options`), off by
   default. When set, a yanked version is usable if an exact `==` pin on it comes from a package
   genuinely in the solution, as in pip: a transitive pin exempts it only when the requirer is
@@ -38,15 +50,13 @@ served it.
 - `pypirsf` reads yank state from the new per-snapshot layout: a synthetic sentinel record
   (design LD) appended as the file's last record, decoded via `rstudio/pypi-manifest`'s wire
   format. `YanksCaptured()` now answers from that record's own "captured" marker byte instead of
-  a v0.13.0-style trailing-bytes check on record 0. `Open` reads the latest state only; for
-  the state as of a snapshot use `DecodeYankHistory` and `YankedAt`.
+  a v0.13.0-style trailing-bytes check on record 0. Reads the latest state only; as-of-snapshot
+  resolution is future work (rstudio/package-manager#20929).
 - `pypirsf.File.HistoryError()` reports why the yank-history record failed to decode. A corrupt
   record no longer fails `Open`; yank data is treated as absent.
 
 ### Fixed
 
-- A root `===` requirement now resolves as an exact pin, comparing the version string as pip does
-  (`===1.0` does not match `1.0.0`), and keeps a yanked version it pins. It used to fail the whole resolve.
 - A root `==` pin whose environment marker is false for the target no longer lets a yanked
   version through. It is not a requirement, so it cannot exempt one. This applies with or
   without `YankExemptTransitivePins`.
@@ -1569,7 +1579,12 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.7.0...v0.8.0
