@@ -1,0 +1,18 @@
+# dependencies
+click>=8.0.0
+mypy_extensions>=0.4.3
+packaging>=22.0
+pathspec>=0.9.0
+platformdirs>=2
+tomli>=1.1.0; python_version < '3.11'
+typing_extensions>=4.0.1; python_version < '3.11'
+# extra: colorama
+colorama>=0.4.3
+# extra: uvloop
+uvloop>=0.15.2
+# extra: d
+aiohttp>=3.7.4; sys_platform != 'win32' or implementation_name != 'pypy'
+aiohttp>=3.7.4, !=3.9.0; sys_platform == 'win32' and implementation_name == 'pypy'
+# extra: jupyter
+ipython>=7.8.0
+tokenize-rt>=3.2.0

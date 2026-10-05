@@ -1,0 +1,18 @@
+# dependencies
+certifi
+httpcore==1.*
+anyio
+idna
+# extra: brotli
+brotli; platform_python_implementation == 'CPython'
+brotlicffi; platform_python_implementation != 'CPython'
+# extra: cli
+click==8.*
+pygments==2.*
+rich>=10,<15
+# extra: http2
+h2>=3,<5
+# extra: socks
+socksio==1.*
+# extra: zstd
+zstandard>=0.18.0

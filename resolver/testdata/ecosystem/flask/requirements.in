@@ -1,0 +1,11 @@
+# dependencies
+blinker>=1.9.0
+click>=8.1.3
+itsdangerous>=2.2.0
+jinja2>=3.1.2
+markupsafe>=2.1.1
+werkzeug>=3.1.0
+# extra: async
+asgiref>=3.2
+# extra: dotenv
+python-dotenv

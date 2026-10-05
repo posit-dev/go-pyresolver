@@ -121,6 +121,23 @@ jobs:
             echo "::error::TestSATOracle did not print its summary line, so it did not run."
             exit 1
           fi
+      # Seven real projects resolved against uv's goldens, offline from recorded
+      # fixtures. Same must-not-skip shape as the steps above. See
+      # resolver/testdata/ecosystem/README.md.
+      - name: Ecosystem goldens (must not skip)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./resolver/ -run TestEcosystem -v -count=1 -timeout 20m \
+            | tee ecosystem.log
+          if grep -q -e '--- SKIP' ecosystem.log; then
+            echo "::error::The ecosystem goldens skipped. They must run on every PR."
+            exit 1
+          fi
+          if ! grep -qE 'ecosystem: [0-9]+ projects, [0-9]+ pins compared, [0-9]+ expected differences' ecosystem.log; then
+            echo "::error::TestEcosystem did not print its summary line, so it did not run."
+            exit 1
+          fi
       - name: Format check
         run: |
           unformatted=$(gofmt -l .)
