@@ -83,7 +83,7 @@ func (p *Provider) Dependencies(pkg Package, ver pep440set.Set) ([]dependency, e
 func (p *Provider) rootDependencies() ([]dependency, error) {
 	deps := []dependency{{Package: Python(), Allowed: pep440set.Exactly(p.opts.PythonVersion)}}
 
-	expanded, reason, err := expandRequirements(p.opts.Requirements, p.opts.Environment, nil)
+	expanded, reason, err := p.expandRootRequirements()
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +97,75 @@ func (p *Provider) rootDependencies() ([]dependency, error) {
 	deps = append(deps, expanded...)
 	p.yank.recordDecided(Root(), p.opts.RootVersion, deps)
 	return deps, nil
+}
+
+// expandRootRequirements is expandRequirements for the caller's own list, plus
+// root-only support for `===`.
+//
+// A version set cannot hold string equality, so a requirement with a `===`
+// specifier is resolved here against the index: it allows exactly the
+// published versions every specifier accepts (Specifier.Check, which compares
+// strings the way pip does). Transitive `===` still goes through
+// expandRequirements and stays unrepresentable.
+func (p *Provider) expandRootRequirements() ([]dependency, string, error) {
+	var out []dependency
+	for _, r := range p.opts.Requirements {
+		if r.URL != "" || !hasArbitraryEquality(r) {
+			deps, reason, err := expandRequirements([]requirement.Requirement{r}, p.opts.Environment, nil)
+			if err != nil || reason != "" {
+				return nil, reason, err
+			}
+			out = append(out, deps...)
+			continue
+		}
+		if !r.Marker.Evaluate(p.opts.Environment, nil) {
+			continue
+		}
+
+		name := index.NewPackageName(r.Name)
+		versions, err := p.rankedVersions(Project(name))
+		if err != nil {
+			return nil, "", err
+		}
+		allowed, published := pep440set.Empty(), pep440set.Empty()
+		for _, v := range versions {
+			published = published.Union(pep440set.Exactly(v))
+			if satisfiesAll(r, v) {
+				allowed = allowed.Union(pep440set.Exactly(v))
+			}
+		}
+		if allowed.IsEmpty() {
+			// An empty set drops the package from the report. Its stand-in reads
+			// oddly, so a root note states the user's real requirement.
+			allowed = published.Complement()
+			p.record(Root(), version.Version{}, fmt.Sprintf(
+				"no published version of %s is string-equal to %q (=== compares the version text exactly, as pip does)",
+				name, r.String()), KindOther, false)
+		}
+		out = append(out, dependency{Package: Project(name), Allowed: allowed})
+		for _, extra := range r.Extras {
+			out = append(out, dependency{Package: WithExtra(name, extra), Allowed: allowed})
+		}
+	}
+	return out, "", nil
+}
+
+func hasArbitraryEquality(r requirement.Requirement) bool {
+	for _, s := range r.Specifiers.List() {
+		if s.Operator() == "===" {
+			return true
+		}
+	}
+	return false
+}
+
+func satisfiesAll(r requirement.Requirement, v version.Version) bool {
+	for _, s := range r.Specifiers.List() {
+		if !s.Check(v) {
+			return false
+		}
+	}
+	return true
 }
 
 // projectDependencies computes the dependencies of one version of a real

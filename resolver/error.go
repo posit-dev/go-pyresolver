@@ -100,6 +100,9 @@ func (e *ResolutionError) Unwrap() error { return e.cause }
 // string: an error message is what someone sees when something has already gone
 // wrong, so a new kind that reaches here should read plainly, not vanish.
 func rejectionExplanation(u provider.Unusable, rootPinHint bool) string {
+	if u.Package.Kind == provider.KindRoot {
+		return "Note: " + u.Reason + "."
+	}
 	switch u.Kind {
 	case provider.KindMetadataUnavailable:
 		return fmt.Sprintf(
@@ -168,6 +171,15 @@ func (e *ResolutionError) relevantRejections() []provider.Unusable {
 	// provider builds its key from strings too.
 	seen := map[string]bool{}
 	for _, u := range e.Unusable {
+		// A root record states something about the user's own requirement, not
+		// about a version, so it needs no version match and is keyed by its text.
+		if u.Package.Kind == provider.KindRoot && !u.Offered {
+			if key := "root\x00" + u.Reason; !seen[key] {
+				seen[key] = true
+				out = append(out, u)
+			}
+			continue
+		}
 		if u.Offered || !u.Kind.Reportable() {
 			continue
 		}
