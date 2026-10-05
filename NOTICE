@@ -55,6 +55,17 @@ dual-licensed under the Apache License, Version 2.0, or the MIT license. See
 resolver/testdata/packse/README.md for the pinned commit and how they were
 copied.
 
+resolver/testdata/ecosystem contains, for seven projects (black, cookiecutter,
+flask, httpx, llm, packse and pytest-cov), the pyproject.toml-derived
+requirements and license file from the copies in astral-sh/uv's
+test/ecosystem, each under its own license: MIT (black, pytest-cov), BSD-3-Clause
+(cookiecutter, flask, httpx), Apache-2.0 (llm) and Apache-2.0 or MIT (packse).
+It also holds output from uv (astral-sh/uv), dual-licensed under the Apache
+License, Version 2.0, or the MIT license, and package metadata recorded from the
+Python Package Index, which originates with the projects published there. See
+resolver/testdata/ecosystem/README.md for the pinned commits and how each file
+was made.
+
 github.com/crillab/gophersat, used as a SAT-solver cross-check in the resolver
 package's tests, is Copyright (c) 2017 Centre de Recherche en Informatique de
 Lens and contributors, licensed under the MIT license. Test-only dependency.
