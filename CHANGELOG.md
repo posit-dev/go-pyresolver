@@ -13,6 +13,15 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `index.RSFIndex.KnownNoWheels` reports a captured-and-empty wheel list without parsing requirements. A true answer still needs confirming with `Metadata`.
+- `pep440set.Set.IsSubsetOf` and `Difference`, the optional fast paths go-pubgrub uses when a set type has them.
+
+### Changed
+
+- `pep440set.Set.Intersect` merges in one pass and returns an operand unchanged when it is the result.
+
 ## [0.15.0] - 2026-10-05
 
 ### Added

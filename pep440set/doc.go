@@ -19,7 +19,7 @@
 // set: it compares incompatibilities for equality, so keeping [1,2) u [2,3)
 // distinct from [1,3) makes the solver fail to recognize facts it has already
 // derived, and it can then loop or report a conflict that does not exist.
-// Every operation returns through newSet for that reason. Note that 1.0 and
+// Every result is canonical for that reason (via newSet, or built canonical). Note that 1.0 and
 // 1.0.0 are the same version, so merging compares positions, not spellings.
 //
 // # Equal and IsEmpty answer about positions

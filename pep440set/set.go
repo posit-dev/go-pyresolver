@@ -29,8 +29,9 @@ func appendSpan(out []span, n int, sp span) []span {
 	return append(out, sp)
 }
 
-// newSet canonicalizes. Every constructor and every operation returns through
-// it, because versionset.Set requires Equal to hold across representations.
+// newSet canonicalizes. Constructors and most operations return through it;
+// Intersect and Complement build canonical results directly (and may return an
+// operand, sharing its spans). Equal must hold across representations.
 func newSet(spans ...span) Set {
 	// Sized up front rather than grown. A span is two bounds and a bound
 	// carries a version.Version, so a span is hundreds of bytes wide and
@@ -143,29 +144,72 @@ func (s Set) Union(other Set) Set {
 
 // Intersect implements versionset.Set.
 func (s Set) Intersect(other Set) Set {
-	// Both sides are canonical -- sorted and disjoint -- so the intersection
-	// has at most len(s)+len(other)-1 spans however many pairs the loop below
-	// visits. Sizing to that beats growing a span slice by doubling, but the
-	// slice is allocated on the first span kept rather than before the loop:
-	// an intersection that keeps nothing -- either operand empty, or two
-	// non-empty operands that do not meet -- then costs no allocation at all.
-	// See appendSpan.
-	var out []span
-	for _, a := range s.spans {
-		for _, b := range other.spans {
-			lo, hi := a.lo, a.hi
-			if cmpBound(b.lo, lo) > 0 {
-				lo = b.lo
-			}
-			if cmpBound(b.hi, hi) < 0 {
-				hi = b.hi
-			}
-			if cmpBound(lo, hi) < 0 {
-				out = appendSpan(out, len(s.spans)+len(other.spans), span{lo, hi})
+	if len(s.spans) == 0 || len(other.spans) == 0 {
+		return Set{}
+	}
+	if s.isAll() {
+		return other
+	}
+	if other.isAll() {
+		return s
+	}
+	// Both sides are canonical (sorted, disjoint), so one merge pass finds every
+	// overlap, and the pieces come out canonical too (no newSet). Pass one only
+	// counts and checks whether the result is one operand unchanged; sets are
+	// immutable, so that operand is returned without allocating.
+	n, eqS, eqO := intersectPass(s.spans, other.spans, nil)
+	switch {
+	case n == 0:
+		return Set{}
+	case eqS:
+		return s
+	case eqO:
+		return other
+	}
+	out := make([]span, 0, n)
+	intersectPass(s.spans, other.spans, &out)
+	return Set{spans: out}
+}
+
+// intersectPass merges two canonical span lists. With out nil it only counts the
+// pieces; eqS/eqO report that every piece equals the matching span of that side.
+func intersectPass(as, bs []span, out *[]span) (n int, eqS, eqO bool) {
+	eqS, eqO = true, true
+	i, j := 0, 0
+	for i < len(as) && j < len(bs) {
+		a, b := &as[i], &bs[j]
+		loB := cmpBound(b.lo, a.lo) // >0: lo comes from b
+		hc := cmpBound(a.hi, b.hi)  // >0: hi comes from b
+		lo, hi := &a.lo, &a.hi
+		if loB > 0 {
+			lo = &b.lo
+		}
+		if hc > 0 {
+			hi = &b.hi
+		}
+		if cmpBound(*lo, *hi) < 0 {
+			n++
+			eqS = eqS && loB <= 0 && hc <= 0
+			eqO = eqO && loB >= 0 && hc >= 0
+			if out != nil {
+				*out = append(*out, span{*lo, *hi})
 			}
 		}
+		switch {
+		case hc < 0:
+			i++
+		case hc > 0:
+			j++
+		default:
+			i++
+			j++
+		}
 	}
-	return newSet(out...)
+	return n, eqS && n == len(as), eqO && n == len(bs)
+}
+
+func (s Set) isAll() bool {
+	return len(s.spans) == 1 && s.spans[0].lo.inf < 0 && s.spans[0].hi.inf > 0
 }
 
 // Complement implements versionset.Set.
@@ -191,5 +235,8 @@ func (s Set) Complement() Set {
 		// is the only span there will be.
 		out = appendSpan(out, 1, span{cursor, posInf()})
 	}
-	return newSet(out...)
+	if len(out) == 0 {
+		return Set{}
+	}
+	return Set{spans: out}
 }
