@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `index.RSFIndex.KnownNoWheels` reports a captured-and-empty wheel list without parsing requirements. A true answer still needs confirming with `Metadata`.
+
 ## [0.15.0] - 2026-10-05
 
 ### Added
