@@ -39,7 +39,7 @@ func (idx *RSFIndex) KnownNoWheels(ctx context.Context, pkg PackageName, ver ver
 	return noWheels(decoded[key]), nil
 }
 
-// noWheels is the one predicate shared with the full-decode path's test.
+// noWheels is the one predicate for this path; its test re-derives it independently.
 func noWheels(raw pypirsf.VersionDeps) bool {
 	return raw.TagsCaptured && len(raw.WheelTags) == 0
 }

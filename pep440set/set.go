@@ -29,8 +29,9 @@ func appendSpan(out []span, n int, sp span) []span {
 	return append(out, sp)
 }
 
-// newSet canonicalizes. Every constructor and every operation returns through
-// it, because versionset.Set requires Equal to hold across representations.
+// newSet canonicalizes. Constructors and most operations return through it;
+// Intersect and Complement build canonical results directly (and may return an
+// operand, sharing its spans). Equal must hold across representations.
 func newSet(spans ...span) Set {
 	// Sized up front rather than grown. A span is two bounds and a bound
 	// carries a version.Version, so a span is hundreds of bytes wide and
