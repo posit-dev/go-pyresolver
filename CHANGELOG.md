@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-07
+
 ### Added
 
 - `index.RSFIndex.KnownNoWheels` reports a captured-and-empty wheel list without parsing requirements. A true answer still needs confirming with `Metadata`.
@@ -1588,7 +1590,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.12.0...v0.13.0
