@@ -53,6 +53,12 @@ type Options struct {
 	// behind them do not move.
 	Prereleases candidate.PrereleaseSet
 
+	// PrereleaseIfNoFinal is uv's rule (if-necessary-or-explicit): a pre-release
+	// of a package is a candidate only when the package is in Prereleases or
+	// publishes no final release at all. Off by default, which keeps the
+	// pre-releases as candidates ranked after every final.
+	PrereleaseIfNoFinal bool
+
 	// MarkExact sets Dependency.Exact on each dependency that allows exactly
 	// one version, which go-pubgrub reads only when Solver.OwnOrder is on.
 	// Off by default.
@@ -485,6 +491,9 @@ func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
 	// reference rather than leaving it as an argument.
 	r := candidate.Rank(pkg.Name, all, p.opts.Policy)
 	r = finalsFirst(pkg.Name, r, p.opts.Prereleases)
+	if p.barsPrereleases(pkg.Name, r) {
+		r = finalsOnly(r)
+	}
 	p.ranked[pkg.Name] = r
 	return r, nil
 }
@@ -508,6 +517,31 @@ func finalsFirst(pkg index.PackageName, ranked []version.Version, prereleases ca
 		}
 	}
 	return append(out, after...)
+}
+
+// barsPrereleases reports whether, under PrereleaseIfNoFinal, the pre-releases
+// of name are not candidates: the package is not enabled and has a final release.
+func (p *Provider) barsPrereleases(name index.PackageName, all []version.Version) bool {
+	if !p.opts.PrereleaseIfNoFinal || p.opts.Prereleases[name] {
+		return false
+	}
+	for _, v := range all {
+		if !v.IsPreRelease() {
+			return true
+		}
+	}
+	return false
+}
+
+// finalsOnly returns ranked without its pre-releases, in order.
+func finalsOnly(ranked []version.Version) []version.Version {
+	out := make([]version.Version, 0, len(ranked))
+	for _, v := range ranked {
+		if !v.IsPreRelease() {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // singleVersion answers for a package with exactly one version and no index

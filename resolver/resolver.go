@@ -128,6 +128,12 @@ type Options struct {
 	OwnOrder          bool
 	ClashThreshold    int
 
+	// PrereleaseIfNoFinal drops a package's pre-releases from the candidates
+	// when it has a final release, unless AllowPrerelease names it or one of
+	// its requirements names a pre-release. Off by default: pre-releases stay
+	// candidates, ranked after every final.
+	PrereleaseIfNoFinal bool
+
 	// MarkExact tells the solver which dependencies allow exactly one version
 	// (Dependency.Exact). It only matters with OwnOrder.
 	MarkExact bool
@@ -309,6 +315,7 @@ func Resolve(
 
 		YankExemptTransitivePins: opts.YankExemptTransitivePins,
 		MarkExact:                opts.MarkExact,
+		PrereleaseIfNoFinal:      opts.PrereleaseIfNoFinal,
 	})
 
 	// One solve, unless YankExemptTransitivePins found pins to learn: then
