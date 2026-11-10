@@ -144,3 +144,20 @@ func TestPrereleaseIfNoFinalYankedFinalSetupIsLive(t *testing.T) {
 		t.Fatalf("option off: %v, %v, want flask 2.0rc1", res, err)
 	}
 }
+
+// A version that is rejected as unusable (a transitive `===` cannot be
+// expressed) must not lift the pre-release bar through its requirements.
+func TestPrereleaseIfNoFinalIgnoresUnusableVersion(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("app", "2.0", "flask>=2.0rc1", "foo===1.0").
+		AddVersion("app", "1.0").
+		AddVersion("other", "1.0", "flask>1.0").
+		AddVersion("foo", "1.0").
+		AddVersion("flask", "1.0").
+		AddVersion("flask", "2.0rc1")
+	opts := testOptions(t)
+	opts.PrereleaseIfNoFinal = true
+	if res, err := resolver.Resolve(context.Background(), mustRequirements(t, "app", "other"), idx, opts); err == nil {
+		t.Fatalf("resolved %v, want a failure: app 2.0 is unusable, so nothing names a flask pre-release", res.Pinned)
+	}
+}

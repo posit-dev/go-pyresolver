@@ -310,10 +310,10 @@ func (p *Provider) dependenciesFrom(
 	if err != nil {
 		return nil, "", err
 	}
-	p.notePrereleaseNames(reqs, active)
 	if reason != "" {
 		return nil, reason, nil
 	}
+	p.notePrereleaseNames(reqs, active)
 	// pkg itself, not Project(pkg.Name): when pkg is an extra, the request came
 	// from THAT extra, not from the base with no extra active. Dropping the
 	// extra here would let resolver.missingExtras attribute the request to a
