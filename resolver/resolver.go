@@ -67,14 +67,18 @@ type Options struct {
 	// range. Names must already be canonical (build them with
 	// index.NewPackageName).
 	//
-	// Every package's pre-releases are still offered as a fallback when no
-	// final release in range is usable, whether or not it is named here --
-	// see candidate.PrereleaseSet. This only affects a package where a final
-	// IS usable: named here, its newest pre-release can still beat an older
-	// final; not named, the final wins regardless of version order.
+	// Unless PrereleaseIfNoFinal is on, every package's pre-releases are still
+	// offered as a fallback when no final release in range is usable, whether
+	// or not it is named here -- see candidate.PrereleaseSet. This only affects
+	// a package where a final IS usable: named here, its newest pre-release can
+	// still beat an older final; not named, the final wins regardless of
+	// version order. With PrereleaseIfNoFinal on, naming a package here is one
+	// of the ways its pre-releases stay candidates at all.
 	//
-	// A package whose own requirement names a pre-release -- ">=2.0rc1" -- is
-	// enabled without being listed here.
+	// A package that a ROOT requirement names a pre-release of -- ">=2.0rc1" --
+	// is enabled without being listed here. A requirement of a selected
+	// package does not rank pre-releases alongside finals; it only lifts the
+	// PrereleaseIfNoFinal bar.
 	AllowPrerelease []index.PackageName
 
 	// MaxRounds bounds the solver's main loop. Zero means 10,000.
@@ -129,9 +133,14 @@ type Options struct {
 	ClashThreshold    int
 
 	// PrereleaseIfNoFinal drops a package's pre-releases from the candidates
-	// when it has a final release, unless AllowPrerelease names it or one of
-	// its requirements names a pre-release. Off by default: pre-releases stay
-	// candidates, ranked after every final.
+	// when it has a final release, unless AllowPrerelease names it or some
+	// requirement in the solve -- the root's, or that of any selected package
+	// -- names a pre-release of it, as in uv. A yanked final release still
+	// counts as a final release. Off by default: pre-releases stay candidates,
+	// ranked after every final.
+	//
+	// A requirement from a package the solver later abandons still lifts the
+	// bar for the rest of the solve.
 	PrereleaseIfNoFinal bool
 
 	// ExtraEdgeOnly makes a requirement that names extras depend on the extra

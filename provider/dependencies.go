@@ -310,6 +310,7 @@ func (p *Provider) dependenciesFrom(
 	if err != nil {
 		return nil, "", err
 	}
+	p.notePrereleaseNames(reqs, active)
 	if reason != "" {
 		return nil, reason, nil
 	}
