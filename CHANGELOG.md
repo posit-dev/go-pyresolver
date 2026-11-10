@@ -17,6 +17,7 @@ served it.
 
 - `resolver.Options` solver settings, all off by default: `MergeDependencies`, `RunningSatisfier`, `StoredKeys`, `StableDiscovery`, `OwnOrder`, `ClashThreshold` (passed to go-pubgrub) and `MarkExact` (sets `Dependency.Exact`, read only with `OwnOrder`). With all of them off, results are unchanged.
 - `resolver.Options.PrereleaseIfNoFinal`, off by default: a package's pre-releases are not candidates when it has a final release, unless `AllowPrerelease` or a requirement names a pre-release (uv's rule).
+- `resolver.Options.ExtraEdgeOnly`, off by default: a requirement with extras depends on the extra packages only, not also on the base package.
 
 ### Changed
 

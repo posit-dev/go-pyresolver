@@ -59,6 +59,11 @@ type Options struct {
 	// pre-releases as candidates ranked after every final.
 	PrereleaseIfNoFinal bool
 
+	// ExtraEdgeOnly makes a requirement that names extras depend on the extra
+	// packages only, not also on the base package: each extra already depends
+	// on its base at the same version. Off by default.
+	ExtraEdgeOnly bool
+
 	// MarkExact sets Dependency.Exact on each dependency that allows exactly
 	// one version, which go-pubgrub reads only when Solver.OwnOrder is on.
 	// Off by default.

@@ -129,7 +129,7 @@ func (p *Provider) expandRootRequirements() ([]dependency, string, error) {
 	var out []dependency
 	for _, r := range p.opts.Requirements {
 		if r.URL != "" || !hasArbitraryEquality(r) {
-			deps, reason, err := expandRequirements([]requirement.Requirement{r}, p.opts.Environment, nil)
+			deps, reason, err := expandRequirements([]requirement.Requirement{r}, p.opts.Environment, nil, p.opts.ExtraEdgeOnly)
 			if err != nil || reason != "" {
 				return nil, reason, err
 			}
@@ -160,7 +160,9 @@ func (p *Provider) expandRootRequirements() ([]dependency, string, error) {
 				"no published version of %s is string-equal to %q (=== compares the version text exactly, as pip does)",
 				name, r.String()), KindOther, false)
 		}
-		out = append(out, dependency{Package: Project(name), Allowed: allowed})
+		if !p.opts.ExtraEdgeOnly || len(r.Extras) == 0 {
+			out = append(out, dependency{Package: Project(name), Allowed: allowed})
+		}
 		for _, extra := range r.Extras {
 			out = append(out, dependency{Package: WithExtra(name, extra), Allowed: allowed})
 		}
@@ -304,7 +306,7 @@ func (p *Provider) dependenciesFrom(
 		deps = append(deps, dependency{Package: Project(pkg.Name), Allowed: pep440set.Exactly(v)})
 	}
 
-	expanded, reason, err := expandRequirements(reqs, p.opts.Environment, active)
+	expanded, reason, err := expandRequirements(reqs, p.opts.Environment, active, p.opts.ExtraEdgeOnly)
 	if err != nil {
 		return nil, "", err
 	}
@@ -392,7 +394,7 @@ func extraOnly(reqs []requirement.Requirement, env marker.Environment, active []
 //
 // A non-empty reason means the requirement list as a whole cannot be expressed,
 // so whatever declared it must not be offered.
-func expandRequirements(reqs []requirement.Requirement, env marker.Environment, active []string) ([]dependency, string, error) {
+func expandRequirements(reqs []requirement.Requirement, env marker.Environment, active []string, extraEdgeOnly bool) ([]dependency, string, error) {
 	var deps []dependency
 
 	for _, r := range reqs {
@@ -430,7 +432,12 @@ func expandRequirements(reqs []requirement.Requirement, env marker.Environment, 
 		// allowed set. Depending on the base package as well as on each extra
 		// is what keeps the base package's own requirements in the graph: an
 		// extra ADDS requirements, it does not replace them.
-		deps = append(deps, dependency{Package: Project(name), Allowed: allowed})
+		//
+		// ExtraEdgeOnly drops the base edge when extras are named: each extra
+		// already depends on its base at the same version.
+		if !extraEdgeOnly || len(r.Extras) == 0 {
+			deps = append(deps, dependency{Package: Project(name), Allowed: allowed})
+		}
 		for _, extra := range r.Extras {
 			deps = append(deps, dependency{Package: WithExtra(name, extra), Allowed: allowed})
 		}

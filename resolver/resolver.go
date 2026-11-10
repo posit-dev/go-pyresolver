@@ -134,6 +134,10 @@ type Options struct {
 	// candidates, ranked after every final.
 	PrereleaseIfNoFinal bool
 
+	// ExtraEdgeOnly makes a requirement that names extras depend on the extra
+	// packages only, not also on the base package. Off by default.
+	ExtraEdgeOnly bool
+
 	// MarkExact tells the solver which dependencies allow exactly one version
 	// (Dependency.Exact). It only matters with OwnOrder.
 	MarkExact bool
@@ -315,6 +319,7 @@ func Resolve(
 
 		YankExemptTransitivePins: opts.YankExemptTransitivePins,
 		MarkExact:                opts.MarkExact,
+		ExtraEdgeOnly:            opts.ExtraEdgeOnly,
 		PrereleaseIfNoFinal:      opts.PrereleaseIfNoFinal,
 	})
 
