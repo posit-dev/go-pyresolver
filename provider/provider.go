@@ -53,6 +53,11 @@ type Options struct {
 	// behind them do not move.
 	Prereleases candidate.PrereleaseSet
 
+	// MarkExact sets Dependency.Exact on each dependency that allows exactly
+	// one version, which go-pubgrub reads only when Solver.OwnOrder is on.
+	// Off by default.
+	MarkExact bool
+
 	// Requirements are the caller's own requirements: what the resolution is
 	// being asked for. They become the root package's dependencies.
 	//

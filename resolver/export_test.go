@@ -2,6 +2,12 @@
 
 package resolver
 
+import (
+	"github.com/posit-dev/go-pubgrub/solver"
+	"github.com/posit-dev/go-pyresolver/pep440set"
+	"github.com/posit-dev/go-pyresolver/provider"
+)
+
 // CountSolves counts the solves Resolve runs until the returned func is called.
 // Not safe with parallel tests.
 func CountSolves() (count func() int, restore func()) {
@@ -15,4 +21,11 @@ func CountSolves() (count func() int, restore func()) {
 func OnSolve(f func()) (restore func()) {
 	onSolve = f
 	return func() { onSolve = nil }
+}
+
+// OnSolver calls f with each configured Solver until restore is called.
+// Not safe with parallel tests.
+func OnSolver(f func(*solver.Solver[provider.Package, pep440set.Set])) (restore func()) {
+	onSolver = f
+	return func() { onSolver = nil }
 }

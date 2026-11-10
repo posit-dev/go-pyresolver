@@ -13,6 +13,14 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `resolver.Options` solver settings, all off by default: `MergeDependencies`, `RunningSatisfier`, `StoredKeys`, `StableDiscovery`, `OwnOrder`, `ClashThreshold` (passed to go-pubgrub) and `MarkExact` (sets `Dependency.Exact`, read only with `OwnOrder`). With all of them off, results are unchanged.
+
+### Changed
+
+- Requires an unreleased go-pubgrub revision for the new solver settings.
+
 ## [0.16.0] - 2026-11-07
 
 ### Added

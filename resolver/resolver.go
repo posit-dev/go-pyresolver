@@ -112,6 +112,25 @@ type Options struct {
 	// lists what was selected this way. With it on, a resolution can take more
 	// than one solve.
 	YankExemptTransitivePins bool
+
+	// The options below are opt-in solver settings. Each is off (zero) by
+	// default, and with all of them off a resolution is exactly what it was
+	// before they existed. They can change which of several valid answers the
+	// solver finds first, so a pin may move when one is turned on.
+
+	// MergeDependencies, RunningSatisfier, StoredKeys, StableDiscovery,
+	// OwnOrder and ClashThreshold set the go-pubgrub Solver field of the same
+	// name. See go-pubgrub for what each one does.
+	MergeDependencies bool
+	RunningSatisfier  bool
+	StoredKeys        bool
+	StableDiscovery   bool
+	OwnOrder          bool
+	ClashThreshold    int
+
+	// MarkExact tells the solver which dependencies allow exactly one version
+	// (Dependency.Exact). It only matters with OwnOrder.
+	MarkExact bool
 }
 
 // Resolution is a successful resolution: one version chosen for every package
@@ -289,6 +308,7 @@ func Resolve(
 		WheelTags:     opts.WheelTags,
 
 		YankExemptTransitivePins: opts.YankExemptTransitivePins,
+		MarkExact:                opts.MarkExact,
 	})
 
 	// One solve, unless YankExemptTransitivePins found pins to learn: then
@@ -309,6 +329,15 @@ func Resolve(
 		s.MaxRounds = opts.MaxRounds
 		if s.MaxRounds == 0 {
 			s.MaxRounds = defaultMaxRounds
+		}
+		s.MergeDependencies = opts.MergeDependencies
+		s.RunningSatisfier = opts.RunningSatisfier
+		s.StoredKeys = opts.StoredKeys
+		s.StableDiscovery = opts.StableDiscovery
+		s.OwnOrder = opts.OwnOrder
+		s.ClashThreshold = opts.ClashThreshold
+		if onSolver != nil {
+			onSolver(s)
 		}
 
 		var (
@@ -371,6 +400,9 @@ var errUnjustified = errors.New("resolver: no resolution justifies its transitiv
 
 // onSolve, when set by a test, is called before each solve.
 var onSolve func()
+
+// onSolver, when set by a test, sees each Solver after Resolve has configured it.
+var onSolver func(*solver.Solver[provider.Package, pep440set.Set])
 
 // yankedPins converts the provider's pins, sorted by (package, requester).
 func yankedPins(pins []provider.YankPin) []YankedPin {

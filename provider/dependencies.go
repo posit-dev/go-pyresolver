@@ -38,6 +38,24 @@ var _ solver.Provider[Package, pep440set.Set] = (*Provider)(nil)
 // requirements, which is a measurement nobody has taken; revisit it with a
 // benchmark, not before.
 func (p *Provider) Dependencies(pkg Package, ver pep440set.Set) ([]dependency, error) {
+	deps, err := p.dependencies(pkg, ver)
+	if err != nil {
+		return nil, err
+	}
+	if p.opts.MarkExact {
+		markExact(deps)
+	}
+	return deps, nil
+}
+
+// markExact sets Exact on every dependency whose own allowed set is one version.
+func markExact(deps []dependency) {
+	for i := range deps {
+		_, deps[i].Exact = deps[i].Allowed.Singleton()
+	}
+}
+
+func (p *Provider) dependencies(pkg Package, ver pep440set.Set) ([]dependency, error) {
 	v, ok := ver.Singleton()
 	if !ok {
 		// The solver only ever asks about one concrete version. Guessing which
