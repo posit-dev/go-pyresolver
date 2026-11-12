@@ -13,6 +13,15 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `pep440set.Run(lo, hi)`: the versions from `lo` up to, not including, `hi`, by position (nil is open).
+- `provider.Options.NoDependerRuns`, off by default: turns off depender runs (see Changed). For before/after measurement; not in `resolver.Options`.
+
+### Changed
+
+- Depender runs: once the solver revisits a package, one learned conflict covers the whole run of adjacent versions that share the same requirement on a dependency, so a package whose dependency is unavailable is ruled out in a few rounds instead of one version per round (pytorch-ignite: ~2,460 versions). Pins are unchanged. Failure reports can be shorter, and still name a real conflict. For example, `pexpect` was 12 lines ending "the requirements of the root project cannot be satisfied" and is now one line: "every version of pexpect depends on ptyprocess >=0.5, no version of ptyprocess matches >=0.5 ...". `pandas numpy<1.26` went from 67 lines to 8.
+
 ## [0.17.1] - 2026-11-12
 
 ### Changed
@@ -27,12 +36,8 @@ served it.
 - `resolver.Options.PrereleaseIfNoFinal`, off by default: a package's pre-releases are not candidates when it has a final release, unless `AllowPrerelease` names it or a requirement from the root or any selected package names a pre-release of it (uv's rule). A yanked final release still counts as a final release.
 - `resolver.Options.ExtraEdgeOnly`, off by default: a requirement with extras depends on the extra packages only, not also on the base package.
 
-- `pep440set.Run(lo, hi)`: the versions from `lo` up to, not including, `hi`, by position (nil is open).
-- `provider.Options.NoDependerRuns`, off by default: turns off depender runs (see Changed). For before/after measurement; not in `resolver.Options`.
-
 ### Changed
 
-- Depender runs: once the solver revisits a package, one learned conflict covers the whole run of adjacent versions that share the same requirement on a dependency, so a package whose dependency is unavailable is ruled out in a few rounds instead of one version per round (pytorch-ignite: ~2,460 versions). Pins are unchanged. Failure reports can be shorter, and still name a real conflict. For example, `pexpect` was 12 lines ending "the requirements of the root project cannot be satisfied" and is now one line: "every version of pexpect depends on ptyprocess >=0.5, no version of ptyprocess matches >=0.5 ...". `pandas numpy<1.26` went from 67 lines to 8.
 - Requires go-pubgrub v0.4.0 for the new solver settings.
 
 ## [0.16.0] - 2026-11-07
