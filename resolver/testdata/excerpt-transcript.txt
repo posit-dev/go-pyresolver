@@ -26,7 +26,7 @@ FAILED lines=1 bytes=138 sha256=bdb2a7f303e226247fad9359fc58833fd06c1e4e9c1c558b
 FAILED lines=1 bytes=132 sha256=68808372122aea8b86fc4dbe781ff0d1b07007341cdd62df072e19864f7e1290
   So, because boto3 has no versions and the root project 0 depends on boto3, the requirements of the root project cannot be satisfied.
 === pandas numpy<1.26
-FAILED lines=67 bytes=77610 sha256=6ee4b8ac9b2aabf3debc45a58fe4a88ecee5694e3c7100a2cb6950d55271b304
+FAILED lines=8 bytes=1067 sha256=e48c03b720878aaf49b6cfe4f837eaa4bcbf1685d40630f5e495b4c78bd965c7
   So, because the root project 0 depends on pandas, the requirements of the root project cannot be satisfied.
 === flask==3.0.0 werkzeug<2
 FAILED lines=1 bytes=199 sha256=a44ce1c47cbfec0b638b6a931965d36e95f471701f1beeece7db31df56997725
@@ -40,12 +40,12 @@ FAILED lines=2 bytes=312 sha256=7d7294a33dc6ffa22079f91a7497072eefb62ef802971698
   accessible-pygments 0.0.5
   pygments 2.20.0
 === admobilize-malos
-FAILED lines=3 bytes=491 sha256=e9701a4005e555d9913c48f7d744b2acd80dec5b3c287713b5bfb4cf4c750664
-  So, because the root project 0 depends on admobilize-malos, the requirements of the root project cannot be satisfied.
+FAILED lines=1 bytes=219 sha256=eb7e2857ac60a99152b1ebd0157d6fb98f8bb8b3a009ed3c1969e51a80c876a6
+  So, because every version of admobilize-malos depends on pyzmq >=18.0.1, no version of pyzmq matches >=18.0.1 and the root project 0 depends on admobilize-malos, the requirements of the root project c…+19
 === alabaster
   alabaster 1.0.0
 === anpy
-FAILED lines=21 bytes=7598 sha256=65ee7b2150b764a53126d382504f4840730dc179c4315a18a64af64c31169edc
+FAILED lines=6 bytes=647 sha256=0f85077ac0547e358e82e912edb8215a9157f8cc51de9873a880228375721376
   So, because the root project 0 depends on anpy, the requirements of the root project cannot be satisfied.
 === argcomplete
   argcomplete 3.7.0
@@ -75,7 +75,7 @@ FAILED lines=1 bytes=132 sha256=6f4f5d4870177817817afad0af4dbf5ea73d726cba32f469
 === blinker
   blinker 1.9.0
 === build
-FAILED lines=40 bytes=27366 sha256=c5903aa6b9db9a4fa9c323ec77a520ef07cf27dde27efb7f87ee98d6a81f3475
+FAILED lines=7 bytes=838 sha256=5df22724983e104cf4f13c7f086e2ce260ef8c1c6dbd501ac4ce16511ca618ad
   So, because the root project 0 depends on build, the requirements of the root project cannot be satisfied.
 === click
   click 8.4.2
@@ -104,20 +104,20 @@ FAILED lines=1 bytes=132 sha256=f3d616b64744cbd97e2ee8c30a0baba977c83de8bf604e38
   markupsafe 3.0.3
   click 8.4.2
 === freezegun
-FAILED lines=32 bytes=18398 sha256=7367984a4818bbf6f732559501d430b8f009f826afd979b9a1352eefc8e52f27
+FAILED lines=3 bytes=386 sha256=2ba964b5c2de259ebb851e12e454036a82b633528cc5f9e971f3dee605342e32
   So, because the root project 0 depends on freezegun, the requirements of the root project cannot be satisfied.
 === furo
-  furo 2023.3.27
   beautifulsoup4 4.6.3
-  sphinx 5.3.0
+  furo 2023.3.27
   sphinxcontrib-jsmath 1.0.1
-  imagesize 2.0.0
-  sphinxcontrib-serializinghtml 2.0.0
   sphinxcontrib-htmlhelp 2.1.0
   sphinxcontrib-devhelp 2.0.0
-  snowballstemmer 3.1.1
   sphinxcontrib-qthelp 2.0.0
   sphinxcontrib-applehelp 2.0.0
+  sphinx 5.3.0
+  imagesize 2.0.0
+  sphinxcontrib-serializinghtml 2.0.0
+  snowballstemmer 3.1.1
   docutils 0.19
   jinja2 3.1.6
   markupsafe 3.0.3
@@ -128,8 +128,8 @@ FAILED lines=32 bytes=18398 sha256=7367984a4818bbf6f732559501d430b8f009f826afd97
   babel 2.18.0
   requests 2.15.1
 === guessproj
-FAILED lines=5 bytes=665 sha256=f0d7da273a9d74e0c5176a7fcd0e399ac6758d572e4494ef3c0d9d8b4d4e51f0
-  So, because the root project 0 depends on guessproj, the requirements of the root project cannot be satisfied.
+FAILED lines=1 bytes=181 sha256=a4c152c3445a06cde76c831a115e72dd14a77f31275df3c8802f34722b4e56be
+  So, because every version of guessproj depends on scipy, scipy has no versions and the root project 0 depends on guessproj, the requirements of the root project cannot be satisfied.
 === holygrail
 FAILED lines=1 bytes=140 sha256=2317f1e8a0a4d0f7ccd4902c9258e1d212c850ab2c2d108647d04876d2ab4020
   So, because holygrail has no versions and the root project 0 depends on holygrail, the requirements of the root project cannot be satisfied.
@@ -157,8 +157,8 @@ FAILED lines=1 bytes=140 sha256=2317f1e8a0a4d0f7ccd4902c9258e1d212c850ab2c2d1086
   jaraco-functools 4.6.0
   more-itertools 11.1.0
 === jaraco-itertools
-FAILED lines=35 bytes=22398 sha256=21cca7412e4ebd4fc6b28c6b94e69b57ce81bc85762fe042f325b50d42428eee
-  So, because the root project 0 depends on jaraco-itertools, the requirements of the root project cannot be satisfied.
+FAILED lines=1 bytes=199 sha256=34d010d53bd49a89e76e0ed881c28b71ab8d30501697b1ca919fb0bdf2a94fe7
+  So, because every version of jaraco-itertools depends on inflect, inflect has no versions and the root project 0 depends on jaraco-itertools, the requirements of the root project cannot be satisfied.
 === jaraco-packaging
   jaraco-packaging 8.2.1
   setuptools 83.0.0
@@ -174,8 +174,8 @@ FAILED lines=35 bytes=22398 sha256=21cca7412e4ebd4fc6b28c6b94e69b57ce81bc85762fe
   jaraco-functools 4.6.0
   more-itertools 11.1.0
 === jaraco-vcs
-FAILED lines=13 bytes=3282 sha256=1f62b44e2912d2e38246af87304e9ba4be2975d1ac3b4477a5685233e1b01d9e
-  So, because the root project 0 depends on jaraco-vcs, the requirements of the root project cannot be satisfied.
+FAILED lines=1 bytes=207 sha256=695e3e02cc9798f9bbd9df1068caa8703df459abaed90e16f5bbe753c25a6281
+  So, because every version of jaraco-vcs depends on jaraco-versioning, jaraco-versioning has no versions and the root project 0 depends on jaraco-vcs, the requirements of the root project cannot be sat…+7
 === jedi
   jedi 0.10.2
 === jinja2
@@ -206,7 +206,7 @@ FAILED lines=13 bytes=3282 sha256=1f62b44e2912d2e38246af87304e9ba4be2975d1ac3b44
 === mypy-extensions
   mypy-extensions 1.1.0
 === nbformat
-FAILED lines=42 bytes=31449 sha256=d834cdb84840a5f6c9e86cb98f72818f6741eb677de80531c95c6568bd3362ee
+FAILED lines=4 bytes=610 sha256=e2f09f35c6a2e51335bae2a1b5f31eb1647e0f90006e33d5f7e65cf5a0a21c02
   So, because the root project 0 depends on nbformat, the requirements of the root project cannot be satisfied.
 === numpy
   numpy 2.4.6
@@ -219,8 +219,8 @@ FAILED lines=42 bytes=31449 sha256=d834cdb84840a5f6c9e86cb98f72818f6741eb677de80
 === pathspec
   pathspec 1.1.1
 === pexpect
-FAILED lines=12 bytes=3118 sha256=9bc4fbce121329031943edcd4ac1f7f5aa0a6ed6101de51e20ba06d260f8612a
-  So, because the root project 0 depends on pexpect, the requirements of the root project cannot be satisfied.
+FAILED lines=1 bytes=205 sha256=63b11a02244732d6593490b365325e21690fde850a394a384380ea3606bdf3d1
+  So, because every version of pexpect depends on ptyprocess >=0.5, no version of ptyprocess matches >=0.5 and the root project 0 depends on pexpect, the requirements of the root project cannot be satis…+5
 === pip
   pip 26.2
 === pip-run
@@ -316,8 +316,8 @@ FAILED lines=12 bytes=3118 sha256=9bc4fbce121329031943edcd4ac1f7f5aa0a6ed6101de5
   jaraco-context 5.1.0
   tempora 5.6.0
   autocommand 2.2.2
-  more-itertools 11.1.0
   jaraco-functools 4.6.0
+  more-itertools 11.1.0
   path 17.1.1
   jaraco-text 4.1.0
   packaging 26.2
@@ -362,15 +362,15 @@ FAILED lines=12 bytes=3118 sha256=9bc4fbce121329031943edcd4ac1f7f5aa0a6ed6101de5
   snowballstemmer 3.1.1
 === sphinx-basic-ng
   sphinx-basic-ng 1.0.0b2
-  sphinx 5.3.0
   sphinxcontrib-jsmath 1.0.1
+  sphinxcontrib-devhelp 2.0.0
+  sphinxcontrib-qthelp 2.0.0
+  sphinxcontrib-applehelp 2.0.0
+  sphinx 5.3.0
   imagesize 2.0.0
   sphinxcontrib-serializinghtml 2.0.0
   sphinxcontrib-htmlhelp 2.1.0
-  sphinxcontrib-devhelp 2.0.0
   snowballstemmer 3.1.1
-  sphinxcontrib-qthelp 2.0.0
-  sphinxcontrib-applehelp 2.0.0
   docutils 0.19
   jinja2 3.1.6
   markupsafe 3.0.3
@@ -398,8 +398,8 @@ FAILED lines=12 bytes=3118 sha256=9bc4fbce121329031943edcd4ac1f7f5aa0a6ed6101de5
   jinja2 3.1.6
   markupsafe 3.0.3
   alabaster 0.7.16
-  pygments 2.20.0
   packaging 26.2
+  pygments 2.20.0
   babel 2.18.0
   requests 2.15.1
 === sphinx-toml
@@ -417,8 +417,8 @@ FAILED lines=12 bytes=3118 sha256=9bc4fbce121329031943edcd4ac1f7f5aa0a6ed6101de5
 === sphinxcontrib-serializinghtml
   sphinxcontrib-serializinghtml 2.0.0
 === stack-data
-FAILED lines=16 bytes=5108 sha256=f9473988d80e0f09a7707eb155ca06e35e7d0ce370c8ca93b380fefd5be809da
-  So, because the root project 0 depends on stack-data, the requirements of the root project cannot be satisfied.
+FAILED lines=1 bytes=191 sha256=c2279f8acdf255ae327a5e4cd68ed29aef68d09c6a2b8079acc77503dbc0e47d
+  So, because every version of stack-data depends on pure-eval, pure-eval has no versions and the root project 0 depends on stack-data, the requirements of the root project cannot be satisfied.
 === tempora
   tempora 5.6.0
   jaraco-functools 4.6.0

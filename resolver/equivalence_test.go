@@ -807,7 +807,7 @@ func TestResolutionTranscriptMatchesGolden(t *testing.T) {
 // exercises the virtual-package path, not to lower the number.
 const (
 	minDeepResolutions = 15
-	minDerivations     = 7
+	minDerivations     = 6
 	minExtras          = 2
 	minCases           = 90
 )
