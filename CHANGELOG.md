@@ -22,6 +22,7 @@ served it.
 ### Changed
 
 - Requires go-pubgrub v0.4.0 for the new solver settings.
+- `pep440set.Set.Contains` binary-searches the spans instead of scanning them, so a solve that rules out a long version list one version at a time no longer takes cubic time. Answers are unchanged.
 
 ## [0.16.0] - 2026-11-07
 

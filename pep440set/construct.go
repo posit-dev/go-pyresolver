@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/posit-dev/go-python-packaging/version"
@@ -41,22 +42,15 @@ func (s Set) Contains(v version.Version) bool {
 	}
 	var p verPos
 	p.init(v)
-	for _, sp := range s.spans {
-		if cmpVerBound(&p, sp.lo) < 0 {
-			// Spans are canonical -- sorted by lo, disjoint -- so a probe
-			// below this span's floor is below every later span too. The
-			// pre-verPos containsBound scanned the tail anyway; this exit is
-			// an addition, and it is worth the most exactly where the
-			// resolver hurts: a backtracking solve grows `!=` holes, and
-			// every probe below the range (or in a hole, which stops at the
-			// next span's floor) now stops early.
-			return false
-		}
-		if cmpVerBound(&p, sp.hi) < 0 {
-			return true
-		}
-	}
-	return false
+	// Spans are canonical (sorted, disjoint), so hi ascends too: find the
+	// first span whose hi is above v; v is in the set exactly when that
+	// span's lo is at or below it. A backtracking solve grows `!=` holes by
+	// one per round, and a linear scan made each round cost the square of the
+	// holes so far.
+	i := sort.Search(len(s.spans), func(i int) bool {
+		return cmpVerBound(&p, s.spans[i].hi) < 0
+	})
+	return i < len(s.spans) && cmpVerBound(&p, s.spans[i].lo) >= 0
 }
 
 // Singleton returns the one version in the set, when it holds exactly one.

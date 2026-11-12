@@ -22,7 +22,7 @@ import (
 // a literal zero-fills the ten fields it does not mention -- python_version
 // becomes "" and a marker like python_version >= "3.8" silently flips its
 // answer. marker.Environment's own documentation calls that out.
-func testEnv(t *testing.T) marker.Environment {
+func testEnv(t testing.TB) marker.Environment {
 	t.Helper()
 	env, err := marker.EnvironmentFromTarget(
 		tags.Target{Implementation: "cp", PyMajor: 3, PyMinor: 11, OS: "linux", Arch: "x86_64"},
@@ -40,7 +40,7 @@ func testEnv(t *testing.T) marker.Environment {
 }
 
 // testOptions returns Options wired to testEnv with Python 3.11.4.
-func testOptions(t *testing.T) provider.Options {
+func testOptions(t testing.TB) provider.Options {
 	t.Helper()
 	return provider.Options{
 		Environment:   testEnv(t),
