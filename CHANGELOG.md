@@ -21,7 +21,7 @@ served it.
 
 ### Changed
 
-- Requires an unreleased go-pubgrub revision for the new solver settings.
+- Requires go-pubgrub v0.4.0 for the new solver settings.
 
 ## [0.16.0] - 2026-11-07
 
