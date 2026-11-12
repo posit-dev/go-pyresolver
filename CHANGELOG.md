@@ -13,6 +13,14 @@ served it.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-11-12
+
+### Changed
+
+- `pep440set.Set.Contains` binary-searches the spans instead of scanning them, so a solve that rules out a long version list one version at a time no longer takes cubic time. Answers are unchanged.
+
+## [0.17.0] - 2026-11-12
+
 ### Added
 
 - `resolver.Options` solver settings, all off by default: `MergeDependencies`, `RunningSatisfier`, `StoredKeys`, `StableDiscovery`, `OwnOrder`, `ClashThreshold` (passed to go-pubgrub) and `MarkExact` (sets `Dependency.Exact`, read only with `OwnOrder`). With all of them off, results are unchanged.
@@ -22,7 +30,6 @@ served it.
 ### Changed
 
 - Requires go-pubgrub v0.4.0 for the new solver settings.
-- `pep440set.Set.Contains` binary-searches the spans instead of scanning them, so a solve that rules out a long version list one version at a time no longer takes cubic time. Answers are unchanged.
 
 ## [0.16.0] - 2026-11-07
 
@@ -1601,7 +1608,9 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/posit-dev/go-pyresolver/compare/v0.17.0...v0.17.1
+[0.17.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.13.0...v0.14.0
