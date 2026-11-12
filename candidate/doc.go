@@ -14,8 +14,9 @@
 //     see PrereleaseSet. A package's pre-releases rank alongside its finals if
 //     the caller enabled it, and after every final release otherwise, so a
 //     pre-release is chosen only when nothing final in range is usable -- the
-//     pip/uv in-range fallback. Nothing is ever inadmissible for being a
-//     pre-release.
+//     pip/uv in-range fallback. Nothing is inadmissible for being a pre-release
+//     here; provider.Options.PrereleaseIfNoFinal, off by default, is the one
+//     place a pre-release is dropped, for a package with a final release.
 //
 // # Ranking must never remove a version
 //

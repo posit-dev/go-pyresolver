@@ -67,14 +67,18 @@ type Options struct {
 	// range. Names must already be canonical (build them with
 	// index.NewPackageName).
 	//
-	// Every package's pre-releases are still offered as a fallback when no
-	// final release in range is usable, whether or not it is named here --
-	// see candidate.PrereleaseSet. This only affects a package where a final
-	// IS usable: named here, its newest pre-release can still beat an older
-	// final; not named, the final wins regardless of version order.
+	// Unless PrereleaseIfNoFinal is on, every package's pre-releases are still
+	// offered as a fallback when no final release in range is usable, whether
+	// or not it is named here -- see candidate.PrereleaseSet. This only affects
+	// a package where a final IS usable: named here, its newest pre-release can
+	// still beat an older final; not named, the final wins regardless of
+	// version order. With PrereleaseIfNoFinal on, naming a package here is one
+	// of the ways its pre-releases stay candidates at all.
 	//
-	// A package whose own requirement names a pre-release -- ">=2.0rc1" -- is
-	// enabled without being listed here.
+	// A package that a ROOT requirement names a pre-release of -- ">=2.0rc1" --
+	// is enabled without being listed here. A requirement of a selected
+	// package does not rank pre-releases alongside finals; it only lifts the
+	// PrereleaseIfNoFinal bar.
 	AllowPrerelease []index.PackageName
 
 	// MaxRounds bounds the solver's main loop. Zero means 10,000.
@@ -112,6 +116,40 @@ type Options struct {
 	// lists what was selected this way. With it on, a resolution can take more
 	// than one solve.
 	YankExemptTransitivePins bool
+
+	// The options below are opt-in solver settings. Each is off (zero) by
+	// default, and with all of them off a resolution is exactly what it was
+	// before they existed. They can change which of several valid answers the
+	// solver finds first, so a pin may move when one is turned on.
+
+	// MergeDependencies, RunningSatisfier, StoredKeys, StableDiscovery,
+	// OwnOrder and ClashThreshold set the go-pubgrub Solver field of the same
+	// name. See go-pubgrub for what each one does.
+	MergeDependencies bool
+	RunningSatisfier  bool
+	StoredKeys        bool
+	StableDiscovery   bool
+	OwnOrder          bool
+	ClashThreshold    int
+
+	// PrereleaseIfNoFinal drops a package's pre-releases from the candidates
+	// when it has a final release, unless AllowPrerelease names it or some
+	// requirement in the solve -- the root's, or that of any selected package
+	// -- names a pre-release of it, as in uv. A yanked final release still
+	// counts as a final release. Off by default: pre-releases stay candidates,
+	// ranked after every final.
+	//
+	// A requirement from a package the solver later abandons still lifts the
+	// bar for the rest of the solve.
+	PrereleaseIfNoFinal bool
+
+	// ExtraEdgeOnly makes a requirement that names extras depend on the extra
+	// packages only, not also on the base package. Off by default.
+	ExtraEdgeOnly bool
+
+	// MarkExact tells the solver which dependencies allow exactly one version
+	// (Dependency.Exact). It only matters with OwnOrder.
+	MarkExact bool
 }
 
 // Resolution is a successful resolution: one version chosen for every package
@@ -289,6 +327,9 @@ func Resolve(
 		WheelTags:     opts.WheelTags,
 
 		YankExemptTransitivePins: opts.YankExemptTransitivePins,
+		MarkExact:                opts.MarkExact,
+		ExtraEdgeOnly:            opts.ExtraEdgeOnly,
+		PrereleaseIfNoFinal:      opts.PrereleaseIfNoFinal,
 	})
 
 	// One solve, unless YankExemptTransitivePins found pins to learn: then
@@ -309,6 +350,15 @@ func Resolve(
 		s.MaxRounds = opts.MaxRounds
 		if s.MaxRounds == 0 {
 			s.MaxRounds = defaultMaxRounds
+		}
+		s.MergeDependencies = opts.MergeDependencies
+		s.RunningSatisfier = opts.RunningSatisfier
+		s.StoredKeys = opts.StoredKeys
+		s.StableDiscovery = opts.StableDiscovery
+		s.OwnOrder = opts.OwnOrder
+		s.ClashThreshold = opts.ClashThreshold
+		if onSolver != nil {
+			onSolver(s)
 		}
 
 		var (
@@ -371,6 +421,9 @@ var errUnjustified = errors.New("resolver: no resolution justifies its transitiv
 
 // onSolve, when set by a test, is called before each solve.
 var onSolve func()
+
+// onSolver, when set by a test, sees each Solver after Resolve has configured it.
+var onSolver func(*solver.Solver[provider.Package, pep440set.Set])
 
 // yankedPins converts the provider's pins, sorted by (package, requester).
 func yankedPins(pins []provider.YankPin) []YankedPin {

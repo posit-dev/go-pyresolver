@@ -53,6 +53,24 @@ type Options struct {
 	// behind them do not move.
 	Prereleases candidate.PrereleaseSet
 
+	// PrereleaseIfNoFinal is uv's rule (if-necessary-or-explicit): a pre-release
+	// of a package is a candidate only when the package is in Prereleases, some
+	// requirement in the solve (root or a selected package's) names a pre-release
+	// of it, or it publishes no final release at all. Yanked finals count as
+	// final releases (see barsPrereleases). Off by default, which keeps the
+	// pre-releases as candidates ranked after every final.
+	PrereleaseIfNoFinal bool
+
+	// ExtraEdgeOnly makes a requirement that names extras depend on the extra
+	// packages only, not also on the base package: each extra already depends
+	// on its base at the same version. Off by default.
+	ExtraEdgeOnly bool
+
+	// MarkExact sets Dependency.Exact on each dependency that allows exactly
+	// one version, which go-pubgrub reads only when Solver.OwnOrder is on.
+	// Off by default.
+	MarkExact bool
+
 	// Requirements are the caller's own requirements: what the resolution is
 	// being asked for. They become the root package's dependencies.
 	//
@@ -124,6 +142,11 @@ type Provider struct {
 	// Candidates call. See rankedVersions.
 	ranked map[index.PackageName][]version.Version
 
+	// namedPre holds the packages some selected package's requirement names a
+	// pre-release of. Under PrereleaseIfNoFinal it lifts the bar on them. Shared
+	// with the next provider of a yank re-solve.
+	namedPre map[index.PackageName]bool
+
 	// tagFilter is whether this resolution may reject a version for its wheel
 	// tags: a caller-supplied filter AND an index whose tag data is complete.
 	//
@@ -166,6 +189,7 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		extraRequestsSeen:    make(map[string]bool),
 		undeclaredExtrasSeen: make(map[string]bool),
 		ranked:               make(map[index.PackageName][]version.Version),
+		namedPre:             make(map[index.PackageName]bool),
 		tagFilter:            tagFilteringEnabled(idx, opts.WheelTags),
 		yankFilter:           index.YanksCaptured(idx),
 		rootYankPins:         rootYankPins(opts.Requirements, opts.Environment),
@@ -480,6 +504,9 @@ func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
 	// reference rather than leaving it as an argument.
 	r := candidate.Rank(pkg.Name, all, p.opts.Policy)
 	r = finalsFirst(pkg.Name, r, p.opts.Prereleases)
+	if p.barsPrereleases(pkg.Name, r) {
+		r = finalsOnly(r)
+	}
 	p.ranked[pkg.Name] = r
 	return r, nil
 }
@@ -503,6 +530,53 @@ func finalsFirst(pkg index.PackageName, ranked []version.Version, prereleases ca
 		}
 	}
 	return append(out, after...)
+}
+
+// barsPrereleases reports whether, under PrereleaseIfNoFinal, the pre-releases
+// of name are not candidates: the package is not enabled, no requirement seen
+// so far names one of its pre-releases, and it has a final release.
+//
+// all is the unfiltered index list, so a yanked final counts as a final release.
+func (p *Provider) barsPrereleases(name index.PackageName, all []version.Version) bool {
+	if !p.opts.PrereleaseIfNoFinal || p.opts.Prereleases[name] || p.namedPre[name] {
+		return false
+	}
+	for _, v := range all {
+		if !v.IsPreRelease() {
+			return true
+		}
+	}
+	return false
+}
+
+// notePrereleaseNames records, under PrereleaseIfNoFinal, each package reqs
+// name a pre-release of. A newly named package drops its memoized ranking so
+// the next Candidates call sees the pre-releases.
+func (p *Provider) notePrereleaseNames(reqs []requirement.Requirement, active []string) {
+	if !p.opts.PrereleaseIfNoFinal {
+		return
+	}
+	for _, r := range reqs {
+		if r.Specifiers.PreReleases() != version.PreReleasesInclude || !r.Marker.Evaluate(p.opts.Environment, active) {
+			continue
+		}
+		name := index.NewPackageName(r.Name)
+		if !p.namedPre[name] {
+			p.namedPre[name] = true
+			delete(p.ranked, name)
+		}
+	}
+}
+
+// finalsOnly returns ranked without its pre-releases, in order.
+func finalsOnly(ranked []version.Version) []version.Version {
+	out := make([]version.Version, 0, len(ranked))
+	for _, v := range ranked {
+		if !v.IsPreRelease() {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // singleVersion answers for a package with exactly one version and no index

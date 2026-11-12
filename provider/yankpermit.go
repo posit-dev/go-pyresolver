@@ -407,6 +407,7 @@ func (p *Provider) NextSolve(selected map[Package]pep440set.Set) (next *Provider
 	ny.fallback = ny.fallback || ny.round >= maxYankSolves-1
 	np := New(p.ctx, p.index, p.opts)
 	np.ranked = p.ranked
+	np.namedPre = p.namedPre
 	ny.freeze()
 	np.yank = ny
 	return np, valid, nil

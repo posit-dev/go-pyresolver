@@ -29,7 +29,8 @@ type PrereleaseSet map[index.PackageName]bool
 // says every version exists (see below); the caller ranks its pre-releases
 // after every final release instead, so a pre-release is only ever chosen
 // there when nothing final is usable. That in-range fallback matches pip and
-// current uv.
+// current uv. (provider.Options.PrereleaseIfNoFinal, off by default, removes
+// the fallback for a package that has a final release.)
 //
 // The set is computed ONCE, before solving, and must not be recomputed as the
 // solver narrows a package's allowed range. That is what keeps a version's
