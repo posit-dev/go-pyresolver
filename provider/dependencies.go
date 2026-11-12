@@ -28,15 +28,13 @@ var _ solver.Provider[Package, pep440set.Set] = (*Provider)(nil)
 
 // Dependencies implements solver.Provider.
 //
-// # Depender is deliberately left empty
+// # Depender
 //
-// go-pubgrub's Depender field collapses a requirement shared by a run of
-// adjacent versions into one incompatibility. Empty means "only the version
-// being considered", which its documentation describes as always correct and
-// only ever costing extra incompatibilities. Filling it in is an optimization
-// whose payoff depends on how often adjacent PyPI releases have byte-identical
-// requirements, which is a measurement nobody has taken; revisit it with a
-// benchmark, not before.
+// go-pubgrub's Depender field lets one incompatibility cover a run of adjacent
+// versions that share a requirement. widenDepender fills it (see depender.go)
+// for project and Python dependencies once a package is revisited. Yank-permit
+// dependencies are left single-version: whether a yanked version may be used
+// changes during a solve, so a neighbour's answer today is not its answer later.
 func (p *Provider) Dependencies(pkg Package, ver pep440set.Set) ([]dependency, error) {
 	deps, err := p.dependencies(pkg, ver)
 	if err != nil {
