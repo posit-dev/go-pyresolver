@@ -8,10 +8,8 @@ github.com/klauspost/compress v1.20.3 h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTf
 github.com/klauspost/compress v1.20.3/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/posit-dev/go-pubgrub v0.3.0 h1:mYa3kSg7Y6pG/upjupvpHWzaBoptw4/IK9SkqFoJbxs=
-github.com/posit-dev/go-pubgrub v0.3.0/go.mod h1:5ks/krPJaOu6GmbBqaeOiFR+cBa4lh5lkYIxun6cWW4=
-github.com/posit-dev/go-pubgrub v0.3.1-0.20261110134056-2780aad8fcb3 h1:PuwtfXp7PzIFa29T9qCs5GR8+D1iP6A/UnLT+xiqrXA=
-github.com/posit-dev/go-pubgrub v0.3.1-0.20261110134056-2780aad8fcb3/go.mod h1:5ks/krPJaOu6GmbBqaeOiFR+cBa4lh5lkYIxun6cWW4=
+github.com/posit-dev/go-pubgrub v0.4.0 h1:idhFLugRx+AJs0B13irp7KrZLIFls9nH5GKg5VJoits=
+github.com/posit-dev/go-pubgrub v0.4.0/go.mod h1:5ks/krPJaOu6GmbBqaeOiFR+cBa4lh5lkYIxun6cWW4=
 github.com/posit-dev/go-python-packaging v0.7.0 h1:pxyI2MmsP2iLqcwHkjZiXMPvvagywbslXid35czAh3o=
 github.com/posit-dev/go-python-packaging v0.7.0/go.mod h1:NkELXOh/eRDT7c+LKFxJd+HkyGpKFsUIxpTYaq5xdkU=
 github.com/rstudio/go-version v0.0.2 h1:ihU0xaF+Yuya0p2J6C8dfyB4gu/YehM1d6cTpabf/7A=
