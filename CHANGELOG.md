@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-13
+
 ### Added
 
 - `Options.MaxConflicts`: stops a solve after that many conflicts. Zero (the default) means no bound. The error satisfies `errors.Is(err, solver.ErrMaxConflicts)` and its text still starts `solver: gave up after `. Each `UpgradeRoots` re-solve gets the same cap.
@@ -1646,7 +1648,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.1...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.17.1...v0.18.0
