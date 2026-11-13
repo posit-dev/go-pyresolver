@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-13
+
 ### Added
 
 - `resolver.Options.RankMemo` and `provider.RankMemo`, off by default: share each package's ranked version list across solves. Share one only when every solve sees the same version list per package and uses the same `Policy`. Roots, `AllowPrerelease` and `PrereleaseIfNoFinal` may differ between solves: the shared entry holds only the Policy-ranked list, and pre-release handling is applied per solve.
@@ -1627,7 +1629,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/posit-dev/go-pyresolver/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.16.0...v0.17.0
