@@ -151,7 +151,7 @@ type Provider struct {
 	// calls per package. See widenDepender.
 	all      map[index.PackageName][]version.Version
 	asc      map[index.PackageName][]version.Version
-	nbrs     map[string]neighbour
+	nbrs     map[nbrKey]neighbour
 	depCalls map[Package]int
 
 	// namedPre holds the packages some selected package's requirement names a
@@ -203,7 +203,7 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		ranked:               make(map[index.PackageName][]version.Version),
 		all:                  make(map[index.PackageName][]version.Version),
 		asc:                  make(map[index.PackageName][]version.Version),
-		nbrs:                 make(map[string]neighbour),
+		nbrs:                 make(map[nbrKey]neighbour),
 		depCalls:             make(map[Package]int),
 		namedPre:             make(map[index.PackageName]bool),
 		tagFilter:            tagFilteringEnabled(idx, opts.WheelTags),

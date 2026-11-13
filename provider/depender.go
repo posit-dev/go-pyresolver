@@ -72,12 +72,10 @@ func (p *Provider) widenDepender(pkg Package, v version.Version, deps []dependen
 		leftOn, rightOn bool
 	}
 	ext := make([]extent, len(deps))
-	live := 0
 	for k, d := range deps {
 		ext[k] = extent{lo: i, hi: i}
 		if d.Package.Kind == KindProject || d.Package.Kind == KindPython {
 			ext[k].leftOn, ext[k].rightOn = true, true
-			live++
 		}
 	}
 	has := func(w version.Version, d dependency) bool {
@@ -143,16 +141,24 @@ func (p *Provider) ascending(name index.PackageName) []version.Version {
 	if a, ok := p.asc[name]; ok {
 		return a
 	}
-	a := slices.Clone(p.all[name])
+	all, ok := p.all[name]
+	a := slices.Clone(all)
 	slices.SortStableFunc(a, func(x, y version.Version) int { return x.Compare(y) })
-	p.asc[name] = a
+	if ok {
+		p.asc[name] = a
+	}
 	return a
+}
+
+type nbrKey struct {
+	pkg Package
+	ver string
 }
 
 // neighbourDeps reads w's dependencies without recording anything. A fresh read
 // costs one unit of *budget; when none is left the answer is "cannot join".
 func (p *Provider) neighbourDeps(pkg Package, w version.Version, budget *int) neighbour {
-	key := pkg.String() + "\x00" + w.String()
+	key := nbrKey{pkg, w.String()}
 	if nb, ok := p.nbrs[key]; ok {
 		return nb
 	}
