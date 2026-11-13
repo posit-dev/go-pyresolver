@@ -4,6 +4,7 @@ package resolver_test
 
 import (
 	"context"
+	"math/rand"
 	"reflect"
 	"sync"
 	"testing"
@@ -93,4 +94,79 @@ func TestRankMemoConcurrentSolves(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func solveReqs(t *testing.T, idx index.MetadataIndex, memo *provider.RankMemo, noFinal bool, reqs ...string) (map[string]string, error) {
+	t.Helper()
+	opts := testOptions(t)
+	opts.RankMemo = memo
+	opts.PrereleaseIfNoFinal = noFinal
+	res, err := resolver.Resolve(context.Background(), mustRequirements(t, reqs...), idx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return pins(t, res), nil
+}
+
+func prereleaseMixIndex() *index.MockIndex {
+	idx := index.NewMockIndex("test")
+	for _, v := range []string{"1.0", "2.0", "3.1b1"} {
+		idx.AddVersion("lib", v)
+	}
+	idx.AddVersion("other", "1.0", "lib>=1")
+	idx.AddVersion("only", "0.1a1").AddVersion("only", "0.2b1")
+	return idx
+}
+
+// Solves with different root requirements enable different pre-releases. A memo
+// primed by one solve must not change the answer of another: the shared entry
+// holds nothing that depends on the solve's pre-release set.
+func TestRankMemoSolvesWithDifferentPrereleaseSetsShareSafely(t *testing.T) {
+	sets := [][]string{
+		{"lib"},
+		{"lib>=1.0a1"},
+		{"lib", "other"},
+		{"lib>=1.0a1", "other"},
+		{"only"},
+		{"lib", "only>=0.1a1"},
+	}
+	for _, noFinal := range []bool{false, true} {
+		for i, a := range sets {
+			for j, b := range sets {
+				memo := &provider.RankMemo{}
+				idx := prereleaseMixIndex()
+				if _, err := solveReqs(t, idx, memo, noFinal, a...); err != nil {
+					t.Fatalf("prime %v: %v", a, err)
+				}
+				want, werr := solveReqs(t, prereleaseMixIndex(), nil, noFinal, b...)
+				got, gerr := solveReqs(t, idx, memo, noFinal, b...)
+				if (werr == nil) != (gerr == nil) || !reflect.DeepEqual(got, want) {
+					t.Errorf("noFinal=%v primed by #%d %v, then #%d %v: memo pins %v (err %v), no memo %v (err %v)",
+						noFinal, i, a, j, b, got, gerr, want, werr)
+				}
+			}
+		}
+	}
+}
+
+// Random requirement sets against one index: one shared memo across all of them
+// gives the same pins as no memo.
+func TestRankMemoRandomRequirementSetsMatchNoMemo(t *testing.T) {
+	pool := []string{"lib", "lib>=1.0a1", "lib<3", "lib>=2", "other", "other>=1", "only", "only>=0.1a1", "lib!=2.0"}
+	rng := rand.New(rand.NewSource(1))
+	for _, noFinal := range []bool{false, true} {
+		memo := &provider.RankMemo{}
+		idx := prereleaseMixIndex()
+		for n := 0; n < 200; n++ {
+			var reqs []string
+			for _, k := range rng.Perm(len(pool))[:1+rng.Intn(3)] {
+				reqs = append(reqs, pool[k])
+			}
+			want, werr := solveReqs(t, prereleaseMixIndex(), nil, noFinal, reqs...)
+			got, gerr := solveReqs(t, idx, memo, noFinal, reqs...)
+			if (werr == nil) != (gerr == nil) || !reflect.DeepEqual(got, want) {
+				t.Fatalf("noFinal=%v reqs %v: memo pins %v (err %v), no memo %v (err %v)", noFinal, reqs, got, gerr, want, werr)
+			}
+		}
+	}
 }

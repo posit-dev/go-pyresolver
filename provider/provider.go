@@ -531,10 +531,10 @@ func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
 	// reference rather than leaving it as an argument.
 	p.all[pkg.Name] = all
 	r := candidate.Rank(pkg.Name, all, p.opts.Policy)
-	r = finalsFirst(pkg.Name, r, p.opts.Prereleases)
 	if e := p.opts.RankMemo.store(pkg.Name, all, r); e != nil {
 		return p.adopt(pkg.Name, e), nil
 	}
+	r = finalsFirst(pkg.Name, r, p.opts.Prereleases)
 	if p.barsPrereleases(pkg.Name, r) {
 		r = finalsOnly(r)
 	}
@@ -546,9 +546,12 @@ func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
 // PrereleaseIfNoFinal view of it.
 func (p *Provider) adopt(name index.PackageName, e *rankEntry) []version.Version {
 	p.all[name] = e.all
-	r := e.first
-	if p.barsGiven(name, e.hasFinal) {
+	r := e.ranked
+	switch {
+	case p.barsGiven(name, e.hasFinal):
 		r = e.finalsOnly()
+	case !p.opts.Prereleases[name] && e.hasPre:
+		r = e.finalsFirstView(name)
 	}
 	p.ranked[name] = r
 	return r
@@ -603,25 +606,49 @@ func (p *Provider) barsGiven(name index.PackageName, hasFinal bool) bool {
 	return hasFinal
 }
 
-// RankMemo shares each package's ranked version list between Providers, so
-// repeated solves do not rank the same package again.
+// RankMemo shares each package's Policy-ranked version list between Providers,
+// so repeated solves do not rank the same package again.
 //
-// ONLY share one when every solve sees the same version list for a package, and
-// the same Policy and Prereleases: the first list stored for a name is served to
-// all later users. A per-solve version filter breaks that. The shared lists are
+// Sharing contract. An entry holds only what depends on the index's version
+// list for the package and on Policy: the list, in Policy order, and whether it
+// has a final and a pre-release. Everything that depends on the solve
+// (Prereleases, which derives from the root requirements, PrereleaseIfNoFinal
+// and the pre-releases named so far) is applied per Provider on adoption, from
+// the shared list, and never stored. So solves with different roots or
+// Prereleases may share a memo.
+//
+// ONLY share one when every solve sees the same version list for a package and
+// the same Policy: the first list stored for a name is served to all later
+// users. A per-solve version filter breaks that. The shared lists are
 // read-only. Safe for concurrent use.
 type RankMemo struct{ m sync.Map }
 
 type rankEntry struct {
-	all, first []version.Version
-	hasFinal   bool
-	once       sync.Once
-	only       []version.Version
+	all, ranked []version.Version
+	hasFinal    bool
+	hasPre      bool
+
+	onceOnly sync.Once
+	only     []version.Version
+
+	onceFirst sync.Once
+	first     []version.Version
 }
 
 func (e *rankEntry) finalsOnly() []version.Version {
-	e.once.Do(func() { e.only = finalsOnly(e.first) })
+	e.onceOnly.Do(func() { e.only = finalsOnly(e.ranked) })
 	return e.only
+}
+
+// finalsFirstView is ranked with pre-releases moved last, for a package whose
+// pre-releases are not enabled. Built once, from a copy.
+func (e *rankEntry) finalsFirstView(name index.PackageName) []version.Version {
+	e.onceFirst.Do(func() {
+		c := make([]version.Version, len(e.ranked))
+		copy(c, e.ranked)
+		e.first = finalsFirst(name, c, candidate.PrereleaseSet{})
+	})
+	return e.first
 }
 
 func (m *RankMemo) load(name index.PackageName) *rankEntry {
@@ -634,17 +661,18 @@ func (m *RankMemo) load(name index.PackageName) *rankEntry {
 	return nil
 }
 
-// store keeps all and first unless another solve stored a list first, and
+// store keeps all and ranked unless another solve stored a list first, and
 // returns the entry that won (nil on a nil memo).
-func (m *RankMemo) store(name index.PackageName, all, first []version.Version) *rankEntry {
+func (m *RankMemo) store(name index.PackageName, all, ranked []version.Version) *rankEntry {
 	if m == nil {
 		return nil
 	}
-	e := &rankEntry{all: all, first: first}
-	for _, v := range first {
-		if !v.IsPreRelease() {
+	e := &rankEntry{all: all, ranked: ranked}
+	for _, v := range ranked {
+		if v.IsPreRelease() {
+			e.hasPre = true
+		} else {
 			e.hasFinal = true
-			break
 		}
 	}
 	got, _ := m.m.LoadOrStore(name, e)

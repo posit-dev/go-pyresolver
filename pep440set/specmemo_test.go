@@ -13,10 +13,7 @@ import (
 
 func resetSpecMemo(t *testing.T) {
 	t.Helper()
-	clear := func() {
-		specMemo.Range(func(k, _ any) bool { specMemo.Delete(k); return true })
-		specMemoN.Store(0)
-	}
+	clear := func() { specMemo.Store(new(specGen)) }
 	clear()
 	t.Cleanup(clear)
 }
@@ -38,7 +35,7 @@ func TestFromSpecifiersMemoHitEqualsFreshParse(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		fresh, ferr := fromSpecifiers(ss)
+		fresh, ferr := fromSpecifiers(ss, ss.String())
 		first, err1 := FromSpecifiers(ss)
 		hit, err2 := FromSpecifiers(ss)
 		if (ferr == nil) != (err1 == nil) || (ferr == nil) != (err2 == nil) {
@@ -56,7 +53,7 @@ func TestFromSpecifiersMemoHitDoesNotReparse(t *testing.T) {
 	if _, err := FromSpecifiers(ss); err != nil {
 		t.Fatal(err)
 	}
-	cold := testing.AllocsPerRun(20, func() { _, _ = fromSpecifiers(ss) })
+	cold := testing.AllocsPerRun(20, func() { _, _ = fromSpecifiers(ss, ss.String()) })
 	warm := testing.AllocsPerRun(20, func() { _, _ = FromSpecifiers(ss) })
 	// A hit costs the key string at most; a parse costs dozens of allocations.
 	if warm > cold/4 {
@@ -73,13 +70,13 @@ func TestFromSpecifiersMemoSkipsErrors(t *testing.T) {
 			t.Fatalf("call %d: err = %v, want ErrUnrepresentable", i, err)
 		}
 	}
-	if n := specMemoN.Load(); n != 0 {
+	if n := specMemo.Load().n.Load(); n != 0 {
 		t.Errorf("memo holds %d entries after only failures", n)
 	}
 }
 
-// Past specMemoMax the memo stops admitting: its size is bounded and answers
-// stay correct, hit or miss.
+// Past specMemoMax the memo starts a fresh generation: its size stays bounded,
+// answers stay correct, and the newest specifiers are still memoized.
 func TestFromSpecifiersMemoIsCapped(t *testing.T) {
 	resetSpecMemo(t)
 	old := specMemoMax
@@ -95,19 +92,28 @@ func TestFromSpecifiersMemoIsCapped(t *testing.T) {
 			t.Fatalf("spec %d: wrong set", i)
 		}
 	}
-	if n := specMemoN.Load(); n != 100 {
-		t.Errorf("memo count = %d, want exactly the cap 100", n)
-	}
+	g := specMemo.Load()
 	count := 0
-	specMemo.Range(func(_, _ any) bool { count++; return true })
-	if count != 100 {
-		t.Errorf("memo holds %d entries, want 100", count)
+	g.m.Range(func(_, _ any) bool { count++; return true })
+	if count == 0 || count > 100 {
+		t.Errorf("memo holds %d entries, want 1..100", count)
+	}
+	if n := g.n.Load(); n != int64(count) {
+		t.Errorf("memo count = %d, but %d entries held", n, count)
+	}
+	// 600 inserts into a cap of 100 must have rolled over, and the last one
+	// inserted is still served from the memo.
+	if _, ok := g.m.Load(mustSpecs(t, ">=5.99").String()); !ok {
+		t.Error("newest specifier not memoized after rollover")
+	}
+	if _, ok := g.m.Load(mustSpecs(t, ">=0.0").String()); ok {
+		t.Error("oldest specifier survived 6 generations")
 	}
 }
 
 func mustFresh(t testing.TB, ss version.Specifiers) Set {
 	t.Helper()
-	s, err := fromSpecifiers(ss)
+	s, err := fromSpecifiers(ss, ss.String())
 	if err != nil {
 		t.Fatal(err)
 	}

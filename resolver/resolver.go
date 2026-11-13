@@ -36,7 +36,8 @@ const defaultMaxRounds = 10_000
 type Options struct {
 	// RankMemo, when set, shares ranked version lists across solves. Off by
 	// default. Share one only when every solve sees the same version list per
-	// package and uses the same Policy and AllowPrerelease; see provider.RankMemo.
+	// package and uses the same Policy; roots and pre-release settings may differ.
+	// See provider.RankMemo.
 	RankMemo *provider.RankMemo
 
 	// Environment is the single concrete marker environment every PEP 508
