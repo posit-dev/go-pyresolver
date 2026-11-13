@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Changed
+
+- Lower memory in a solve with many backtracks. The provider's dependency memos no longer keep each version's requirement list, and a neighbour read shares the memoized list instead of copying it. On a large 30-cell solve the memory increase fell from 8.2 GB to 3.2 GB. Results are unchanged.
+
 ## [0.20.0] - 2026-11-13
 
 ### Added
