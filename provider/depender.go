@@ -43,7 +43,8 @@ const (
 )
 
 // neighbour is the memoized pure dependency list of one version, or ok=false
-// when the version cannot take part in a run.
+// when the version cannot take part in a run. deps is p.built's slice, shared
+// and read-only.
 type neighbour struct {
 	deps []dependency
 	ok   bool
@@ -172,8 +173,8 @@ func (p *Provider) neighbourDeps(pkg Package, w version.Version, budget *int) ne
 	var nb neighbour
 	if meta, reason, _, err := p.metadata(pkg, w); err == nil && reason == "" {
 		if _, rejected := p.rejectedForWheelTags(meta); !rejected {
-			if deps, _, reason, err := p.buildDeps(pkg, w, meta); err == nil && reason == "" {
-				nb = neighbour{deps: deps, ok: true}
+			if b, err := p.builtEntry(pkg, w, meta); err == nil && b.reason == "" {
+				nb = neighbour{deps: b.deps, ok: true}
 			}
 		}
 	}

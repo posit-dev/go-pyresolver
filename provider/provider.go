@@ -679,18 +679,28 @@ func (m *RankMemo) store(name index.PackageName, all, ranked []version.Version) 
 	return got.(*rankEntry)
 }
 
-// notePrereleaseNames records, under PrereleaseIfNoFinal, each package reqs
-// name a pre-release of. A newly named package drops its memoized ranking so
-// the next Candidates call sees the pre-releases.
-func (p *Provider) notePrereleaseNames(reqs []requirement.Requirement, active []string) {
+// prereleaseNames lists, under PrereleaseIfNoFinal, each package reqs name a
+// pre-release of, in order. It depends only on reqs and the environment, so
+// buildDeps can memoize it in place of the requirements.
+func (p *Provider) prereleaseNames(reqs []requirement.Requirement, active []string) []index.PackageName {
 	if !p.opts.PrereleaseIfNoFinal {
-		return
+		return nil
 	}
+	var names []index.PackageName
 	for _, r := range reqs {
 		if r.Specifiers.PreReleases() != version.PreReleasesInclude || !r.Marker.Evaluate(p.opts.Environment, active) {
 			continue
 		}
-		name := index.NewPackageName(r.Name)
+		names = append(names, index.NewPackageName(r.Name))
+	}
+	return names
+}
+
+// notePre records names as packages a selected requirement names a pre-release
+// of. A newly named package drops its memoized ranking so the next Candidates
+// call sees the pre-releases.
+func (p *Provider) notePre(names []index.PackageName) {
+	for _, name := range names {
 		if !p.namedPre[name] {
 			p.namedPre[name] = true
 			delete(p.ranked, name)

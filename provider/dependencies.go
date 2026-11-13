@@ -247,12 +247,14 @@ func (p *Provider) metadata(pkg Package, v version.Version) (index.PackageMetada
 // depEffects are the records dependenciesFrom makes for a version. buildDeps
 // returns them instead of writing them, so a neighbour can be examined (see
 // widenDepender) without recording anything about it.
+//
+// They hold no requirement: a kept requirement pins its version's whole parsed
+// metadata, and the memo keeps one entry per version read.
 type depEffects struct {
 	pendingUnreadable string
 	undeclared        bool
-	reqs              []requirement.Requirement
-	active            []string
-	expanded          []dependency
+	preNames          []index.PackageName // see prereleaseNames
+	expanded          []dependency        // the tail of the memoized deps, not a copy
 }
 
 // dependenciesFrom is projectDependencies once the metadata is in hand.
@@ -266,7 +268,7 @@ func (p *Provider) dependenciesFrom(
 	if err != nil || reason != "" {
 		return nil, reason, err
 	}
-	p.notePrereleaseNames(fx.reqs, fx.active)
+	p.notePre(fx.preNames)
 	// pkg itself, not Project(pkg.Name): when pkg is an extra, the request came
 	// from THAT extra, not from the base with no extra active. Dropping the
 	// extra here would let resolver.missingExtras attribute the request to a
@@ -291,16 +293,25 @@ type builtDeps struct {
 func (p *Provider) buildDeps(
 	pkg Package, v version.Version, meta index.PackageMetadata,
 ) ([]dependency, depEffects, string, error) {
+	b, err := p.builtEntry(pkg, v, meta)
+	if err != nil {
+		return b.deps, b.fx, b.reason, err
+	}
+	return slices.Clone(b.deps), b.fx, b.reason, nil
+}
+
+// builtEntry is buildDeps without the copy. The caller must not edit deps.
+func (p *Provider) builtEntry(pkg Package, v version.Version, meta index.PackageMetadata) (builtDeps, error) {
 	key := nbrKey{pkg, v.String()}
 	if b, ok := p.built[key]; ok {
-		return slices.Clone(b.deps), b.fx, b.reason, nil
+		return b, nil
 	}
 	deps, fx, reason, err := p.buildDepsUncached(pkg, v, meta)
-	if err != nil {
-		return deps, fx, reason, err
+	b := builtDeps{deps: deps, fx: fx, reason: reason}
+	if err == nil {
+		p.built[key] = b
 	}
-	p.built[key] = builtDeps{deps: deps, fx: fx, reason: reason}
-	return slices.Clone(deps), fx, reason, nil
+	return b, err
 }
 
 // buildDepsUncached computes a version's dependencies with no side effects.
@@ -311,6 +322,7 @@ func (p *Provider) buildDepsUncached(
 		deps   []dependency
 		fx     depEffects
 		reason string
+		active []string
 	)
 	reqs := meta.RequiresDist
 
@@ -343,8 +355,8 @@ func (p *Provider) buildDepsUncached(
 		// An extra nobody declared is ignored, as pip and uv do, rather than
 		// excluding the version. It is reported in Resolution.MissingExtras.
 		if slices.Contains(meta.ProvidesExtra, pkg.Extra) {
-			fx.active = []string{pkg.Extra}
-			reqs = extraOnly(meta.RequiresDist, p.opts.Environment, fx.active)
+			active = []string{pkg.Extra}
+			reqs = extraOnly(meta.RequiresDist, p.opts.Environment, active)
 		} else {
 			reqs = nil
 			fx.undeclared = true
@@ -356,15 +368,18 @@ func (p *Provider) buildDepsUncached(
 		deps = append(deps, dependency{Package: Project(pkg.Name), Allowed: pep440set.Exactly(v)})
 	}
 
-	expanded, reason, err := expandRequirements(reqs, p.opts.Environment, fx.active, p.opts.ExtraEdgeOnly)
+	expanded, reason, err := expandRequirements(reqs, p.opts.Environment, active, p.opts.ExtraEdgeOnly)
 	if err != nil {
 		return nil, fx, "", err
 	}
 	if reason != "" {
 		return nil, fx, reason, nil
 	}
-	fx.reqs, fx.expanded = reqs, expanded
-	return append(deps, expanded...), fx, "", nil
+	// One exact-size list is kept. reqs is not: see depEffects.
+	all := slices.Concat(deps, expanded)
+	fx.preNames = p.prereleaseNames(reqs, active)
+	fx.expanded = all[len(deps):]
+	return all, fx, "", nil
 }
 
 // interpreterDependency converts a version's Requires-Python into a dependency
@@ -421,7 +436,8 @@ func interpreterDependency(meta index.PackageMetadata) (dep dependency, skip boo
 // unconditional ones. Both are correct; this one attributes the requirement to
 // the package that actually declares it.
 func extraOnly(reqs []requirement.Requirement, env marker.Environment, active []string) []requirement.Requirement {
-	out := make([]requirement.Requirement, 0, len(reqs))
+	// Not sized to reqs: an extra keeps a few of a list that can run to hundreds.
+	var out []requirement.Requirement
 	for _, r := range reqs {
 		if r.Marker.Evaluate(env, active) && !r.Marker.Evaluate(env, nil) {
 			out = append(out, r)
