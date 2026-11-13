@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/posit-dev/go-python-packaging/version"
 )
@@ -85,6 +87,24 @@ func (s Set) Singleton() (version.Version, bool) {
 // release as unusable rather than approximating.
 var ErrUnrepresentable = errors.New("pep440set: specifier has no version-set equivalent")
 
+// specMemo caches FromSpecifiers by specifier text, process-wide. A Set is
+// immutable, so a cached one is safe to share. Once specMemoMax entries are
+// held, the next success starts a fresh generation, so the memo keeps serving
+// a long-running process's current specifiers while memory stays bounded.
+// Only successes are cached.
+type specGen struct {
+	m sync.Map
+	n atomic.Int64
+}
+
+var specMemo = func() *atomic.Pointer[specGen] {
+	p := new(atomic.Pointer[specGen])
+	p.Store(new(specGen))
+	return p
+}()
+
+var specMemoMax int64 = 1 << 16 // a var so a test can shrink it
+
 // FromSpecifiers converts a PEP 440 specifier set into a version set.
 //
 // The result is the intersection of one span set per specifier. Where a set
@@ -106,6 +126,32 @@ var ErrUnrepresentable = errors.New("pep440set: specifier has no version-set equ
 // because those are matching: `<1.0` does not match `1.0rc1` and `>1.0` does
 // not match `1.0.post1` under any pre-release policy.
 func FromSpecifiers(ss version.Specifiers) (Set, error) {
+	key := ss.String()
+	g := specMemo.Load()
+	if s, ok := g.m.Load(key); ok {
+		return s.(Set), nil
+	}
+	s, err := fromSpecifiers(ss, key)
+	if err == nil {
+		if g.n.Load() >= specMemoMax {
+			next := new(specGen)
+			if specMemo.CompareAndSwap(g, next) {
+				g = next
+			} else {
+				g = specMemo.Load()
+			}
+		}
+		// Clone: key may alias a larger string the caller still holds.
+		if _, loaded := g.m.LoadOrStore(strings.Clone(key), s); !loaded {
+			g.n.Add(1)
+		}
+	}
+	return s, err
+}
+
+// fromSpecifiers does the work; text is ss.String(), passed in so a miss
+// renders it once.
+func fromSpecifiers(ss version.Specifiers, text string) (Set, error) {
 	// ⚠️ List flattens OR-groups, so intersecting it is only correct for a set
 	// that has one group. `>=1||<2` admits every version, while the
 	// intersection of its members admits none, and silently returning the
@@ -113,8 +159,8 @@ func FromSpecifiers(ss version.Specifiers) (Set, error) {
 	// OR-of-ANDs shape is version.Specifiers' R-only `||` extension with no
 	// PEP 440 spelling, and no exported accessor reaches the groups, so it is
 	// refused rather than mis-read.
-	if strings.Contains(ss.String(), "||") {
-		return Set{}, fmt.Errorf("%w: %s", ErrUnrepresentable, ss.String())
+	if strings.Contains(text, "||") {
+		return Set{}, fmt.Errorf("%w: %s", ErrUnrepresentable, text)
 	}
 
 	out := All()

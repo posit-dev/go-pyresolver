@@ -279,8 +279,32 @@ func (p *Provider) dependenciesFrom(
 	return deps, "", nil
 }
 
-// buildDeps computes a version's dependencies with no side effects.
+// builtDeps is one memoized buildDeps result.
+type builtDeps struct {
+	deps   []dependency
+	fx     depEffects
+	reason string
+}
+
+// buildDeps memoizes buildDepsUncached, which depends only on the version's
+// metadata and the environment. The caller gets its own slice: callers edit it.
 func (p *Provider) buildDeps(
+	pkg Package, v version.Version, meta index.PackageMetadata,
+) ([]dependency, depEffects, string, error) {
+	key := nbrKey{pkg, v.String()}
+	if b, ok := p.built[key]; ok {
+		return slices.Clone(b.deps), b.fx, b.reason, nil
+	}
+	deps, fx, reason, err := p.buildDepsUncached(pkg, v, meta)
+	if err != nil {
+		return deps, fx, reason, err
+	}
+	p.built[key] = builtDeps{deps: deps, fx: fx, reason: reason}
+	return slices.Clone(deps), fx, reason, nil
+}
+
+// buildDepsUncached computes a version's dependencies with no side effects.
+func (p *Provider) buildDepsUncached(
 	pkg Package, v version.Version, meta index.PackageMetadata,
 ) ([]dependency, depEffects, string, error) {
 	var (

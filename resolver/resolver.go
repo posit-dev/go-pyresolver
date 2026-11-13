@@ -34,6 +34,12 @@ const defaultMaxRounds = 10_000
 
 // Options configures one resolution.
 type Options struct {
+	// RankMemo, when set, shares ranked version lists across solves. Off by
+	// default. Share one only when every solve sees the same version list per
+	// package and uses the same Policy; roots and pre-release settings may differ.
+	// See provider.RankMemo.
+	RankMemo *provider.RankMemo
+
 	// Environment is the single concrete marker environment every PEP 508
 	// marker is evaluated in. RFD 0001 defers universal (environment-
 	// independent) resolution, so this is one target, not a set. Required.
@@ -321,6 +327,7 @@ func Resolve(
 		Environment:   opts.Environment,
 		PythonVersion: opts.PythonVersion,
 		Policy:        opts.Policy,
+		RankMemo:      opts.RankMemo,
 		Prereleases:   candidate.EnabledPrereleases(reqs, opts.AllowPrerelease),
 		Requirements:  reqs,
 		RootVersion:   rootVersion,

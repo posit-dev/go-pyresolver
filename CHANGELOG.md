@@ -13,6 +13,14 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `resolver.Options.RankMemo` and `provider.RankMemo`, off by default: share each package's ranked version list across solves. Share one only when every solve sees the same version list per package and uses the same `Policy`. Roots, `AllowPrerelease` and `PrereleaseIfNoFinal` may differ between solves: the shared entry holds only the Policy-ranked list, and pre-release handling is applied per solve.
+
+### Changed
+
+- Less memory and time per solve, with the same answers: `pep440set.FromSpecifiers` is memoized by specifier text (process-wide, safe for concurrent use, about 65,536 entries, then it starts over), version lists are copied less, and a version's dependencies are built once instead of twice.
+
 ## [0.18.0] - 2026-11-12
 
 ### Added
