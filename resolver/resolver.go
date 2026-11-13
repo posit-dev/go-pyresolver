@@ -95,6 +95,12 @@ type Options struct {
 	// that hits the bound fails loudly instead of hanging.
 	MaxRounds int
 
+	// MaxConflicts bounds how many conflicts one solve may resolve before it
+	// gives up. Zero means no bound, so MaxRounds is the only limit. The error
+	// satisfies errors.Is(err, solver.ErrMaxConflicts) and its text starts
+	// "solver: gave up after ". With UpgradeRoots, each re-solve gets the same cap.
+	MaxConflicts int
+
 	// WheelTags rejects versions that publish nothing installable on the target:
 	// wheels that cannot run here, and no source distribution to fall back to.
 	// Nil leaves tag filtering off.
@@ -129,7 +135,7 @@ type Options struct {
 	// solver finds first, so a pin may move when one is turned on.
 
 	// MergeDependencies, RunningSatisfier, StoredKeys, StableDiscovery,
-	// OwnOrder and ClashThreshold set the go-pubgrub Solver field of the same
+	// OwnOrder, ClashThreshold and ClashFirst set the go-pubgrub Solver field of the same
 	// name. See go-pubgrub for what each one does.
 	MergeDependencies bool
 	RunningSatisfier  bool
@@ -137,6 +143,7 @@ type Options struct {
 	StableDiscovery   bool
 	OwnOrder          bool
 	ClashThreshold    int
+	ClashFirst        bool
 
 	// PrereleaseIfNoFinal drops a package's pre-releases from the candidates
 	// when it has a final release, unless AllowPrerelease names it or some
@@ -408,6 +415,8 @@ func resolveOnce(
 		s.StableDiscovery = opts.StableDiscovery
 		s.OwnOrder = opts.OwnOrder
 		s.ClashThreshold = opts.ClashThreshold
+		s.ClashFirst = opts.ClashFirst
+		s.MaxConflicts = opts.MaxConflicts
 		if onSolver != nil {
 			onSolver(s)
 		}

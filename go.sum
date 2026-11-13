@@ -8,8 +8,8 @@ github.com/klauspost/compress v1.20.3 h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTf
 github.com/klauspost/compress v1.20.3/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/posit-dev/go-pubgrub v0.4.0 h1:idhFLugRx+AJs0B13irp7KrZLIFls9nH5GKg5VJoits=
-github.com/posit-dev/go-pubgrub v0.4.0/go.mod h1:5ks/krPJaOu6GmbBqaeOiFR+cBa4lh5lkYIxun6cWW4=
+github.com/posit-dev/go-pubgrub v0.5.0 h1:oZvpjCY4wH7Kuu4ccDxJmAij1HL1U2lY1a04biu4X/M=
+github.com/posit-dev/go-pubgrub v0.5.0/go.mod h1:5ks/krPJaOu6GmbBqaeOiFR+cBa4lh5lkYIxun6cWW4=
 github.com/posit-dev/go-python-packaging v0.7.0 h1:pxyI2MmsP2iLqcwHkjZiXMPvvagywbslXid35czAh3o=
 github.com/posit-dev/go-python-packaging v0.7.0/go.mod h1:NkELXOh/eRDT7c+LKFxJd+HkyGpKFsUIxpTYaq5xdkU=
 github.com/rstudio/go-version v0.0.2 h1:ihU0xaF+Yuya0p2J6C8dfyB4gu/YehM1d6cTpabf/7A=
