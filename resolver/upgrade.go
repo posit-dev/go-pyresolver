@@ -62,12 +62,43 @@ func (u *usability) ok(name index.PackageName, v version.Version) bool {
 	return got
 }
 
-// upRoot is one root project and the versions its own specifiers admit.
+// upRoot is one root project and its published versions.
 type upRoot struct {
 	name  index.PackageName
-	cands []version.Version // ascending
+	cands []version.Version // every published version, ascending
 	zero  bool              // newest candidate has major 0: the minor is the level
 	u     *usability
+
+	// reqs are the root's own requirements, and pre is whether its pre-releases
+	// count. admit remembers per index of cands whether they admit it (1) or
+	// not (2). It is filled on demand: the specifier test is costly, and only
+	// versions above a pin are ever asked about.
+	reqs  []requirement.Requirement
+	pre   bool
+	admit []int8
+}
+
+// onSpecTest, when set by a test, is called before each root specifier test.
+var onSpecTest func()
+
+// admitted reports whether the root's own specifiers admit cands[i].
+func (r *upRoot) admitted(i int) bool {
+	if r.admit[i] == 0 {
+		v := r.cands[i]
+		r.admit[i] = 2
+		if onSpecTest != nil {
+			onSpecTest()
+		}
+		if (r.pre || !v.IsPreRelease()) && admitsAll(r.reqs, v) {
+			r.admit[i] = 1
+		}
+	}
+	return r.admit[i] == 1
+}
+
+// can reports whether cands[i] is admitted and could be picked by the solver.
+func (r *upRoot) can(i int) bool {
+	return r.admitted(i) && r.u.ok(r.name, r.cands[i])
 }
 
 // parseSeg reads one release segment. A segment too large for int64 counts as
@@ -109,7 +140,7 @@ func (r *upRoot) level(v version.Version) level {
 // top is the newest version the solver could pick, or pin if none is newer.
 func (r *upRoot) top(pin version.Version) version.Version {
 	for i := len(r.cands) - 1; i >= 0 && r.cands[i].GreaterThan(pin); i-- {
-		if r.u.ok(r.name, r.cands[i]) {
+		if r.can(i) {
 			return r.cands[i]
 		}
 	}
@@ -124,11 +155,21 @@ func (r *upRoot) behind(pin version.Version) (levels, versions int) {
 		return 0, 0
 	}
 	for i := len(r.cands) - 1; i >= 0 && r.cands[i].GreaterThan(pin); i-- {
-		if r.u.ok(r.name, r.cands[i]) {
+		if r.can(i) {
 			versions++
 		}
 	}
 	return levelsBetween(r.level(top), r.level(pin)), versions
+}
+
+// levelsBehind is the first result of behind. It needs only the newest usable
+// version, so it does not test every version above pin.
+func (r *upRoot) levelsBehind(pin version.Version) int {
+	top := r.top(pin)
+	if !pin.LessThan(top) {
+		return 0
+	}
+	return levelsBetween(r.level(top), r.level(pin))
 }
 
 // bounds returns, for each level above pin's that has a usable version, the
@@ -136,21 +177,28 @@ func (r *upRoot) behind(pin version.Version) (levels, versions int) {
 func (r *upRoot) bounds(pin version.Version) []version.Version {
 	var out []version.Version
 	pinLv := r.level(pin)
-	for i := 0; i < len(r.cands); {
-		lv := r.level(r.cands[i])
-		j := i
-		for j < len(r.cands) && r.level(r.cands[j]) == lv {
-			j++
+	// Only a version above pin can be a bound; they are the tail of cands.
+	i := len(r.cands)
+	for i > 0 && r.cands[i-1].GreaterThan(pin) {
+		i--
+	}
+	// A level is a run of admitted versions; found is whether lv has its bound.
+	var lv level
+	inRun, found := false, false
+	for ; i < len(r.cands); i++ {
+		if !r.admitted(i) {
+			continue
 		}
-		if pinLv.less(lv) {
-			for _, c := range r.cands[i:j] {
-				if c.GreaterThan(pin) && r.u.ok(r.name, c) {
-					out = append(out, c)
-					break
-				}
-			}
+		if l := r.level(r.cands[i]); !inRun || l != lv {
+			lv, inRun, found = l, true, false
 		}
-		i = j
+		if found || !pinLv.less(lv) {
+			continue
+		}
+		if r.u.ok(r.name, r.cands[i]) {
+			out = append(out, r.cands[i])
+			found = true
+		}
 	}
 	return out
 }
@@ -173,7 +221,10 @@ func upgradeRoots(
 		return base
 	}
 	best := base
-	bestLv, bestVer := objective(roots, best)
+	// best is scored only once a re-solve has an answer to compare it with:
+	// scoring tests every version above each root's pin.
+	var bestLv, bestVer int
+	scored := false
 	budget := opts.UpgradeRoots
 	inner := opts
 	inner.UpgradeRoots = 0
@@ -193,6 +244,10 @@ func upgradeRoots(
 		if err != nil {
 			return nil
 		}
+		if !scored {
+			bestLv, bestVer = objective(roots, best)
+			scored = true
+		}
 		lv, ver := objective(roots, got)
 		if lv > bestLv || (lv == bestLv && ver >= bestVer) {
 			return nil
@@ -209,7 +264,7 @@ func upgradeRoots(
 			if done[r.name] {
 				continue
 			}
-			if lv, _ := r.behind(best.Pinned[r.name]); lv > pickLv {
+			if lv := r.levelsBehind(best.Pinned[r.name]); lv > pickLv {
 				pick, pickLv = r, lv
 			}
 		}
@@ -265,9 +320,9 @@ func upgradeRoots(
 }
 
 // upgradeRootSet lists, sorted by name, each root project that base pinned,
-// with the versions its own specifiers admit in this environment. Roots that
-// are URL requirements or whose marker is false here are left out, and so are
-// pre-releases unless base pinned one.
+// with its published versions. Roots that are URL requirements or whose marker
+// is false here are left out. A root's pre-releases count only if base pinned
+// one. See upRoot.admitted for the specifier test.
 func upgradeRootSet(
 	ctx context.Context,
 	reqs []requirement.Requirement,
@@ -299,20 +354,19 @@ func upgradeRootSet(
 		if err != nil {
 			continue
 		}
-		r := &upRoot{name: n, u: u}
-		for _, v := range vs {
-			if v.IsPreRelease() && !pin.IsPreRelease() {
-				continue
-			}
-			if !admitsAll(by[n], v) {
-				continue
-			}
-			r.cands = append(r.cands, v)
-		}
-		if len(r.cands) == 0 {
+		if len(vs) == 0 {
 			continue
 		}
-		slices.SortFunc(r.cands, func(a, b version.Version) int { return a.Compare(b) })
+		cmp := func(a, b version.Version) int { return a.Compare(b) }
+		if !slices.IsSortedFunc(vs, cmp) {
+			// A copy: the list belongs to the index.
+			vs = slices.Clone(vs)
+			slices.SortFunc(vs, cmp)
+		}
+		r := &upRoot{
+			name: n, u: u, cands: vs,
+			reqs: by[n], pre: pin.IsPreRelease(), admit: make([]int8, len(vs)),
+		}
 		// 0.x is decided by the newest version the solver could pick.
 		_, maj, _ := release(r.top(pin))
 		r.zero = maj == 0

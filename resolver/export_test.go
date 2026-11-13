@@ -16,6 +16,14 @@ func CountSolves() (count func() int, restore func()) {
 	return func() int { return n }, func() { onSolve = nil }
 }
 
+// CountSpecTests counts the root specifier tests the upgrade pass runs until
+// the returned func is called. Not safe with parallel tests.
+func CountSpecTests() (count func() int, restore func()) {
+	n := 0
+	onSpecTest = func() { n++ }
+	return func() int { return n }, func() { onSpecTest = nil }
+}
+
 // OnSolve calls f before each solve until restore is called.
 // Not safe with parallel tests.
 func OnSolve(f func()) (restore func()) {

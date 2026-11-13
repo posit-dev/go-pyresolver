@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Changed
+
+- The `UpgradeRoots` pass is faster and uses less memory. It tests a root's specifiers only for versions above its pin, and scores the first answer only when a re-solve returns. Results are unchanged.
+
 ## [0.20.0] - 2026-11-13
 
 ### Added
