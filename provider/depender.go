@@ -33,11 +33,13 @@ import (
 // Cost control: the first Dependencies call for a package is left narrow, so a
 // solve that never revisits a package pays nothing. Later calls (the solver is
 // backtracking over that package) read up to a budget of not-yet-seen
-// neighbours, doubling per call, and every read is memoized.
+// neighbours, doubling per call up to runBudgetMax, and every read is memoized.
+// Measured on six large lists, a cap of 1024 gives the same rounds and reads as
+// 8192 or 65536; 256 already costs extra rounds on one list.
 
 const (
 	runBudgetStart = 32
-	runBudgetMax   = 32 << 8
+	runBudgetMax   = 1024
 )
 
 // neighbour is the memoized pure dependency list of one version, or ok=false
@@ -63,7 +65,7 @@ func (p *Provider) widenDepender(pkg Package, v version.Version, deps []dependen
 	if !found {
 		return
 	}
-	budget := runBudgetStart << min(n-2, 8)
+	budget := min(runBudgetStart<<min(n-2, 20), runBudgetMax)
 
 	type extent struct {
 		lo, hi          int // inclusive member indexes

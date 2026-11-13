@@ -481,3 +481,24 @@ func TestDependerRunsDoNotCrossTheFinalPreReleaseBoundary(t *testing.T) {
 	assertMembers(t, d.depender(a, "3", "b"), all, "3", "4")
 	assertMembers(t, d.depender(a, "3rc1", "b"), all, "3rc1", "3rc2")
 }
+
+func TestDependerBudgetStopsGrowingAtTheCap(t *testing.T) {
+	const n = 20000
+	idx := baseDepIndex(func(idx *index.MockIndex) {
+		for i := 1; i <= n; i++ {
+			idx.AddVersion("a", fmt.Sprint(i), "b>=1")
+		}
+	})
+	ci := newCountingIndex(idx)
+	d := newDepProvider(t, ci, nil)
+	a := provider.Project("a")
+	var last int64
+	for range 8 {
+		before := ci.metadata.Load()
+		d.depender(a, "10000", "b")
+		last = ci.metadata.Load() - before
+	}
+	if last > 1024+1 {
+		t.Errorf("fresh neighbour reads on a late call = %d, want at most 1024 (plus the asked version)", last)
+	}
+}
