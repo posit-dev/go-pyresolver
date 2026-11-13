@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-12
+
 ### Added
 
 - `pep440set.Run(lo, hi)`: the versions from `lo` up to, not including, `hi`, by position (nil is open).
@@ -1617,7 +1619,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/posit-dev/go-pyresolver/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.15.0...v0.16.0
