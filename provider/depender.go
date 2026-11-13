@@ -142,8 +142,11 @@ func (p *Provider) ascending(name index.PackageName) []version.Version {
 		return a
 	}
 	all, ok := p.all[name]
-	a := slices.Clone(all)
-	slices.SortStableFunc(a, func(x, y version.Version) int { return x.Compare(y) })
+	a := all
+	if !slices.IsSortedFunc(all, func(x, y version.Version) int { return x.Compare(y) }) {
+		a = slices.Clone(all)
+		slices.SortStableFunc(a, func(x, y version.Version) int { return x.Compare(y) })
+	}
 	if ok {
 		p.asc[name] = a
 	}

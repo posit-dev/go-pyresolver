@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/posit-dev/go-pyresolver/candidate"
 	"github.com/posit-dev/go-pyresolver/index"
@@ -46,6 +47,10 @@ type Options struct {
 	// only usable version the Policy disliked would be reported as having
 	// nothing available at all.
 	Policy candidate.Policy
+
+	// RankMemo, when set, shares ranked version lists with other Providers.
+	// Off by default; see RankMemo for when it is safe.
+	RankMemo *RankMemo
 
 	// Prereleases names the packages whose pre-release versions may be
 	// offered. Build it with candidate.EnabledPrereleases, ONCE, before
@@ -152,6 +157,7 @@ type Provider struct {
 	all      map[index.PackageName][]version.Version
 	asc      map[index.PackageName][]version.Version
 	nbrs     map[nbrKey]neighbour
+	built    map[nbrKey]builtDeps
 	depCalls map[Package]int
 
 	// namedPre holds the packages some selected package's requirement names a
@@ -204,6 +210,7 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		all:                  make(map[index.PackageName][]version.Version),
 		asc:                  make(map[index.PackageName][]version.Version),
 		nbrs:                 make(map[nbrKey]neighbour),
+		built:                make(map[nbrKey]builtDeps),
 		depCalls:             make(map[Package]int),
 		namedPre:             make(map[index.PackageName]bool),
 		tagFilter:            tagFilteringEnabled(idx, opts.WheelTags),
@@ -493,6 +500,10 @@ func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
 		return r, nil
 	}
 
+	if e := p.opts.RankMemo.load(pkg.Name); e != nil {
+		return p.adopt(pkg.Name, e), nil
+	}
+
 	all, err := p.index.Versions(p.ctx, pkg.Name)
 	if err != nil {
 		if errors.Is(err, index.ErrPackageNotFound) {
@@ -521,11 +532,26 @@ func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
 	p.all[pkg.Name] = all
 	r := candidate.Rank(pkg.Name, all, p.opts.Policy)
 	r = finalsFirst(pkg.Name, r, p.opts.Prereleases)
+	if e := p.opts.RankMemo.store(pkg.Name, all, r); e != nil {
+		return p.adopt(pkg.Name, e), nil
+	}
 	if p.barsPrereleases(pkg.Name, r) {
 		r = finalsOnly(r)
 	}
 	p.ranked[pkg.Name] = r
 	return r, nil
+}
+
+// adopt takes a shared memo entry as name's list, applying this provider's
+// PrereleaseIfNoFinal view of it.
+func (p *Provider) adopt(name index.PackageName, e *rankEntry) []version.Version {
+	p.all[name] = e.all
+	r := e.first
+	if p.barsGiven(name, e.hasFinal) {
+		r = e.finalsOnly()
+	}
+	p.ranked[name] = r
+	return r
 }
 
 // finalsFirst stably moves the pre-releases of a package that is not enabled
@@ -537,16 +563,20 @@ func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
 // so this partition preserves Policy order within each half, and for an
 // enabled package (Admits true for every version) it is a no-op.
 func finalsFirst(pkg index.PackageName, ranked []version.Version, prereleases candidate.PrereleaseSet) []version.Version {
-	out := make([]version.Version, 0, len(ranked))
+	// In place: ranked must be a private copy (Rank's output is). Only the
+	// moved pre-releases are copied aside.
 	var after []version.Version
+	n := 0
 	for _, v := range ranked {
 		if prereleases.Admits(pkg, v) {
-			out = append(out, v)
+			ranked[n] = v
+			n++
 		} else {
 			after = append(after, v)
 		}
 	}
-	return append(out, after...)
+	copy(ranked[n:], after)
+	return ranked
 }
 
 // barsPrereleases reports whether, under PrereleaseIfNoFinal, the pre-releases
@@ -555,15 +585,70 @@ func finalsFirst(pkg index.PackageName, ranked []version.Version, prereleases ca
 //
 // all is the unfiltered index list, so a yanked final counts as a final release.
 func (p *Provider) barsPrereleases(name index.PackageName, all []version.Version) bool {
+	hasFinal := false
+	for _, v := range all {
+		if !v.IsPreRelease() {
+			hasFinal = true
+			break
+		}
+	}
+	return p.barsGiven(name, hasFinal)
+}
+
+// barsGiven is barsPrereleases when the caller already knows whether a final exists.
+func (p *Provider) barsGiven(name index.PackageName, hasFinal bool) bool {
 	if !p.opts.PrereleaseIfNoFinal || p.opts.Prereleases[name] || p.namedPre[name] {
 		return false
 	}
-	for _, v := range all {
+	return hasFinal
+}
+
+// RankMemo shares each package's ranked version list between Providers, so
+// repeated solves do not rank the same package again.
+//
+// ONLY share one when every solve sees the same version list for a package, and
+// the same Policy and Prereleases: the first list stored for a name is served to
+// all later users. A per-solve version filter breaks that. The shared lists are
+// read-only. Safe for concurrent use.
+type RankMemo struct{ m sync.Map }
+
+type rankEntry struct {
+	all, first []version.Version
+	hasFinal   bool
+	once       sync.Once
+	only       []version.Version
+}
+
+func (e *rankEntry) finalsOnly() []version.Version {
+	e.once.Do(func() { e.only = finalsOnly(e.first) })
+	return e.only
+}
+
+func (m *RankMemo) load(name index.PackageName) *rankEntry {
+	if m == nil {
+		return nil
+	}
+	if e, ok := m.m.Load(name); ok {
+		return e.(*rankEntry)
+	}
+	return nil
+}
+
+// store keeps all and first unless another solve stored a list first, and
+// returns the entry that won (nil on a nil memo).
+func (m *RankMemo) store(name index.PackageName, all, first []version.Version) *rankEntry {
+	if m == nil {
+		return nil
+	}
+	e := &rankEntry{all: all, first: first}
+	for _, v := range first {
 		if !v.IsPreRelease() {
-			return true
+			e.hasFinal = true
+			break
 		}
 	}
-	return false
+	got, _ := m.m.LoadOrStore(name, e)
+	return got.(*rankEntry)
 }
 
 // notePrereleaseNames records, under PrereleaseIfNoFinal, each package reqs

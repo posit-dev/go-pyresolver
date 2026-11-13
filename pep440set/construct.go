@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/posit-dev/go-python-packaging/version"
 )
@@ -85,6 +87,16 @@ func (s Set) Singleton() (version.Version, bool) {
 // release as unusable rather than approximating.
 var ErrUnrepresentable = errors.New("pep440set: specifier has no version-set equivalent")
 
+// specMemo caches FromSpecifiers by specifier text, process-wide. A Set is
+// immutable, so a cached one is safe to share. Once specMemoMax entries are
+// held no more are admitted (nothing is evicted); only successes are cached.
+var (
+	specMemo  sync.Map
+	specMemoN atomic.Int64
+)
+
+var specMemoMax int64 = 1 << 16 // a var so a test can shrink it
+
 // FromSpecifiers converts a PEP 440 specifier set into a version set.
 //
 // The result is the intersection of one span set per specifier. Where a set
@@ -106,6 +118,21 @@ var ErrUnrepresentable = errors.New("pep440set: specifier has no version-set equ
 // because those are matching: `<1.0` does not match `1.0rc1` and `>1.0` does
 // not match `1.0.post1` under any pre-release policy.
 func FromSpecifiers(ss version.Specifiers) (Set, error) {
+	key := ss.String()
+	if s, ok := specMemo.Load(key); ok {
+		return s.(Set), nil
+	}
+	s, err := fromSpecifiers(ss)
+	if err == nil && specMemoN.Load() < specMemoMax {
+		// Clone: key may alias a larger string the caller still holds.
+		if _, loaded := specMemo.LoadOrStore(strings.Clone(key), s); !loaded {
+			specMemoN.Add(1)
+		}
+	}
+	return s, err
+}
+
+func fromSpecifiers(ss version.Specifiers) (Set, error) {
 	// ⚠️ List flattens OR-groups, so intersecting it is only correct for a set
 	// that has one group. `>=1||<2` admits every version, while the
 	// intersection of its members admits none, and silently returning the
