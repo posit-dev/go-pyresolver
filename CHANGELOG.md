@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Changed
+
+- The specifier memo holds about 8,192 entries (was 65,536); measured at about 2.3 KB each.
+
 ## [0.19.0] - 2026-11-13
 
 ### Added

@@ -103,7 +103,7 @@ var specMemo = func() *atomic.Pointer[specGen] {
 	return p
 }()
 
-var specMemoMax int64 = 1 << 16 // a var so a test can shrink it
+var specMemoMax int64 = 1 << 13 // a var so a test can shrink it; ~2.3 KB per entry
 
 // FromSpecifiers converts a PEP 440 specifier set into a version set.
 //
