@@ -156,6 +156,31 @@ type Options struct {
 	// MarkExact tells the solver which dependencies allow exactly one version
 	// (Dependency.Exact). It only matters with OwnOrder.
 	MarkExact bool
+
+	// UpgradeRoots, when above zero, runs a pass after the first solve that
+	// tries to raise root requirements pinned well below the newest version
+	// their own specifiers allow. The value is the most extra resolutions it may
+	// run; a resolution can take more than one solver round when
+	// YankExemptTransitivePins is set. Zero (the default) turns it off.
+	//
+	// "Newest" means the newest version the solver could pick in this
+	// environment: versions with unreadable metadata, a Requires-Python that
+	// excludes the interpreter, no compatible wheel, a yank or unusable
+	// dependencies are not counted. Only a root at least one level behind (a
+	// major, or a minor for a 0.x package; a higher epoch is one level or more)
+	// is tried, so a root behind only in versions is left alone.
+	//
+	// The pass takes the root furthest behind, re-solves with that root floored
+	// at the first usable version of the next level up, then tries the top level
+	// and bisects, which assumes a level that fails means every higher one does
+	// too; an upgrade that breaks that is missed. Ties are broken by name. An
+	// answer is kept only if the sum of levels behind, then the sum of versions
+	// behind, over all roots strictly drops. A failed re-solve still spends
+	// budget. Every re-solve uses these same Options.
+	//
+	// It never fails a resolution: if the budget or ctx ends, or no re-solve
+	// helps, the best complete answer so far is returned.
+	UpgradeRoots int
 }
 
 // Resolution is a successful resolution: one version chosen for every package
@@ -319,11 +344,16 @@ func Resolve(
 	idx index.MetadataIndex,
 	opts Options,
 ) (*Resolution, error) {
-	if err := validate(opts); err != nil {
-		return nil, err
+	res, err := resolveOnce(ctx, reqs, idx, opts)
+	if err != nil || opts.UpgradeRoots <= 0 {
+		return res, err
 	}
+	return upgradeRoots(ctx, reqs, idx, opts, res), nil
+}
 
-	p := provider.New(ctx, idx, provider.Options{
+// providerOptions maps Options to the provider's options for one resolution.
+func providerOptions(reqs []requirement.Requirement, opts Options) provider.Options {
+	return provider.Options{
 		Environment:   opts.Environment,
 		PythonVersion: opts.PythonVersion,
 		Policy:        opts.Policy,
@@ -337,7 +367,21 @@ func Resolve(
 		MarkExact:                opts.MarkExact,
 		ExtraEdgeOnly:            opts.ExtraEdgeOnly,
 		PrereleaseIfNoFinal:      opts.PrereleaseIfNoFinal,
-	})
+	}
+}
+
+// resolveOnce is one resolution, with no upgrade pass.
+func resolveOnce(
+	ctx context.Context,
+	reqs []requirement.Requirement,
+	idx index.MetadataIndex,
+	opts Options,
+) (*Resolution, error) {
+	if err := validate(opts); err != nil {
+		return nil, err
+	}
+
+	p := provider.New(ctx, idx, providerOptions(reqs, opts))
 
 	// One solve, unless YankExemptTransitivePins found pins to learn: then
 	// NextSolve hands back a provider for another. A solution that fails its

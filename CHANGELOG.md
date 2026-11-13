@@ -13,6 +13,11 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `Options.UpgradeRoots`: an opt-in pass after the first solve that raises root requirements pinned levels below the newest version the solver could pick for them. Off by default; the value is its budget of extra resolutions.
+- `provider.Provider.Usable`: whether the solver could pick a project version in this environment.
+
 ## [0.19.1] - 2026-11-13
 
 ### Changed
