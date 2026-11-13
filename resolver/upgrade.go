@@ -4,57 +4,155 @@ package resolver
 
 import (
 	"context"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/posit-dev/go-pyresolver/index"
+	"github.com/posit-dev/go-pyresolver/provider"
 	"github.com/posit-dev/go-python-packaging/requirement"
 	"github.com/posit-dev/go-python-packaging/version"
 )
+
+// level is a version's position in the coarse order the pass works in:
+// the epoch, then the major (or the minor for a 0.x package).
+type level struct{ epoch, n int64 }
+
+func (a level) less(b level) bool {
+	return a.epoch < b.epoch || (a.epoch == b.epoch && a.n < b.n)
+}
+
+// levelsBetween is how many levels lo is below hi: the epoch gap if the epochs
+// differ, else the gap in n.
+func levelsBetween(hi, lo level) int {
+	if !lo.less(hi) {
+		return 0
+	}
+	if hi.epoch != lo.epoch {
+		return int(min(hi.epoch-lo.epoch, math.MaxInt32))
+	}
+	return int(min(hi.n-lo.n, math.MaxInt32))
+}
+
+// usability answers, once per (project, version), whether the solver could
+// pick a version in this environment. It asks the provider the solver uses.
+type usability struct {
+	p    *provider.Provider
+	memo map[usableKey]bool
+}
+
+type usableKey struct {
+	name index.PackageName
+	ver  string
+}
+
+// ok is false for a version the solver would skip. An index error is false and
+// is not remembered, so a cut ctx cannot poison later answers.
+func (u *usability) ok(name index.PackageName, v version.Version) bool {
+	k := usableKey{name, v.String()}
+	if got, seen := u.memo[k]; seen {
+		return got
+	}
+	got, err := u.p.Usable(name, v)
+	if err != nil {
+		return false
+	}
+	u.memo[k] = got
+	return got
+}
 
 // upRoot is one root project and the versions its own specifiers admit.
 type upRoot struct {
 	name  index.PackageName
 	cands []version.Version // ascending
 	zero  bool              // newest candidate has major 0: the minor is the level
+	u     *usability
 }
 
-// release returns the major and minor of v's release segment.
-func release(v version.Version) (maj, minor int64) {
+// parseSeg reads one release segment. A segment too large for int64 counts as
+// the largest level rather than 0, so it never reads as older.
+func parseSeg(s string) int64 {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return math.MaxInt32
+	}
+	return n
+}
+
+// release returns the epoch, major and minor of v.
+func release(v version.Version) (epoch, maj, minor int64) {
 	s := v.BaseVersion()
 	if i := strings.IndexByte(s, '!'); i >= 0 {
+		epoch = parseSeg(s[:i])
 		s = s[i+1:]
 	}
 	parts := strings.Split(s, ".")
-	maj, _ = strconv.ParseInt(parts[0], 10, 64)
+	maj = parseSeg(parts[0])
 	if len(parts) > 1 {
-		minor, _ = strconv.ParseInt(parts[1], 10, 64)
+		minor = parseSeg(parts[1])
 	}
-	return maj, minor
+	return epoch, maj, minor
 }
 
-func (r *upRoot) level(v version.Version) int64 {
-	maj, minor := release(v)
+func (r *upRoot) level(v version.Version) level {
+	epoch, maj, minor := release(v)
 	if r.zero {
 		if maj > 0 {
-			return 1 << 40
+			return level{epoch, 1 << 40}
 		}
-		return minor
+		return level{epoch, minor}
 	}
-	return maj
+	return level{epoch, maj}
 }
 
-// behind returns how many levels and versions pin is below the newest candidate.
+// top is the newest version the solver could pick, or pin if none is newer.
+func (r *upRoot) top(pin version.Version) version.Version {
+	for i := len(r.cands) - 1; i >= 0 && r.cands[i].GreaterThan(pin); i-- {
+		if r.u.ok(r.name, r.cands[i]) {
+			return r.cands[i]
+		}
+	}
+	return pin
+}
+
+// behind returns how many levels and usable versions pin is below the newest
+// usable version.
 func (r *upRoot) behind(pin version.Version) (levels, versions int) {
-	top := r.cands[len(r.cands)-1]
+	top := r.top(pin)
 	if !pin.LessThan(top) {
 		return 0, 0
 	}
 	for i := len(r.cands) - 1; i >= 0 && r.cands[i].GreaterThan(pin); i-- {
-		versions++
+		if r.u.ok(r.name, r.cands[i]) {
+			versions++
+		}
 	}
-	return int(max(r.level(top)-r.level(pin), 0)), versions
+	return levelsBetween(r.level(top), r.level(pin)), versions
+}
+
+// bounds returns, for each level above pin's that has a usable version, the
+// oldest usable version of that level, ascending.
+func (r *upRoot) bounds(pin version.Version) []version.Version {
+	var out []version.Version
+	pinLv := r.level(pin)
+	for i := 0; i < len(r.cands); {
+		lv := r.level(r.cands[i])
+		j := i
+		for j < len(r.cands) && r.level(r.cands[j]) == lv {
+			j++
+		}
+		if pinLv.less(lv) {
+			for _, c := range r.cands[i:j] {
+				if c.GreaterThan(pin) && r.u.ok(r.name, c) {
+					out = append(out, c)
+					break
+				}
+			}
+		}
+		i = j
+	}
+	return out
 }
 
 // upgradeRoots is the pass behind Options.UpgradeRoots. base is a valid answer
@@ -66,7 +164,11 @@ func upgradeRoots(
 	opts Options,
 	base *Resolution,
 ) *Resolution {
-	roots := upgradeRootSet(ctx, reqs, idx, opts, base)
+	u := &usability{
+		p:    provider.New(ctx, idx, providerOptions(reqs, opts)),
+		memo: map[usableKey]bool{},
+	}
+	roots := upgradeRootSet(ctx, reqs, idx, opts, base, u)
 	if len(roots) == 0 {
 		return base
 	}
@@ -78,9 +180,10 @@ func upgradeRoots(
 	done := make(map[index.PackageName]bool, len(roots))
 
 	// attempt re-solves with r floored at bound; it returns nil unless the
-	// answer is valid and strictly better.
+	// answer is valid and strictly better. A failed solve spends budget too.
 	attempt := func(r *upRoot, bound version.Version) *Resolution {
-		floor, err := requirement.Parse(string(r.name) + ">=" + bound.String())
+		// Public: a local label is not allowed in a >= specifier.
+		floor, err := requirement.Parse(string(r.name) + ">=" + bound.Public())
 		if err != nil {
 			return nil
 		}
@@ -98,7 +201,8 @@ func upgradeRoots(
 	}
 
 	for budget > 0 && ctx.Err() == nil {
-		// The untried root furthest behind; the first by name on a tie.
+		// The untried root furthest behind (at least one level); the first by
+		// name on a tie. A root behind only in versions is not tried.
 		var pick *upRoot
 		pickLv := 0
 		for _, r := range roots {
@@ -113,17 +217,8 @@ func upgradeRoots(
 			break
 		}
 		done[pick.name] = true
-		pin := best.Pinned[pick.name]
 
-		// bounds[i] is the oldest candidate of the i-th level above the pin's.
-		var bounds []version.Version
-		last := pick.level(pin)
-		for _, c := range pick.cands {
-			if lv := pick.level(c); lv > last && c.GreaterThan(pin) {
-				bounds = append(bounds, c)
-				last = lv
-			}
-		}
+		bounds := pick.bounds(best.Pinned[pick.name])
 		if len(bounds) == 0 {
 			continue
 		}
@@ -131,7 +226,7 @@ func upgradeRoots(
 		levelIdx := func(v version.Version) int {
 			at := -1
 			for i, b := range bounds {
-				if pick.level(b) <= pick.level(v) {
+				if !pick.level(v).less(pick.level(b)) {
 					at = i
 				}
 			}
@@ -143,7 +238,9 @@ func upgradeRoots(
 			return levelIdx(best.Pinned[pick.name])
 		}
 
-		// Cheapest test first: any level up at all. Then the top level, then bisect.
+		// Cheapest test first: any level up at all. Then the top level, then
+		// bisect. The bisect assumes that if a level fails, every higher one
+		// does too. That can miss an upgrade, which is acceptable.
 		got := attempt(pick, bounds[0])
 		if got == nil {
 			continue
@@ -177,6 +274,7 @@ func upgradeRootSet(
 	idx index.MetadataIndex,
 	opts Options,
 	base *Resolution,
+	u *usability,
 ) []*upRoot {
 	by := map[index.PackageName][]requirement.Requirement{}
 	var names []index.PackageName
@@ -201,7 +299,7 @@ func upgradeRootSet(
 		if err != nil {
 			continue
 		}
-		r := &upRoot{name: n}
+		r := &upRoot{name: n, u: u}
 		for _, v := range vs {
 			if v.IsPreRelease() && !pin.IsPreRelease() {
 				continue
@@ -215,7 +313,7 @@ func upgradeRootSet(
 			continue
 		}
 		slices.SortFunc(r.cands, func(a, b version.Version) int { return a.Compare(b) })
-		maj, _ := release(r.cands[len(r.cands)-1])
+		_, maj, _ := release(r.cands[len(r.cands)-1])
 		r.zero = maj == 0
 		out = append(out, r)
 	}

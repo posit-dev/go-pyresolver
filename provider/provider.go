@@ -718,6 +718,26 @@ func singleVersion(v version.Version, allowed pep440set.Set) (pep440set.Set, boo
 	return pep440set.Exactly(v), true, 1, nil
 }
 
+// Usable reports whether the project name at v could be picked by the solver in
+// this provider's environment: metadata readable, wheel tags compatible, not
+// yanked, dependencies parseable, and Requires-Python admitting the interpreter.
+// The first four are usable itself; the last the solver finds as a conflict with
+// the interpreter package, which is the one test usable does not make. A non-nil
+// error means the index could not answer, not that v is unusable.
+func (p *Provider) Usable(name index.PackageName, v version.Version) (bool, error) {
+	pkg := Project(name)
+	meta, reason, kind, err := p.metadata(pkg, v)
+	if err != nil {
+		return false, err
+	}
+	ok, err := p.usableFrom(pkg, v, meta, reason, kind)
+	if !ok || err != nil {
+		return false, err
+	}
+	dep, skip, _ := interpreterDependency(meta)
+	return skip || dep.Allowed.Contains(p.opts.PythonVersion), nil
+}
+
 // usable reports whether pkg at v can be offered to the solver.
 //
 // It answers by doing exactly the work Dependencies would do and discarding the
@@ -755,6 +775,14 @@ func (p *Provider) usable(pkg Package, v version.Version) (bool, error) {
 		// though it were a fact about the package.
 		return false, err
 	}
+	return p.usableFrom(pkg, v, meta, reason, kind)
+}
+
+// usableFrom is usable once the metadata read is in hand.
+func (p *Provider) usableFrom(
+	pkg Package, v version.Version, meta index.PackageMetadata, reason string, kind UnusableKind,
+) (bool, error) {
+	var err error
 	if reason != "" {
 		p.record(pkg, v, reason, kind, false)
 		return false, nil
