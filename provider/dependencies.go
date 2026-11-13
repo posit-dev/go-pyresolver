@@ -28,19 +28,20 @@ var _ solver.Provider[Package, pep440set.Set] = (*Provider)(nil)
 
 // Dependencies implements solver.Provider.
 //
-// # Depender is deliberately left empty
+// # Depender
 //
-// go-pubgrub's Depender field collapses a requirement shared by a run of
-// adjacent versions into one incompatibility. Empty means "only the version
-// being considered", which its documentation describes as always correct and
-// only ever costing extra incompatibilities. Filling it in is an optimization
-// whose payoff depends on how often adjacent PyPI releases have byte-identical
-// requirements, which is a measurement nobody has taken; revisit it with a
-// benchmark, not before.
+// go-pubgrub's Depender field lets one incompatibility cover a run of adjacent
+// versions that share a requirement. widenDepender fills it (see depender.go)
+// for project and Python dependencies once a package is revisited. Yank-permit
+// dependencies are left single-version: whether a yanked version may be used
+// changes during a solve, so a neighbour's answer today is not its answer later.
 func (p *Provider) Dependencies(pkg Package, ver pep440set.Set) ([]dependency, error) {
 	deps, err := p.dependencies(pkg, ver)
 	if err != nil {
 		return nil, err
+	}
+	if v, ok := ver.Singleton(); ok {
+		p.widenDepender(pkg, v, deps)
 	}
 	if p.opts.MarkExact {
 		markExact(deps)
@@ -243,20 +244,51 @@ func (p *Provider) metadata(pkg Package, v version.Version) (index.PackageMetada
 	return meta, "", KindOther, nil
 }
 
+// depEffects are the records dependenciesFrom makes for a version. buildDeps
+// returns them instead of writing them, so a neighbour can be examined (see
+// widenDepender) without recording anything about it.
+type depEffects struct {
+	pendingUnreadable string
+	undeclared        bool
+	reqs              []requirement.Requirement
+	active            []string
+	expanded          []dependency
+}
+
 // dependenciesFrom is projectDependencies once the metadata is in hand.
 func (p *Provider) dependenciesFrom(
 	pkg Package, v version.Version, meta index.PackageMetadata,
 ) ([]dependency, string, error) {
+	deps, fx, reason, err := p.buildDeps(pkg, v, meta)
+	if fx.undeclared {
+		p.recordUndeclaredExtra(pkg.Name, v, pkg.Extra)
+	}
+	if err != nil || reason != "" {
+		return nil, reason, err
+	}
+	p.notePrereleaseNames(fx.reqs, fx.active)
+	// pkg itself, not Project(pkg.Name): when pkg is an extra, the request came
+	// from THAT extra, not from the base with no extra active. Dropping the
+	// extra here would let resolver.missingExtras attribute the request to a
+	// base that survives while the extra that actually asked was abandoned.
+	p.recordExtraRequests(pkg, v, fx.expanded)
+
+	// Only now is the version definitely offered, so only now is an
+	// Offered:true record truthful.
+	p.record(pkg, v, fx.pendingUnreadable, KindOther, true)
+	return deps, "", nil
+}
+
+// buildDeps computes a version's dependencies with no side effects.
+func (p *Provider) buildDeps(
+	pkg Package, v version.Version, meta index.PackageMetadata,
+) ([]dependency, depEffects, string, error) {
 	var (
 		deps   []dependency
-		active []string
+		fx     depEffects
 		reason string
 	)
 	reqs := meta.RequiresDist
-
-	// pendingUnreadable holds a record that is only true if this version turns
-	// out to be offered. See where it is set, below.
-	var pendingUnreadable string
 
 	if pkg.Extra == "" {
 		var (
@@ -264,27 +296,21 @@ func (p *Provider) dependenciesFrom(
 			skip  bool
 		)
 		if meta.RequiresPythonUnreadable {
-			// The version is KEPT: the decoder treats an unparseable
-			// interpreter constraint as unconstrained on purpose, because
-			// over-admitting a candidate surfaces later as an install-time
-			// failure while under-constraining would silently change the
-			// resolution. That is only defensible if it is visible.
+			// The version is KEPT: an unparseable interpreter constraint is read
+			// as unconstrained on purpose, because over-admitting surfaces later
+			// as an install-time failure while under-constraining would silently
+			// change the resolution. That is only defensible if it is visible.
 			//
-			// ⚠️ Held until the success return rather than recorded here.
-			// Anything below can still exclude this version, and an
-			// Offered:true written before that decision is a lie the record's
-			// own Offered field exists to prevent -- a consumer would report
-			// that the version resolved with an unconstrained interpreter when
-			// it was never a candidate.
-			pendingUnreadable = "its Requires-Python " + strconv.Quote(meta.RequiresPythonRaw) +
+			// Held until the version is known to be offered (see
+			// dependenciesFrom): an Offered:true written earlier would be a lie.
+			fx.pendingUnreadable = "its Requires-Python " + strconv.Quote(meta.RequiresPythonRaw) +
 				" could not be parsed, so the interpreter is left unconstrained"
 		}
 		// The interpreter constraint belongs to the base package. An extra
-		// reaches it through the same-version link below, so emitting it there
-		// too would only duplicate an incompatibility.
+		// reaches it through the same-version link below.
 		pyDep, skip, reason = interpreterDependency(meta)
 		if reason != "" {
-			return nil, reason, nil
+			return nil, fx, reason, nil
 		}
 		if !skip {
 			deps = append(deps, pyDep)
@@ -293,11 +319,11 @@ func (p *Provider) dependenciesFrom(
 		// An extra nobody declared is ignored, as pip and uv do, rather than
 		// excluding the version. It is reported in Resolution.MissingExtras.
 		if slices.Contains(meta.ProvidesExtra, pkg.Extra) {
-			active = []string{pkg.Extra}
-			reqs = extraOnly(meta.RequiresDist, p.opts.Environment, active)
+			fx.active = []string{pkg.Extra}
+			reqs = extraOnly(meta.RequiresDist, p.opts.Environment, fx.active)
 		} else {
 			reqs = nil
-			p.recordUndeclaredExtra(pkg.Name, v, pkg.Extra)
+			fx.undeclared = true
 		}
 
 		// The same-version link, whether or not the extra is declared. Without
@@ -306,25 +332,15 @@ func (p *Provider) dependenciesFrom(
 		deps = append(deps, dependency{Package: Project(pkg.Name), Allowed: pep440set.Exactly(v)})
 	}
 
-	expanded, reason, err := expandRequirements(reqs, p.opts.Environment, active, p.opts.ExtraEdgeOnly)
+	expanded, reason, err := expandRequirements(reqs, p.opts.Environment, fx.active, p.opts.ExtraEdgeOnly)
 	if err != nil {
-		return nil, "", err
+		return nil, fx, "", err
 	}
 	if reason != "" {
-		return nil, reason, nil
+		return nil, fx, reason, nil
 	}
-	p.notePrereleaseNames(reqs, active)
-	// pkg itself, not Project(pkg.Name): when pkg is an extra, the request came
-	// from THAT extra, not from the base with no extra active. Dropping the
-	// extra here would let resolver.missingExtras attribute the request to a
-	// base that survives while the extra that actually asked was abandoned.
-	p.recordExtraRequests(pkg, v, expanded)
-
-	// Only now is the version definitely offered, so only now is an
-	// Offered:true record truthful.
-	p.record(pkg, v, pendingUnreadable, KindOther, true)
-
-	return append(deps, expanded...), "", nil
+	fx.reqs, fx.expanded = reqs, expanded
+	return append(deps, expanded...), fx, "", nil
 }
 
 // interpreterDependency converts a version's Requires-Python into a dependency

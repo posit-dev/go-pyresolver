@@ -98,6 +98,10 @@ type Options struct {
 	// exempts, and `===` cannot exempt transitively because pep440set cannot
 	// express it. The resolver drives this over several solves; see NextSolve.
 	YankExemptTransitivePins bool
+
+	// NoDependerRuns turns off Depender runs (see widenDepender). Default false:
+	// they change how many rounds a solve takes, not its answer.
+	NoDependerRuns bool
 }
 
 // Provider implements solver.Provider[Package, pep440set.Set].
@@ -141,6 +145,14 @@ type Provider struct {
 	// sort is paid once per package per resolution rather than once per
 	// Candidates call. See rankedVersions.
 	ranked map[index.PackageName][]version.Version
+
+	// all is the unranked index list per package and asc the same in version
+	// order; nbrs holds memoized neighbour reads and depCalls counts Dependencies
+	// calls per package. See widenDepender.
+	all      map[index.PackageName][]version.Version
+	asc      map[index.PackageName][]version.Version
+	nbrs     map[nbrKey]neighbour
+	depCalls map[Package]int
 
 	// namedPre holds the packages some selected package's requirement names a
 	// pre-release of. Under PrereleaseIfNoFinal it lifts the bar on them. Shared
@@ -189,6 +201,10 @@ func New(ctx context.Context, idx index.MetadataIndex, opts Options) *Provider {
 		extraRequestsSeen:    make(map[string]bool),
 		undeclaredExtrasSeen: make(map[string]bool),
 		ranked:               make(map[index.PackageName][]version.Version),
+		all:                  make(map[index.PackageName][]version.Version),
+		asc:                  make(map[index.PackageName][]version.Version),
+		nbrs:                 make(map[nbrKey]neighbour),
+		depCalls:             make(map[Package]int),
 		namedPre:             make(map[index.PackageName]bool),
 		tagFilter:            tagFilteringEnabled(idx, opts.WheelTags),
 		yankFilter:           index.YanksCaptured(idx),
@@ -502,6 +518,7 @@ func (p *Provider) rankedVersions(pkg Package) ([]version.Version, error) {
 	// version of a ranked list is the same version as Rank(usable-only)[0] -- best
 	// is unchanged. provider/differential_test.go checks that against the exact
 	// reference rather than leaving it as an argument.
+	p.all[pkg.Name] = all
 	r := candidate.Rank(pkg.Name, all, p.opts.Policy)
 	r = finalsFirst(pkg.Name, r, p.opts.Prereleases)
 	if p.barsPrereleases(pkg.Name, r) {

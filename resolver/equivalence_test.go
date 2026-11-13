@@ -515,7 +515,7 @@ func writeTranscript(t testing.TB, w io.Writer, run transcriptRun) transcriptSta
 		case errors.As(err, &re):
 			// A report with one line is "package X is not here" and nothing
 			// else. See transcriptStats.Vacuous.
-			if re.Report != nil && len(re.Report.Lines) > 1 {
+			if isDerivedReport(re) {
 				stats.Derivations++
 			} else {
 				stats.Vacuous++
@@ -553,6 +553,16 @@ func writeTranscript(t testing.TB, w io.Writer, run transcriptRun) transcriptSta
 	}
 
 	return stats
+}
+
+// isDerivedReport is true when a report crosses a dependency edge: several
+// lines, or one "every version of X depends on Y" line (a depender run folds a
+// walk into that line; it is a real conflict, not "package absent").
+func isDerivedReport(re *resolver.ResolutionError) bool {
+	if re.Report == nil || len(re.Report.Lines) == 0 {
+		return false
+	}
+	return len(re.Report.Lines) > 1 || strings.Contains(re.Report.Lines[0].Text, "every version of ")
 }
 
 // renderFailure renders a resolution failure into the transcript.
