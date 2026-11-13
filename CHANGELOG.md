@@ -20,7 +20,7 @@ served it.
 
 ### Changed
 
-- Depender runs: once the solver revisits a package, one learned conflict covers the whole run of adjacent versions that share the same requirement on a dependency, so a package whose dependency is unavailable is ruled out in a few rounds instead of one version per round (pytorch-ignite: ~2,460 versions). A run never mixes final and pre-release versions. Pins are unchanged. Failure reports can be shorter, and still name a real conflict. For example, `pexpect` was 12 lines ending "the requirements of the root project cannot be satisfied" and is now one line: "every version of pexpect depends on ptyprocess >=0.5, no version of ptyprocess matches >=0.5 ...". `pandas numpy<1.26` went from 67 lines to 8.
+- Depender runs: once the solver revisits a package, one learned conflict covers the whole run of adjacent versions that share the same requirement on a dependency, so a package whose dependency is unavailable is ruled out in a few rounds instead of one version per round (pytorch-ignite: ~2,460 versions). A run never mixes final and pre-release versions. Pins are unchanged. Failure reports can be shorter, and still name a real conflict. For example, `pexpect` was 12 lines ending "the requirements of the root project cannot be satisfied" and is now one line: "every version of pexpect depends on ptyprocess >=0.5, no version of ptyprocess matches >=0.5 ...". `pandas numpy<1.26` went from 67 lines to 10.
 
 ## [0.17.1] - 2026-11-12
 
