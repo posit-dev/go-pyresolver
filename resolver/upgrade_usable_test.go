@@ -224,3 +224,15 @@ func TestUpgradeRootsCancelKeepsEarlierGain(t *testing.T) {
 		t.Errorf("ran %d solves, want exactly 3", solves)
 	}
 }
+
+// An unusable 1.x above the usable 0.x versions does not make the root a
+// major-level package: the minor is still its level.
+func TestUpgradeRootsZeroXWithUnusableMajorAbove(t *testing.T) {
+	idx := index.NewMockIndex("test").
+		AddVersion("a", "0.1").AddVersion("a", "0.2").SetUnavailable("a", "1.0").
+		AddVersion("b", "1.0").AddVersion("b", "1.1", "a<0.2")
+	got, _ := extraSolves(t, 12, idx, testOptions(t), "a", "b")
+	if want := map[string]string{"a": "0.2", "b": "1.0"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}

@@ -313,7 +313,8 @@ func upgradeRootSet(
 			continue
 		}
 		slices.SortFunc(r.cands, func(a, b version.Version) int { return a.Compare(b) })
-		_, maj, _ := release(r.cands[len(r.cands)-1])
+		// 0.x is decided by the newest version the solver could pick.
+		_, maj, _ := release(r.top(pin))
 		r.zero = maj == 0
 		out = append(out, r)
 	}
