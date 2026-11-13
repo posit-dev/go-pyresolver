@@ -464,3 +464,20 @@ func TestDependerRunsCollapseTheWalk(t *testing.T) {
 			on.DependenciesCalls, off.DependenciesCalls, n)
 	}
 }
+
+// Finals and pre-releases never share a run: a run that spans the boundary made
+// the solver pick a different valid answer than the one-version-at-a-time path.
+func TestDependerRunsDoNotCrossTheFinalPreReleaseBoundary(t *testing.T) {
+	all := []string{"1", "2", "3rc1", "3rc2", "3", "4"}
+	idx := baseDepIndex(func(idx *index.MockIndex) {
+		for _, v := range all {
+			idx.AddVersion("a", v, "b>=1")
+		}
+	})
+	d := newDepProvider(t, idx, nil)
+	a := provider.Project("a")
+	d.depender(a, "2", "b")
+	assertMembers(t, d.depender(a, "2", "b"), all, "1", "2")
+	assertMembers(t, d.depender(a, "3", "b"), all, "3", "4")
+	assertMembers(t, d.depender(a, "3rc1", "b"), all, "3rc1", "3rc2")
+}

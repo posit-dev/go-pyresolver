@@ -26,7 +26,7 @@ FAILED lines=1 bytes=138 sha256=bdb2a7f303e226247fad9359fc58833fd06c1e4e9c1c558b
 FAILED lines=1 bytes=132 sha256=68808372122aea8b86fc4dbe781ff0d1b07007341cdd62df072e19864f7e1290
   So, because boto3 has no versions and the root project 0 depends on boto3, the requirements of the root project cannot be satisfied.
 === pandas numpy<1.26
-FAILED lines=8 bytes=1067 sha256=e48c03b720878aaf49b6cfe4f837eaa4bcbf1685d40630f5e495b4c78bd965c7
+FAILED lines=10 bytes=1503 sha256=fee2272cda8514143c4857ef16354bfd9b9af15e2682704a6b01daeef0c0a78f
   So, because the root project 0 depends on pandas, the requirements of the root project cannot be satisfied.
 === flask==3.0.0 werkzeug<2
 FAILED lines=1 bytes=199 sha256=a44ce1c47cbfec0b638b6a931965d36e95f471701f1beeece7db31df56997725
@@ -45,7 +45,7 @@ FAILED lines=1 bytes=219 sha256=eb7e2857ac60a99152b1ebd0157d6fb98f8bb8b3a009ed3c
 === alabaster
   alabaster 1.0.0
 === anpy
-FAILED lines=6 bytes=647 sha256=0f85077ac0547e358e82e912edb8215a9157f8cc51de9873a880228375721376
+FAILED lines=7 bytes=764 sha256=64b941c0eb8a35c192f7e2fdbc2ed57b4bb499515050dc57291d20ab29885e4c
   So, because the root project 0 depends on anpy, the requirements of the root project cannot be satisfied.
 === argcomplete
   argcomplete 3.7.0
@@ -118,7 +118,7 @@ FAILED lines=1 bytes=132 sha256=f3d616b64744cbd97e2ee8c30a0baba977c83de8bf604e38
 === filelock
   filelock 3.32.2
 === flake8
-FAILED lines=32 bytes=11960 sha256=683348e8da248f9affba6ee3cd9f81e1bb70a7a78ae2fc9fbb3bf29438c02547
+FAILED lines=38 bytes=16075 sha256=48b169e1059bf9ded4c9e5f058d1c570a294e99a7a0882ad78c0fc99729d2266
   So, because the root project 0 depends on flake8, the requirements of the root project cannot be satisfied.
 === flask
   flask 3.1.3
@@ -132,17 +132,17 @@ FAILED lines=32 bytes=11960 sha256=683348e8da248f9affba6ee3cd9f81e1bb70a7a78ae2f
 FAILED lines=3 bytes=386 sha256=2ba964b5c2de259ebb851e12e454036a82b633528cc5f9e971f3dee605342e32
   So, because the root project 0 depends on freezegun, the requirements of the root project cannot be satisfied.
 === furo
-  beautifulsoup4 4.6.3
   furo 2023.3.27
-  sphinxcontrib-jsmath 1.0.1
-  sphinxcontrib-htmlhelp 2.1.0
-  sphinxcontrib-devhelp 2.0.0
-  sphinxcontrib-qthelp 2.0.0
-  sphinxcontrib-applehelp 2.0.0
+  beautifulsoup4 4.6.3
   sphinx 5.3.0
+  sphinxcontrib-jsmath 1.0.1
   imagesize 2.0.0
   sphinxcontrib-serializinghtml 2.0.0
+  sphinxcontrib-htmlhelp 2.1.0
+  sphinxcontrib-devhelp 2.0.0
   snowballstemmer 3.1.1
+  sphinxcontrib-qthelp 2.0.0
+  sphinxcontrib-applehelp 2.0.0
   docutils 0.19
   jinja2 3.1.6
   markupsafe 3.0.3
@@ -170,7 +170,7 @@ FAILED lines=1 bytes=140 sha256=2317f1e8a0a4d0f7ccd4902c9258e1d212c850ab2c2d1086
 === intersphinx-registry
   intersphinx-registry 0.2606.25
 === ipykernel
-FAILED lines=12 bytes=1663 sha256=a6f2ad2cb73f105646bbe1cd033b3d9c335781a2697887d3fb506fb50e0a9c37
+FAILED lines=20 bytes=4142 sha256=950357e921dfc588ac1c74ec0fd56d81f3d348ba59327b4d7759f98187cae470
   So, because the root project 0 depends on ipykernel, the requirements of the root project cannot be satisfied.
 === ipython
   ipython 3.2.3
@@ -219,7 +219,7 @@ FAILED lines=1 bytes=207 sha256=695e3e02cc9798f9bbd9df1068caa8703df459abaed90e16
   jinja2 3.1.6
   markupsafe 3.0.3
 === jupyter-ai
-FAILED lines=19 bytes=3962 sha256=201ee35f52a98609d6df74bd333afb529277de7b4e936e5067b175848eadf76e
+FAILED lines=23 bytes=5761 sha256=209be832d4f1eed7a8cbb8463ae4d9dfb2bec0765bab8ac9c0d805d550613e68
   So, because the root project 0 depends on jupyter-ai, the requirements of the root project cannot be satisfied.
 === keyring
   keyring 9.1
@@ -230,7 +230,7 @@ FAILED lines=19 bytes=3962 sha256=201ee35f52a98609d6df74bd333afb529277de7b4e936e
 === markupsafe
   markupsafe 3.0.3
 === matplotlib
-FAILED lines=7 bytes=935 sha256=611133f676240a76bbcf57025cb1d83681b96f1b61dc7baa4b28dd9ed3ef7e69
+FAILED lines=36 bytes=13920 sha256=0f6509ad258bbf04980db5270f296841324661aedbdb3021f12223edd84433ff
   So, because the root project 0 depends on matplotlib, the requirements of the root project cannot be satisfied.
 === matplotlib-inline
   matplotlib-inline 0.2.2
@@ -251,13 +251,13 @@ FAILED lines=7 bytes=935 sha256=611133f676240a76bbcf57025cb1d83681b96f1b61dc7baa
 === mypy-extensions
   mypy-extensions 1.1.0
 === myst-parser
-FAILED lines=51 bytes=13942 sha256=e1ff0abdb2aa6da65ff03bf22377442416069c6352fc9088b6adc758256f21fd
+FAILED lines=53 bytes=16533 sha256=9b934426bdcaddacf98558b6a996da347593182b9089e947c72dc0bb5ab5e68d
   So, because the root project 0 depends on myst-parser, the requirements of the root project cannot be satisfied.
 === nbclient
-FAILED lines=8 bytes=1173 sha256=60f13798f1c1f382cac3d65033eeff8480aa176f87bdf74b62142186c279725f
+FAILED lines=10 bytes=1595 sha256=1f6aa6974a9777846f84dc711b6bd20fc26ee125b5eff55073dec1fb992edea5
   So, because the root project 0 depends on nbclient, the requirements of the root project cannot be satisfied.
 === nbformat
-FAILED lines=4 bytes=610 sha256=e2f09f35c6a2e51335bae2a1b5f31eb1647e0f90006e33d5f7e65cf5a0a21c02
+FAILED lines=10 bytes=1644 sha256=97b0518e94c4f180d305d5792923e8696dbd1c09d692f815db3a166d9796214c
   So, because the root project 0 depends on nbformat, the requirements of the root project cannot be satisfied.
 === numpy
   numpy 2.4.6
@@ -266,7 +266,7 @@ FAILED lines=4 bytes=610 sha256=e2f09f35c6a2e51335bae2a1b5f31eb1647e0f90006e33d5
 === packaging
   packaging 26.2
 === pandas
-FAILED lines=8 bytes=1082 sha256=52d8f6cb888242478ddff963aadd1e96cf6c0e095571a7fa271cf3fab6ccac57
+FAILED lines=10 bytes=1464 sha256=56d37583fc73135479b3f820b618f25780b2b7353cdf878b1f455ff5f14a4ac4
   So, because the root project 0 depends on pandas, the requirements of the root project cannot be satisfied.
 === path
   path 17.1.1
@@ -347,7 +347,7 @@ FAILED lines=4 bytes=540 sha256=db568ed4eac13fcbcca327f54994350297f2e9abd9f94ff8
   jaraco-functools 4.6.0
   more-itertools 11.1.0
 === pytest-flake8
-FAILED lines=30 bytes=6077 sha256=5cd1591c1d9deb6a05c1a6b8b6c094bf41eb7cfb80abcbc44d7d17b7d4613668
+FAILED lines=44 bytes=11167 sha256=147e4ae9df4d567e3eb3d4adc0b1d3ab8728e3ef4205f1a5fbd8689b2d70b35f
   So, because the root project 0 depends on pytest-flake8, the requirements of the root project cannot be satisfied.
 === pytest-ignore-flaky
   pytest-ignore-flaky 2.2.1
@@ -431,9 +431,9 @@ FAILED lines=3 bytes=414 sha256=9c34e9749c5098f9fac4e4a00d08d7273308ffd44af6a41d
   sphinxcontrib-htmlhelp 2.1.0
   sphinxcontrib-devhelp 2.0.0
   snowballstemmer 3.1.1
-  docutils 0.19
   sphinxcontrib-qthelp 2.0.0
   sphinxcontrib-applehelp 2.0.0
+  docutils 0.19
   jinja2 3.1.6
   markupsafe 3.0.3
   alabaster 0.7.16
@@ -443,15 +443,15 @@ FAILED lines=3 bytes=414 sha256=9c34e9749c5098f9fac4e4a00d08d7273308ffd44af6a41d
   requests 2.15.1
 === sphinx-basic-ng
   sphinx-basic-ng 1.0.0b2
-  sphinxcontrib-jsmath 1.0.1
-  sphinxcontrib-devhelp 2.0.0
-  sphinxcontrib-qthelp 2.0.0
-  sphinxcontrib-applehelp 2.0.0
   sphinx 5.3.0
+  sphinxcontrib-jsmath 1.0.1
   imagesize 2.0.0
   sphinxcontrib-serializinghtml 2.0.0
   sphinxcontrib-htmlhelp 2.1.0
+  sphinxcontrib-devhelp 2.0.0
   snowballstemmer 3.1.1
+  sphinxcontrib-qthelp 2.0.0
+  sphinxcontrib-applehelp 2.0.0
   docutils 0.19
   jinja2 3.1.6
   markupsafe 3.0.3
@@ -479,13 +479,12 @@ FAILED lines=3 bytes=414 sha256=9c34e9749c5098f9fac4e4a00d08d7273308ffd44af6a41d
   jinja2 3.1.6
   markupsafe 3.0.3
   alabaster 0.7.16
-  packaging 26.2
   pygments 2.20.0
+  packaging 26.2
   babel 2.18.0
   requests 2.15.1
 === sphinx-tabs
   sphinx-tabs 3.4.7
-  alabaster 0.7.16
   docutils 0.23
   pygments 2.20.0
   sphinx 3.5.3
@@ -497,10 +496,11 @@ FAILED lines=3 bytes=414 sha256=9c34e9749c5098f9fac4e4a00d08d7273308ffd44af6a41d
   sphinxcontrib-serializinghtml 2.0.0
   sphinxcontrib-htmlhelp 2.1.0
   imagesize 2.0.0
+  alabaster 0.7.16
+  requests 2.15.1
   jinja2 3.1.6
   markupsafe 3.0.3
   babel 2.18.0
-  requests 2.15.1
   packaging 26.2
   setuptools 83.0.0
 === sphinx-toml

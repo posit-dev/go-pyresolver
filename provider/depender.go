@@ -20,7 +20,11 @@ import (
 // same dependency (same package, equal allowed set): the claim "every version
 // in Depender depends on X" is then true of each published member. The run
 // stops at the first neighbour that differs, cannot be read, has a reason it
-// would not be offered, or is rejected for wheel tags. Stopping, not skipping,
+// would not be offered, is rejected for wheel tags, or is on the other side of
+// the final/pre-release divide from the version asked about. That last rule
+// matters: a run spanning finals and their interleaved pre-releases changes
+// which conflict the solver backjumps to when it falls back to pre-releases, and
+// so can change which valid answer it finds. Stopping, not skipping,
 // is deliberate: a skipped version is only irrelevant while it stays
 // un-offered, and the pre-release bar and yank pins can change during a solve.
 // Bounds are published versions, so unpublished versions between members are in
@@ -75,6 +79,10 @@ func (p *Provider) widenDepender(pkg Package, v version.Version, deps []dependen
 		}
 	}
 	has := func(w version.Version, d dependency) bool {
+		// Never mix finals and pre-releases in one run (see the comment above).
+		if w.IsPreRelease() != v.IsPreRelease() {
+			return false
+		}
 		nb := p.neighbourDeps(pkg, w, &budget)
 		if !nb.ok {
 			return false
