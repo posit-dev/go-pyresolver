@@ -156,6 +156,22 @@ type Options struct {
 	// MarkExact tells the solver which dependencies allow exactly one version
 	// (Dependency.Exact). It only matters with OwnOrder.
 	MarkExact bool
+
+	// UpgradeRoots, when above zero, runs a pass after the first solve that
+	// tries to raise root requirements pinned well below the newest version
+	// their own specifiers allow. The value is the most extra solves it may
+	// run. Zero (the default) turns it off, and Resolve is then one solve.
+	//
+	// The pass takes the root furthest behind (in major levels, or minor levels
+	// for a 0.x package), re-solves with that root floored one level higher,
+	// then tries the top level and bisects. Roots are tried in order of how far
+	// behind they are, ties broken by name. An answer is kept only if the sum of
+	// levels behind, then the sum of versions behind, over all roots strictly
+	// drops. Every re-solve uses these same Options.
+	//
+	// It never fails a resolution: if the budget or ctx ends, or no re-solve
+	// helps, the best complete answer so far is returned.
+	UpgradeRoots int
 }
 
 // Resolution is a successful resolution: one version chosen for every package
@@ -314,6 +330,20 @@ var rootVersion = version.MustParse("0")
 // itself, because presenting an outage as "your requirements conflict" sends
 // the caller looking for a problem that is not there.
 func Resolve(
+	ctx context.Context,
+	reqs []requirement.Requirement,
+	idx index.MetadataIndex,
+	opts Options,
+) (*Resolution, error) {
+	res, err := resolveOnce(ctx, reqs, idx, opts)
+	if err != nil || opts.UpgradeRoots <= 0 {
+		return res, err
+	}
+	return upgradeRoots(ctx, reqs, idx, opts, res), nil
+}
+
+// resolveOnce is one resolution, with no upgrade pass.
+func resolveOnce(
 	ctx context.Context,
 	reqs []requirement.Requirement,
 	idx index.MetadataIndex,

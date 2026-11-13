@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `Options.UpgradeRoots`: an opt-in pass after the first solve that raises root requirements pinned levels below the newest version their specifiers allow. Off by default; the value is its budget of extra solves.
+
 ## [0.19.1] - 2026-11-13
 
 ### Changed
