@@ -15,8 +15,14 @@ served it.
 
 ### Added
 
+- `Options.MaxConflicts`: stops a solve after that many conflicts. Zero (the default) means no bound. The error satisfies `errors.Is(err, solver.ErrMaxConflicts)` and its text still starts `solver: gave up after `. Each `UpgradeRoots` re-solve gets the same cap.
+- `Options.ClashFirst`: passes go-pubgrub's `ClashFirst` through (opt-in; needs `ClashThreshold`).
 - `Options.UpgradeRoots`: an opt-in pass after the first solve that raises root requirements pinned levels below the newest version the solver could pick for them. Off by default; the value is its budget of extra resolutions.
 - `provider.Provider.Usable`: whether the solver could pick a project version in this environment.
+
+### Changed
+
+- Requires go-pubgrub v0.5.0 (was v0.4.0).
 
 ## [0.19.1] - 2026-11-13
 

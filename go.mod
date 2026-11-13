@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/crillab/gophersat v1.4.0
 	github.com/klauspost/compress v1.20.3
-	github.com/posit-dev/go-pubgrub v0.4.0
+	github.com/posit-dev/go-pubgrub v0.5.0
 	github.com/posit-dev/go-python-packaging v0.7.0
 	github.com/rstudio/repository-snapshot-format v0.12.0
 )
