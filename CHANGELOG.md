@@ -19,7 +19,7 @@ served it.
 
 ### Changed
 
-- Less memory and time per solve, with the same answers: `pep440set.FromSpecifiers` is memoized by specifier text (process-wide, safe for concurrent use, at most 65,536 entries, then it starts over), version lists are copied less, and a version's dependencies are built once instead of twice.
+- Less memory and time per solve, with the same answers: `pep440set.FromSpecifiers` is memoized by specifier text (process-wide, safe for concurrent use, about 65,536 entries, then it starts over), version lists are copied less, and a version's dependencies are built once instead of twice.
 
 ## [0.18.0] - 2026-11-12
 
