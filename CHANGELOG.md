@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-13
+
 ### Changed
 
 - The specifier memo holds about 8,192 entries (was 65,536); measured at about 2.3 KB each.
@@ -1633,7 +1635,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/posit-dev/go-pyresolver/compare/v0.17.0...v0.17.1
