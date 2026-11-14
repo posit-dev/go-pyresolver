@@ -45,7 +45,7 @@ FAILED lines=1 bytes=219 sha256=eb7e2857ac60a99152b1ebd0157d6fb98f8bb8b3a009ed3c
 === alabaster
   alabaster 1.0.0
 === anpy
-FAILED lines=7 bytes=764 sha256=64b941c0eb8a35c192f7e2fdbc2ed57b4bb499515050dc57291d20ab29885e4c
+FAILED lines=6 bytes=640 sha256=1da97160d2f02c09769c889832512e78bd97b12d8042bc3ae78d156b4521f55e
   So, because the root project 0 depends on anpy, the requirements of the root project cannot be satisfied.
 === argcomplete
   argcomplete 3.7.0
@@ -118,7 +118,7 @@ FAILED lines=1 bytes=132 sha256=f3d616b64744cbd97e2ee8c30a0baba977c83de8bf604e38
 === filelock
   filelock 3.32.2
 === flake8
-FAILED lines=38 bytes=16075 sha256=48b169e1059bf9ded4c9e5f058d1c570a294e99a7a0882ad78c0fc99729d2266
+FAILED lines=38 bytes=11839 sha256=9134c8b00ace5d561064aeb1d044bc4df5ba8eb28e2782623c1f4f80faaa775b
   So, because the root project 0 depends on flake8, the requirements of the root project cannot be satisfied.
 === flask
   flask 3.1.3
@@ -170,7 +170,7 @@ FAILED lines=1 bytes=140 sha256=2317f1e8a0a4d0f7ccd4902c9258e1d212c850ab2c2d1086
 === intersphinx-registry
   intersphinx-registry 0.2606.25
 === ipykernel
-FAILED lines=20 bytes=4142 sha256=950357e921dfc588ac1c74ec0fd56d81f3d348ba59327b4d7759f98187cae470
+FAILED lines=20 bytes=3597 sha256=bd8261d16071fd748cde5912a050aefe4aebfd43fcc6146e666c9475483f7f3d
   So, because the root project 0 depends on ipykernel, the requirements of the root project cannot be satisfied.
 === ipython
   ipython 3.2.3
@@ -219,7 +219,7 @@ FAILED lines=1 bytes=207 sha256=695e3e02cc9798f9bbd9df1068caa8703df459abaed90e16
   jinja2 3.1.6
   markupsafe 3.0.3
 === jupyter-ai
-FAILED lines=23 bytes=5761 sha256=209be832d4f1eed7a8cbb8463ae4d9dfb2bec0765bab8ac9c0d805d550613e68
+FAILED lines=22 bytes=4704 sha256=7964a25493c2bf71841cb6218914a336a8befeb7aba55b168bbefebd09974cca
   So, because the root project 0 depends on jupyter-ai, the requirements of the root project cannot be satisfied.
 === keyring
   keyring 9.1
@@ -230,7 +230,7 @@ FAILED lines=23 bytes=5761 sha256=209be832d4f1eed7a8cbb8463ae4d9dfb2bec0765bab8a
 === markupsafe
   markupsafe 3.0.3
 === matplotlib
-FAILED lines=36 bytes=13920 sha256=0f6509ad258bbf04980db5270f296841324661aedbdb3021f12223edd84433ff
+FAILED lines=36 bytes=12060 sha256=4339ce952229211801a7b54cd3fc741e1d861c804f4e17076960db27cbac3a6f
   So, because the root project 0 depends on matplotlib, the requirements of the root project cannot be satisfied.
 === matplotlib-inline
   matplotlib-inline 0.2.2
@@ -251,13 +251,13 @@ FAILED lines=36 bytes=13920 sha256=0f6509ad258bbf04980db5270f296841324661aedbdb3
 === mypy-extensions
   mypy-extensions 1.1.0
 === myst-parser
-FAILED lines=53 bytes=16533 sha256=9b934426bdcaddacf98558b6a996da347593182b9089e947c72dc0bb5ab5e68d
+FAILED lines=53 bytes=11535 sha256=07ce3c8a690f06ef91642cf8cd6cecbeb8825fef5e75928107aa7da4b4b91626
   So, because the root project 0 depends on myst-parser, the requirements of the root project cannot be satisfied.
 === nbclient
-FAILED lines=10 bytes=1595 sha256=1f6aa6974a9777846f84dc711b6bd20fc26ee125b5eff55073dec1fb992edea5
+FAILED lines=10 bytes=1524 sha256=5cef6cce0147a0aa14398ba4c29cff4017bf829318500b51039eb86eeb25db64
   So, because the root project 0 depends on nbclient, the requirements of the root project cannot be satisfied.
 === nbformat
-FAILED lines=10 bytes=1644 sha256=97b0518e94c4f180d305d5792923e8696dbd1c09d692f815db3a166d9796214c
+FAILED lines=10 bytes=1563 sha256=d93bd4c08de2bcb100055590c7d926f82662337ebfc76a359f1de45e07e1d27d
   So, because the root project 0 depends on nbformat, the requirements of the root project cannot be satisfied.
 === numpy
   numpy 2.4.6
@@ -347,7 +347,7 @@ FAILED lines=4 bytes=540 sha256=db568ed4eac13fcbcca327f54994350297f2e9abd9f94ff8
   jaraco-functools 4.6.0
   more-itertools 11.1.0
 === pytest-flake8
-FAILED lines=44 bytes=11167 sha256=147e4ae9df4d567e3eb3d4adc0b1d3ab8728e3ef4205f1a5fbd8689b2d70b35f
+FAILED lines=42 bytes=8254 sha256=7850a4d5c002df8ce4540b1bd866e3af9f4c6400b667dea30265da98f2d8163c
   So, because the root project 0 depends on pytest-flake8, the requirements of the root project cannot be satisfied.
 === pytest-ignore-flaky
   pytest-ignore-flaky 2.2.1
