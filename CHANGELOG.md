@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Changed
+
+- `Options.UpgradeTimeFactor` and `Options.UpgradeMaxTime` now also stop an `UpgradeRoots` re-solve that is still running when the bound passes. Before, the bound was checked only before each re-solve, so the pass could overrun it by a whole solve. The stopped re-solve counts as no gain: the pass returns the best answer so far, with no error. With neither bound set, nothing changes.
+
 ## [0.24.0] - 2026-11-14
 
 ### Changed

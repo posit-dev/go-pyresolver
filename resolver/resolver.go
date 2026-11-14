@@ -191,10 +191,10 @@ type Options struct {
 	UpgradeRoots int
 
 	// UpgradeTimeFactor, when above zero, bounds the UpgradeRoots pass in time:
-	// it stops starting new re-solves once the pass has run for this many times
-	// as long as the first solve took, in this Resolve call. A re-solve already
-	// running is not cut short. Easy solves stay fully upgraded; hard ones are
-	// bounded. Zero (the default) means no time bound.
+	// the pass ends once it has run for this many times as long as the first
+	// solve took, in this Resolve call. A re-solve still running at that point
+	// is stopped and counts as no gain. Easy solves stay fully upgraded; hard
+	// ones are bounded. Zero (the default) means no time bound.
 	//
 	// The bound reads the clock, so with it set the answer can differ between
 	// runs on a loaded machine. It never fails a resolution: the best answer so
@@ -202,9 +202,9 @@ type Options struct {
 	UpgradeTimeFactor float64
 
 	// UpgradeMaxTime, when above zero, is an absolute cap on the time the
-	// UpgradeRoots pass may run before it stops starting new re-solves. It
-	// applies together with UpgradeTimeFactor; whichever limit is reached first
-	// stops the pass. Zero (the default) means no cap.
+	// UpgradeRoots pass may run, including a re-solve in progress, which is
+	// stopped at the cap. It applies together with UpgradeTimeFactor; whichever
+	// limit is reached first ends the pass. Zero (the default) means no cap.
 	UpgradeMaxTime time.Duration
 }
 
