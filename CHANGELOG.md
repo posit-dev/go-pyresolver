@@ -17,6 +17,16 @@ served it.
 
 - `Options.UpgradeTimeFactor` and `Options.UpgradeMaxTime`: opt-in time bounds for the `UpgradeRoots` pass. The pass stops starting re-solves once it has run for factor times the first solve's duration, or for the absolute time, whichever comes first. It returns the best answer so far and never an error. Zero (the default) means no bound. With a bound set, the answer can vary with machine load.
 
+## [0.22.0] - 2026-11-14
+
+### Fixed
+
+- A solve now stops when its context is cancelled or its deadline passes, including each `UpgradeRoots` re-solve. Before, the solver loop never checked the context, so a solve could run long past its timeout. The error satisfies `errors.Is(err, context.DeadlineExceeded)` (or `context.Canceled`) and `errors.Is(err, solver.ErrInterrupted)`. A cancel during the `UpgradeRoots` pass still returns the first answer.
+
+### Changed
+
+- Requires go-pubgrub v0.6.0.
+
 ## [0.21.0] - 2026-11-14
 
 ### Changed
@@ -1659,7 +1669,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.0...v0.19.1

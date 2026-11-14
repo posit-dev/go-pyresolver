@@ -436,6 +436,8 @@ func resolveOnce(
 		s.ClashThreshold = opts.ClashThreshold
 		s.ClashFirst = opts.ClashFirst
 		s.MaxConflicts = opts.MaxConflicts
+		// Stop on cancel or deadline; the error unwraps to ctx.Err().
+		s.Interrupt = ctx.Err
 		if onSolver != nil {
 			onSolver(s)
 		}
