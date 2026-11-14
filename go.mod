@@ -1,13 +1,13 @@
 module github.com/posit-dev/go-pyresolver
 
-go 1.25.0
+go 1.27.2
 
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/crillab/gophersat v1.4.0
 	github.com/klauspost/compress v1.20.3
 	github.com/posit-dev/go-pubgrub v0.6.0
-	github.com/posit-dev/go-python-packaging v0.7.0
+	github.com/posit-dev/go-python-packaging v0.13.0
 	github.com/rstudio/repository-snapshot-format v0.12.0
 )
 
