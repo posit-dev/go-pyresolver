@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/posit-dev/go-pubgrub/solver"
 	"github.com/posit-dev/go-pyresolver/candidate"
@@ -188,6 +189,23 @@ type Options struct {
 	// It never fails a resolution: if the budget or ctx ends, or no re-solve
 	// helps, the best complete answer so far is returned.
 	UpgradeRoots int
+
+	// UpgradeTimeFactor, when above zero, bounds the UpgradeRoots pass in time:
+	// it stops starting new re-solves once the pass has run for this many times
+	// as long as the first solve took, in this Resolve call. A re-solve already
+	// running is not cut short. Easy solves stay fully upgraded; hard ones are
+	// bounded. Zero (the default) means no time bound.
+	//
+	// The bound reads the clock, so with it set the answer can differ between
+	// runs on a loaded machine. It never fails a resolution: the best answer so
+	// far is returned, as when the budget or ctx ends.
+	UpgradeTimeFactor float64
+
+	// UpgradeMaxTime, when above zero, is an absolute cap on the time the
+	// UpgradeRoots pass may run before it stops starting new re-solves. It
+	// applies together with UpgradeTimeFactor; whichever limit is reached first
+	// stops the pass. Zero (the default) means no cap.
+	UpgradeMaxTime time.Duration
 }
 
 // Resolution is a successful resolution: one version chosen for every package
@@ -351,11 +369,12 @@ func Resolve(
 	idx index.MetadataIndex,
 	opts Options,
 ) (*Resolution, error) {
+	start := now()
 	res, err := resolveOnce(ctx, reqs, idx, opts)
 	if err != nil || opts.UpgradeRoots <= 0 {
 		return res, err
 	}
-	return upgradeRoots(ctx, reqs, idx, opts, res), nil
+	return upgradeRoots(ctx, reqs, idx, opts, res, now().Sub(start)), nil
 }
 
 // providerOptions maps Options to the provider's options for one resolution.
@@ -478,6 +497,9 @@ func resolveOnce(
 // YankExemptTransitivePins does not justify and nothing is left to deny.
 // The fallback solve permits no transitive pin, so this is not expected.
 var errUnjustified = errors.New("resolver: no resolution justifies its transitive yank pins")
+
+// now is the clock the upgrade time bound reads. A test replaces it.
+var now = time.Now
 
 // onSolve, when set by a test, is called before each solve.
 var onSolve func()
