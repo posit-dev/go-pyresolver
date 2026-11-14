@@ -30,6 +30,12 @@ import (
 // Bounds are published versions, so unpublished versions between members are in
 // the range, which is harmless because Candidates never offers them.
 //
+// A version with no identical neighbour is a run of one: it covers itself and the
+// gap up to the next published version. Nothing published lies in the gap, so the
+// claim is as true as for a longer run. It matters when every version differs
+// (boto3 pins a different botocore range per release): the spans of adjacent
+// turned-down versions then merge into one instead of adding one span each.
+//
 // Cost control: the first Dependencies call for a package is left narrow, so a
 // solve that never revisits a package pays nothing. Later calls (the solver is
 // backtracking over that package) read up to a budget of not-yet-seen
@@ -50,8 +56,9 @@ type neighbour struct {
 	ok   bool
 }
 
-// widenDepender sets Depender on each dependency of (pkg, v) whose run of
-// identical neighbours is longer than one.
+// widenDepender sets Depender on each dependency of (pkg, v): the run of
+// identical neighbours, or, when there is none, v and the gap to the next
+// published version.
 func (p *Provider) widenDepender(pkg Package, v version.Version, deps []dependency) {
 	if p.opts.NoDependerRuns || pkg.Kind != KindProject || len(deps) == 0 {
 		return
@@ -118,9 +125,8 @@ func (p *Provider) widenDepender(pkg Package, v version.Version, deps []dependen
 	cur := pep440set.Exactly(v)
 	for k := range deps {
 		e := ext[k]
-		if e.lo == e.hi {
-			continue
-		}
+		// A run of one is kept: its gap to the next published version holds no
+		// version, so it claims nothing false, and adjacent spans then merge.
 		var lo, hi *version.Version
 		if e.lo > 0 {
 			lo = &asc[e.lo]

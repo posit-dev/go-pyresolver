@@ -387,7 +387,15 @@ func randomSolveIndex(r *rand.Rand) (*index.MockIndex, []string) {
 
 func solveWith(t *testing.T, idx index.MetadataIndex, noRuns, tier2 bool, reqs []string) (map[string]string, solver.Stats, error) {
 	t.Helper()
+	return solveWithOpts(t, idx, noRuns, tier2, nil, reqs)
+}
+
+func solveWithOpts(t *testing.T, idx index.MetadataIndex, noRuns, tier2 bool, mut func(*provider.Options), reqs []string) (map[string]string, solver.Stats, error) {
+	t.Helper()
 	opts := testOptions(t)
+	if mut != nil {
+		mut(&opts)
+	}
 	opts.NoDependerRuns = noRuns
 	opts.MarkExact = tier2
 	opts.Requirements = mustRequirements(t, reqs...)

@@ -45,7 +45,7 @@ FAILED lines=1 bytes=219 sha256=eb7e2857ac60a99152b1ebd0157d6fb98f8bb8b3a009ed3c
 === alabaster
   alabaster 1.0.0
 === anpy
-FAILED lines=7 bytes=764 sha256=64b941c0eb8a35c192f7e2fdbc2ed57b4bb499515050dc57291d20ab29885e4c
+FAILED lines=6 bytes=640 sha256=1da97160d2f02c09769c889832512e78bd97b12d8042bc3ae78d156b4521f55e
   So, because the root project 0 depends on anpy, the requirements of the root project cannot be satisfied.
 === argcomplete
   argcomplete 3.7.0
@@ -206,7 +206,7 @@ FAILED lines=1 bytes=207 sha256=695e3e02cc9798f9bbd9df1068caa8703df459abaed90e16
 === mypy-extensions
   mypy-extensions 1.1.0
 === nbformat
-FAILED lines=10 bytes=1644 sha256=97b0518e94c4f180d305d5792923e8696dbd1c09d692f815db3a166d9796214c
+FAILED lines=10 bytes=1563 sha256=d93bd4c08de2bcb100055590c7d926f82662337ebfc76a359f1de45e07e1d27d
   So, because the root project 0 depends on nbformat, the requirements of the root project cannot be satisfied.
 === numpy
   numpy 2.4.6
