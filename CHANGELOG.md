@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `Options.UpgradeTimeFactor` and `Options.UpgradeMaxTime`: opt-in time bounds for the `UpgradeRoots` pass. The pass stops starting re-solves once it has run for factor times the first solve's duration, or for the absolute time, whichever comes first. It returns the best answer so far and never an error. Zero (the default) means no bound. With a bound set, the answer can vary with machine load.
+
 ## [0.22.0] - 2026-11-14
 
 ### Fixed

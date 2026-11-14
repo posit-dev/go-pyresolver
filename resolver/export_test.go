@@ -3,6 +3,8 @@
 package resolver
 
 import (
+	"time"
+
 	"github.com/posit-dev/go-pubgrub/solver"
 	"github.com/posit-dev/go-pyresolver/pep440set"
 	"github.com/posit-dev/go-pyresolver/provider"
@@ -36,4 +38,11 @@ func OnSolve(f func()) (restore func()) {
 func OnSolver(f func(*solver.Solver[provider.Package, pep440set.Set])) (restore func()) {
 	onSolver = f
 	return func() { onSolver = nil }
+}
+
+// SetClock replaces the clock the upgrade time bound reads until restore is
+// called. Not safe with parallel tests.
+func SetClock(f func() time.Time) (restore func()) {
+	now = f
+	return func() { now = time.Now }
 }

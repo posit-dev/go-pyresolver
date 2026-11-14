@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/posit-dev/go-pyresolver/index"
 	"github.com/posit-dev/go-pyresolver/provider"
@@ -203,15 +204,39 @@ func (r *upRoot) bounds(pin version.Version) []version.Version {
 	return out
 }
 
+// upgradeTimeLimit is how long the pass may run before it stops starting
+// re-solves, from the options and the first solve's duration. ok is false when
+// neither bound is set.
+func upgradeTimeLimit(opts Options, baseDur time.Duration) (limit time.Duration, ok bool) {
+	if opts.UpgradeMaxTime > 0 {
+		limit, ok = opts.UpgradeMaxTime, true
+	}
+	if opts.UpgradeTimeFactor > 0 {
+		// A huge factor is no bound; it must not overflow the Duration.
+		if f := float64(baseDur) * opts.UpgradeTimeFactor; f < math.MaxInt64 {
+			if d := time.Duration(f); !ok || d < limit {
+				limit, ok = d, true
+			}
+		}
+	}
+	return limit, ok
+}
+
 // upgradeRoots is the pass behind Options.UpgradeRoots. base is a valid answer
-// to reqs; the result is base or a valid answer that scores strictly better.
+// to reqs, and baseDur is how long it took; the result is base or a valid
+// answer that scores strictly better.
 func upgradeRoots(
 	ctx context.Context,
 	reqs []requirement.Requirement,
 	idx index.MetadataIndex,
 	opts Options,
 	base *Resolution,
+	baseDur time.Duration,
 ) *Resolution {
+	passStart := now()
+	limit, timed := upgradeTimeLimit(opts, baseDur)
+	// timeUp is checked before each re-solve; one already running is not cut.
+	timeUp := func() bool { return timed && now().Sub(passStart) >= limit }
 	u := &usability{
 		p:    provider.New(ctx, idx, providerOptions(reqs, opts)),
 		memo: map[usableKey]bool{},
@@ -256,7 +281,7 @@ func upgradeRoots(
 		return got
 	}
 
-	for budget > 0 && ctx.Err() == nil {
+	for budget > 0 && ctx.Err() == nil && !timeUp() {
 		// The untried root furthest behind (at least one level); the first by
 		// name on a tie. A root behind only in versions is not tried.
 		var pick *upRoot
@@ -304,7 +329,7 @@ func upgradeRoots(
 		lo := accept(got) // highest level index known to work
 		hi := len(bounds) // lowest level index known to fail
 		triedTop := false
-		for hi-lo > 1 && budget > 0 && ctx.Err() == nil {
+		for hi-lo > 1 && budget > 0 && ctx.Err() == nil && !timeUp() {
 			mid := hi - 1
 			if triedTop {
 				mid = (lo + hi) / 2
