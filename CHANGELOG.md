@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-14
+
 ### Changed
 
 - The `UpgradeRoots` pass is faster and uses less memory. It tests a root's specifiers only for versions above its pin, and scores the first answer only when a re-solve returns. Results are unchanged, except that after a context cancel or an index error mid-pass, scoring may differ; the answer is always valid.
@@ -1653,7 +1655,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/posit-dev/go-pyresolver/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.18.0...v0.19.0
