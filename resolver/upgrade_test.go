@@ -237,3 +237,35 @@ func checkValid(t *testing.T, seed int64, idx index.MetadataIndex, roots []strin
 		}
 	}
 }
+
+// With no root behind, the pass tests no version against a root's specifiers.
+// A root that is behind is tested only above its pin.
+func TestUpgradeRootsTestsSpecifiersOnlyAbovePins(t *testing.T) {
+	idx := index.NewMockIndex("test")
+	for i := 1; i <= 30; i++ {
+		idx.AddVersion("a", fmt.Sprintf("%d.0", i)).AddVersion("b", fmt.Sprintf("%d.0", i))
+	}
+	count, restore := resolver.CountSpecTests()
+	defer restore()
+	want := map[string]string{"a": "30.0", "b": "30.0"}
+	if got := resolveUp(t, 12, idx, "a>=2", "b>=2"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if n := count(); n != 0 {
+		t.Errorf("no root is behind, but %d specifier tests ran", n)
+	}
+
+	// b 3.0 caps a below 2, so a is behind and is raised; only a's versions above
+	// its pin, and none of b's below its pin, are tested.
+	idx = index.NewMockIndex("test").
+		AddVersion("a", "1.0").AddVersion("a", "2.0").AddVersion("a", "3.0").
+		AddVersion("b", "1.0").AddVersion("b", "2.0").AddVersion("b", "3.0", "a<2")
+	before := count()
+	got := resolveUp(t, 12, idx, "a", "b")
+	if !reflect.DeepEqual(got, map[string]string{"a": "3.0", "b": "2.0"}) {
+		t.Fatalf("got %v", got)
+	}
+	if n := count() - before; n == 0 || n > 6 {
+		t.Errorf("%d specifier tests ran, want between 1 and the 6 versions", n)
+	}
+}
