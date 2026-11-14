@@ -13,6 +13,14 @@ served it.
 
 ## [Unreleased]
 
+### Fixed
+
+- A solve now stops when its context is cancelled or its deadline passes, including each `UpgradeRoots` re-solve. Before, the solver loop never checked the context, so a solve could run long past its timeout. The error satisfies `errors.Is(err, context.DeadlineExceeded)` (or `context.Canceled`) and `errors.Is(err, solver.ErrInterrupted)`. A cancel during the `UpgradeRoots` pass still returns the first answer.
+
+### Changed
+
+- Requires go-pubgrub v0.6.0.
+
 ## [0.21.0] - 2026-11-14
 
 ### Changed
