@@ -235,8 +235,9 @@ func upgradeRoots(
 ) *Resolution {
 	passStart := now()
 	limit, timed := upgradeTimeLimit(opts, baseDur)
-	// timeUp is checked before each re-solve; one already running is not cut.
-	timeUp := func() bool { return timed && now().Sub(passStart) >= limit }
+	// cut is set once a re-solve is stopped by the bound; the pass then ends.
+	cut := false
+	timeUp := func() bool { return cut || (timed && now().Sub(passStart) >= limit) }
 	u := &usability{
 		p:    provider.New(ctx, idx, providerOptions(reqs, opts)),
 		memo: map[usableKey]bool{},
@@ -266,8 +267,19 @@ func upgradeRoots(
 		}
 		budget--
 		all := append(slices.Clone(reqs), floor)
-		got, err := resolveOnce(ctx, all, idx, inner)
+		solveCtx := ctx
+		if timed {
+			// A re-solve may run only for the time the pass has left.
+			c, cancel := context.WithTimeout(ctx, limit-now().Sub(passStart))
+			defer cancel()
+			solveCtx = c
+		}
+		got, err := resolveOnce(solveCtx, all, idx, inner)
 		if err != nil {
+			// Stopped by the bound, not the caller: no gain, and the pass ends.
+			if ctx.Err() == nil && solveCtx.Err() != nil {
+				cut = true
+			}
 			return nil
 		}
 		if !scored {
