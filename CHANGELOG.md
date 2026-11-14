@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-14
+
 ### Changed
 
 - Less memory and time when a package has many versions that each need something different (`boto3` pins a different `botocore` range per release). A version with no identical neighbour now covers the gap up to the next published version, so the learned conflicts of adjacent turned-down versions merge into one span instead of one span each. No published version lies in a gap, so pins and failures are unchanged. Only the wording of some failure explanations changes: they can be shorter and name a version range where they named versions one by one. A 30-environment `s3fs` + `anndata` solve in PPM, which ran out of 6 GB before, now ends in 13 s at 1.4 GB.
@@ -1675,7 +1677,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.20.0...v0.21.0
