@@ -15,7 +15,7 @@ served it.
 
 ### Changed
 
-- The `UpgradeRoots` pass is faster and uses less memory. It tests a root's specifiers only for versions above its pin, and scores the first answer only when a re-solve returns. Results are unchanged.
+- The `UpgradeRoots` pass is faster and uses less memory. It tests a root's specifiers only for versions above its pin, and scores the first answer only when a re-solve returns. Results are unchanged, except that after a context cancel or an index error mid-pass, scoring may differ; the answer is always valid.
 - Lower memory in a solve with many backtracks. The provider's dependency memos no longer keep each version's requirement list, and a neighbour read shares the memoized list instead of copying it. On a large 30-cell solve the memory increase fell from 8.2 GB to 3.2 GB. Results are unchanged.
 
 ## [0.20.0] - 2026-11-13

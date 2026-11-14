@@ -222,7 +222,8 @@ func upgradeRoots(
 	}
 	best := base
 	// best is scored only once a re-solve has an answer to compare it with:
-	// scoring tests every version above each root's pin.
+	// scoring tests every version above each root's pin. After a ctx cancel or
+	// an index error mid-pass, scoring may differ; the answer stays valid.
 	var bestLv, bestVer int
 	scored := false
 	budget := opts.UpgradeRoots
@@ -361,7 +362,7 @@ func upgradeRootSet(
 		if !slices.IsSortedFunc(vs, cmp) {
 			// A copy: the list belongs to the index.
 			vs = slices.Clone(vs)
-			slices.SortFunc(vs, cmp)
+			slices.SortStableFunc(vs, cmp)
 		}
 		r := &upRoot{
 			name: n, u: u, cands: vs,
