@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-14
+
 ### Changed
 
 - `Options.UpgradeTimeFactor` and `Options.UpgradeMaxTime` now also stop an `UpgradeRoots` re-solve that is still running when the bound passes. Before, the bound was checked only before each re-solve, so the pass could overrun it by a whole solve. The stopped re-solve counts as no gain: the pass returns the best answer so far, with no error. With neither bound set, nothing changes.
@@ -1681,7 +1683,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.21.0...v0.22.0
