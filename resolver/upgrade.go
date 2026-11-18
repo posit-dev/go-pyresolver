@@ -71,9 +71,10 @@ type upRoot struct {
 	u     *usability
 
 	// reqs are the root's own requirements, and pre is whether its pre-releases
-	// count. admit remembers per index of cands whether they admit it (1) or
-	// not (2). It is filled on demand: the specifier test is costly, and only
-	// versions above a pin are ever asked about.
+	// count: only if the base answer pinned one. admit remembers per index of
+	// cands whether they admit it (1) or not (2). It is filled on demand: the
+	// specifier test is costly, and only versions above a pin are ever asked
+	// about.
 	reqs  []requirement.Requirement
 	pre   bool
 	admit []int8
@@ -81,6 +82,10 @@ type upRoot struct {
 
 // onSpecTest, when set by a test, is called before each root specifier test.
 var onSpecTest func()
+
+// onCandidate, when set by a test, is called with each answer a re-solve
+// found and whether the pass kept it.
+var onCandidate func(got *Resolution, kept bool)
 
 // admitted reports whether the root's own specifiers admit cands[i].
 func (r *upRoot) admitted(i int) bool {
@@ -274,7 +279,7 @@ func upgradeRoots(
 	// best is scored only once a re-solve has an answer to compare it with:
 	// scoring tests every version above each root's pin. After a ctx cancel or
 	// an index error mid-pass, scoring may differ; the answer stays valid.
-	var bestLv, bestVer int
+	var bestScore score
 	scored := false
 	budget := opts.UpgradeRoots
 	inner := opts
@@ -317,11 +322,14 @@ func upgradeRoots(
 			return nil
 		}
 		if !scored {
-			bestLv, bestVer = objective(roots, best)
+			bestScore = objective(roots, best)
 			scored = true
 		}
-		lv, ver := objective(roots, got)
-		if lv > bestLv || (lv == bestLv && ver >= bestVer) {
+		kept := objective(roots, got).less(bestScore)
+		if onCandidate != nil {
+			onCandidate(got, kept)
+		}
+		if !kept {
 			return nil
 		}
 		return got
@@ -361,7 +369,7 @@ func upgradeRoots(
 		}
 		accept := func(got *Resolution) int {
 			best = got
-			bestLv, bestVer = objective(roots, best)
+			bestScore = objective(roots, best)
 			return levelIdx(best.Pinned[pick.name])
 		}
 
@@ -456,16 +464,39 @@ func admitsAll(reqs []requirement.Requirement, v version.Version) bool {
 	return true
 }
 
-// objective is the sum over roots of levels behind, then of versions behind.
-func objective(roots []*upRoot, res *Resolution) (levels, versions int) {
+// score is how far an answer's roots are from where the pass wants them.
+// Lower is better; the fields compare in order.
+type score struct {
+	pre      int // roots moved from a final release to a pre-release
+	levels   int // sum of levels behind
+	versions int // sum of versions behind
+}
+
+func (a score) less(b score) bool {
+	if a.pre != b.pre {
+		return a.pre < b.pre
+	}
+	if a.levels != b.levels {
+		return a.levels < b.levels
+	}
+	return a.versions < b.versions
+}
+
+// objective scores res over roots. A root the base answer pinned at a final
+// release counts in pre when res pins a pre-release of it, older or newer.
+func objective(roots []*upRoot, res *Resolution) score {
+	var s score
 	for _, r := range roots {
 		pin, ok := res.Pinned[r.name]
 		if !ok {
 			continue
 		}
+		if !r.pre && pin.IsPreRelease() {
+			s.pre++
+		}
 		l, v := r.behind(pin)
-		levels += l
-		versions += v
+		s.levels += l
+		s.versions += v
 	}
-	return levels, versions
+	return s
 }
