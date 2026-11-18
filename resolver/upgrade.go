@@ -289,6 +289,11 @@ func upgradeRoots(
 		if err != nil {
 			return nil
 		}
+		// Callers check timeUp first, so this cannot fire; it keeps a zero
+		// meter limit, which means no limit, from ever reaching resolveOnce.
+		if stepped && spent >= stepLimit {
+			return nil
+		}
 		budget--
 		all := append(slices.Clone(reqs), floor)
 		solveCtx := ctx
