@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-18
+
 ### Added
 
 - `Options.UpgradeStepFactor` and `Options.UpgradeMaxSteps` bound the `UpgradeRoots` pass in solver steps instead of time: its re-solves together may take this many times the first solve's steps, or this many steps. Steps do not depend on the clock, so the same inputs give the same pins on every run, even on a loaded machine. The time bounds still work and can be kept as a backstop, but an answer they cut can differ between runs. With neither new option set, nothing changes.
@@ -1687,7 +1689,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.22.0...v0.23.0
