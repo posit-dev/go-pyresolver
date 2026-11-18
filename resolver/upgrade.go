@@ -222,9 +222,27 @@ func upgradeTimeLimit(opts Options, baseDur time.Duration) (limit time.Duration,
 	return limit, ok
 }
 
+// upgradeStepLimit is how many solver steps the pass's re-solves may take in
+// all, from the options and the first solve's steps. ok is false when neither
+// bound is set.
+func upgradeStepLimit(opts Options, baseSteps int) (limit int, ok bool) {
+	if opts.UpgradeMaxSteps > 0 {
+		limit, ok = opts.UpgradeMaxSteps, true
+	}
+	if opts.UpgradeStepFactor > 0 {
+		// A huge factor is no bound; it must not overflow the int.
+		if f := float64(baseSteps) * opts.UpgradeStepFactor; f < math.MaxInt {
+			if n := int(f); !ok || n < limit {
+				limit, ok = n, true
+			}
+		}
+	}
+	return limit, ok
+}
+
 // upgradeRoots is the pass behind Options.UpgradeRoots. base is a valid answer
-// to reqs, and baseDur is how long it took; the result is base or a valid
-// answer that scores strictly better.
+// to reqs, and baseDur and baseSteps are what it took; the result is base or a
+// valid answer that scores strictly better.
 func upgradeRoots(
 	ctx context.Context,
 	reqs []requirement.Requirement,
@@ -232,12 +250,18 @@ func upgradeRoots(
 	opts Options,
 	base *Resolution,
 	baseDur time.Duration,
+	baseSteps int,
 ) *Resolution {
 	passStart := now()
 	limit, timed := upgradeTimeLimit(opts, baseDur)
-	// cut is set once a re-solve is stopped by the bound; the pass then ends.
+	stepLimit, stepped := upgradeStepLimit(opts, baseSteps)
+	spent := 0 // solver steps the re-solves have used
+	// cut is set once a re-solve is stopped by the time bound; the pass then
+	// ends. A re-solve stopped by the step bound leaves spent at stepLimit.
 	cut := false
-	timeUp := func() bool { return cut || (timed && now().Sub(passStart) >= limit) }
+	timeUp := func() bool {
+		return cut || (stepped && spent >= stepLimit) || (timed && now().Sub(passStart) >= limit)
+	}
 	u := &usability{
 		p:    provider.New(ctx, idx, providerOptions(reqs, opts)),
 		memo: map[usableKey]bool{},
@@ -265,6 +289,11 @@ func upgradeRoots(
 		if err != nil {
 			return nil
 		}
+		// Callers check timeUp first, so this cannot fire; it keeps a zero
+		// meter limit, which means no limit, from ever reaching resolveOnce.
+		if stepped && spent >= stepLimit {
+			return nil
+		}
 		budget--
 		all := append(slices.Clone(reqs), floor)
 		solveCtx := ctx
@@ -274,9 +303,14 @@ func upgradeRoots(
 			defer cancel()
 			solveCtx = c
 		}
-		got, err := resolveOnce(solveCtx, all, idx, inner)
+		steps := &stepMeter{}
+		if stepped {
+			steps.limit = stepLimit - spent
+		}
+		got, err := resolveOnce(solveCtx, all, idx, inner, steps)
+		spent += steps.used
 		if err != nil {
-			// Stopped by the bound, not the caller: no gain, and the pass ends.
+			// Stopped by the time bound, not the caller: no gain, and the pass ends.
 			if ctx.Err() == nil && solveCtx.Err() != nil {
 				cut = true
 			}

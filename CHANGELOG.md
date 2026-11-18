@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `Options.UpgradeStepFactor` and `Options.UpgradeMaxSteps` bound the `UpgradeRoots` pass in solver steps instead of time: its re-solves together may take this many times the first solve's steps, or this many steps. Steps do not depend on the clock, so the same inputs give the same pins on every run, even on a loaded machine. The time bounds still work and can be kept as a backstop, but an answer they cut can differ between runs. With neither new option set, nothing changes.
+
 ## [0.25.0] - 2026-11-14
 
 ### Changed
