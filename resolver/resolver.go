@@ -197,8 +197,9 @@ type Options struct {
 	// ones are bounded. Zero (the default) means no time bound.
 	//
 	// The bound reads the clock, so with it set the answer can differ between
-	// runs on a loaded machine. It never fails a resolution: the best answer so
-	// far is returned, as when the budget or ctx ends.
+	// runs on a loaded machine; UpgradeStepFactor is the repeatable bound. It
+	// never fails a resolution: the best answer so far is returned, as when the
+	// budget or ctx ends.
 	UpgradeTimeFactor float64
 
 	// UpgradeMaxTime, when above zero, is an absolute cap on the time the
@@ -206,6 +207,24 @@ type Options struct {
 	// stopped at the cap. It applies together with UpgradeTimeFactor; whichever
 	// limit is reached first ends the pass. Zero (the default) means no cap.
 	UpgradeMaxTime time.Duration
+
+	// UpgradeStepFactor, when above zero, bounds the UpgradeRoots pass in
+	// solver steps: all its re-solves together may take this many times the
+	// steps the first solve took. A step is one round of the solver's main loop
+	// or one step of conflict resolution. A re-solve that reaches the bound is
+	// stopped, counts as no gain, and ends the pass. Zero (the default) means
+	// no step bound.
+	//
+	// Unlike the time bounds, steps do not depend on the clock or machine load,
+	// so the same inputs give the same answer every run. Use a step bound to
+	// limit the pass; keep a time bound only as a backstop, since an answer it
+	// cuts can still differ between runs.
+	UpgradeStepFactor float64
+
+	// UpgradeMaxSteps, when above zero, is an absolute cap on the solver steps
+	// all UpgradeRoots re-solves may take together. It applies together with
+	// UpgradeStepFactor; the lower bound wins. Zero (the default) means no cap.
+	UpgradeMaxSteps int
 }
 
 // Resolution is a successful resolution: one version chosen for every package
@@ -370,11 +389,36 @@ func Resolve(
 	opts Options,
 ) (*Resolution, error) {
 	start := now()
-	res, err := resolveOnce(ctx, reqs, idx, opts)
+	steps := &stepMeter{}
+	res, err := resolveOnce(ctx, reqs, idx, opts, steps)
 	if err != nil || opts.UpgradeRoots <= 0 {
 		return res, err
 	}
-	return upgradeRoots(ctx, reqs, idx, opts, res, now().Sub(start)), nil
+	return upgradeRoots(ctx, reqs, idx, opts, res, now().Sub(start), steps.used), nil
+}
+
+// stepMeter counts the solver steps of one resolution, across all its solves,
+// and stops it once limit steps are used. Zero limit means no limit.
+type stepMeter struct {
+	used, limit int
+}
+
+// errStepBudget stops a re-solve that used the upgrade pass's last step.
+var errStepBudget = errors.New("resolver: upgrade step budget spent")
+
+// interrupt is the solver's Interrupt: the solver calls it once per step,
+// on one goroutine, so the count depends only on the inputs.
+func (m *stepMeter) interrupt(ctx context.Context) func() error {
+	return func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if m.limit > 0 && m.used >= m.limit {
+			return errStepBudget
+		}
+		m.used++
+		return nil
+	}
 }
 
 // providerOptions maps Options to the provider's options for one resolution.
@@ -396,13 +440,18 @@ func providerOptions(reqs []requirement.Requirement, opts Options) provider.Opti
 	}
 }
 
-// resolveOnce is one resolution, with no upgrade pass.
+// resolveOnce is one resolution, with no upgrade pass. steps counts its
+// solver steps and may stop it.
 func resolveOnce(
 	ctx context.Context,
 	reqs []requirement.Requirement,
 	idx index.MetadataIndex,
 	opts Options,
+	steps *stepMeter,
 ) (*Resolution, error) {
+	if onSteps != nil {
+		defer func() { onSteps(steps.used) }()
+	}
 	if err := validate(opts); err != nil {
 		return nil, err
 	}
@@ -436,8 +485,8 @@ func resolveOnce(
 		s.ClashThreshold = opts.ClashThreshold
 		s.ClashFirst = opts.ClashFirst
 		s.MaxConflicts = opts.MaxConflicts
-		// Stop on cancel or deadline; the error unwraps to ctx.Err().
-		s.Interrupt = ctx.Err
+		// Stop on cancel, deadline or step budget; the error unwraps to the cause.
+		s.Interrupt = steps.interrupt(ctx)
 		if onSolver != nil {
 			onSolver(s)
 		}
@@ -505,6 +554,9 @@ var now = time.Now
 
 // onSolve, when set by a test, is called before each solve.
 var onSolve func()
+
+// onSteps, when set by a test, gets the steps each resolveOnce used.
+var onSteps func(int)
 
 // onSolver, when set by a test, sees each Solver after Resolve has configured it.
 var onSolver func(*solver.Solver[provider.Package, pep440set.Set])

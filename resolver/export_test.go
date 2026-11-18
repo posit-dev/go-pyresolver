@@ -46,3 +46,12 @@ func SetClock(f func() time.Time) (restore func()) {
 	now = f
 	return func() { now = time.Now }
 }
+
+// RecordSteps records the solver steps of each resolution Resolve runs, the
+// first solve then each upgrade re-solve, until restore is called.
+// Not safe with parallel tests.
+func RecordSteps() (got func() []int, restore func()) {
+	var all []int
+	onSteps = func(n int) { all = append(all, n) }
+	return func() []int { return all }, func() { onSteps = nil }
+}
