@@ -13,9 +13,11 @@ served it.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-18
+
 ### Fixed
 
-- The `UpgradeRoots` pass no longer keeps an answer that moves a root from a final release to a pre-release, older or newer. Before, it could trade `tensorflow` 2.13.1 for 2.13.0rc2 to raise `numpy` a major, and count that as a gain. A root whose first answer was already a pre-release can still move to a newer pre-release or a final. Nothing changes with the pass off (#106).
+- The `UpgradeRoots` pass no longer keeps an answer that moves a root from a final release to a pre-release, older or newer. Before, it could trade `tensorflow` 2.13.1 for a 2.13.0 release candidate to raise `numpy` a major, and count that as a gain. A root whose first answer was already a pre-release can still move to a newer pre-release or a final. Nothing changes with the pass off (#106).
 
 ## [0.26.0] - 2026-11-18
 
@@ -1693,7 +1695,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.23.0...v0.24.0
