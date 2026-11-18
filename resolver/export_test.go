@@ -55,3 +55,10 @@ func RecordSteps() (got func() []int, restore func()) {
 	onSteps = func(n int) { all = append(all, n) }
 	return func() []int { return all }, func() { onSteps = nil }
 }
+
+// OnCandidate calls f with each answer an upgrade re-solve found, and whether
+// the pass kept it, until restore is called. Not safe with parallel tests.
+func OnCandidate(f func(got *Resolution, kept bool)) (restore func()) {
+	onCandidate = f
+	return func() { onCandidate = nil }
+}

@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Fixed
+
+- The `UpgradeRoots` pass no longer keeps an answer that moves a root from a final release to a pre-release, older or newer. Before, it could trade `tensorflow` 2.13.1 for 2.13.0rc2 to raise `numpy` a major, and count that as a gain. A root whose first answer was already a pre-release can still move to a newer pre-release or a final. Nothing changes with the pass off (#106).
+
 ## [0.26.0] - 2026-11-18
 
 ### Added

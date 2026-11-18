@@ -183,8 +183,9 @@ type Options struct {
 	// and bisects, which assumes a level that fails means every higher one does
 	// too; an upgrade that breaks that is missed. Ties are broken by name. An
 	// answer is kept only if the sum of levels behind, then the sum of versions
-	// behind, over all roots strictly drops. A failed re-solve still spends
-	// budget. Every re-solve uses these same Options.
+	// behind, over all roots strictly drops. An answer that moves any root from
+	// a final release to a pre-release, older or newer, is never kept. A failed
+	// re-solve still spends budget. Every re-solve uses these same Options.
 	//
 	// It never fails a resolution: if the budget or ctx ends, or no re-solve
 	// helps, the best complete answer so far is returned.
