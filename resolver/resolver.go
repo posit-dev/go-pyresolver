@@ -340,7 +340,7 @@ type UpgradeReport struct {
 	First *Resolution
 
 	// StoppedByTime is true when time cut the pass short: UpgradeTimeFactor or
-	// UpgradeMaxTime was reached, or ctx ended before the pass did. The kept
+	// UpgradeMaxTime was reached, or the pass ran into the end of ctx. The kept
 	// answer then depends on timing; use First for a repeatable one. A pass
 	// ended by the step bounds, the UpgradeRoots budget, or running out of
 	// roots to try is not stopped by time.

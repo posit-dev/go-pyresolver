@@ -42,6 +42,9 @@ func levelsBetween(hi, lo level) int {
 type usability struct {
 	p    *provider.Provider
 	memo map[usableKey]bool
+
+	// failed, if set, is called when an index lookup fails.
+	failed func()
 }
 
 type usableKey struct {
@@ -58,6 +61,9 @@ func (u *usability) ok(name index.PackageName, v version.Version) bool {
 	}
 	got, err := u.p.Usable(name, v)
 	if err != nil {
+		if u.failed != nil {
+			u.failed()
+		}
 		return false
 	}
 	u.memo[k] = got
@@ -263,12 +269,12 @@ func upgradeRoots(
 		// First must not alias the answer the caller gets.
 		best = cloneResolution(base)
 	}
-	// ctx errors are sticky, so any way a ctx end reached the pass shows here.
-	best.Upgrade = &UpgradeReport{First: base, StoppedByTime: byTime || ctx.Err() != nil}
+	best.Upgrade = &UpgradeReport{First: base, StoppedByTime: byTime}
 	return best
 }
 
-// upgradePass runs the pass. byTime is whether a time bound ended it.
+// upgradePass runs the pass. byTime is whether a time bound or the end of ctx
+// cut it short.
 func upgradePass(
 	ctx context.Context,
 	reqs []requirement.Requirement,
@@ -286,6 +292,14 @@ func upgradePass(
 	// ends. A re-solve stopped by the step bound leaves spent at stepLimit.
 	cut := false
 	clockUp := false // the time bound was reached between re-solves
+	// ctxEnded notes a ctx end the pass ran into, as opposed to one after it.
+	ctxCut := false
+	ctxEnded := func() bool {
+		if ctx.Err() != nil {
+			ctxCut = true
+		}
+		return ctxCut
+	}
 	timeUp := func() bool {
 		if cut || (stepped && spent >= stepLimit) {
 			return true
@@ -297,9 +311,10 @@ func upgradePass(
 		p:    provider.New(ctx, idx, providerOptions(reqs, opts)),
 		memo: map[usableKey]bool{},
 	}
+	u.failed = func() { ctxEnded() }
 	roots := upgradeRootSet(ctx, reqs, idx, opts, base, u)
 	if len(roots) == 0 {
-		return base, false
+		return base, ctxCut
 	}
 	best := base
 	// best is scored only once a re-solve has an answer to compare it with:
@@ -342,7 +357,7 @@ func upgradePass(
 		spent += steps.used
 		if err != nil {
 			// Stopped by the time bound, not the caller: no gain, and the pass ends.
-			if ctx.Err() == nil && solveCtx.Err() != nil {
+			if !ctxEnded() && solveCtx.Err() != nil {
 				cut = true
 			}
 			return nil
@@ -361,7 +376,7 @@ func upgradePass(
 		return got
 	}
 
-	for budget > 0 && ctx.Err() == nil && !timeUp() {
+	for budget > 0 && !ctxEnded() && !timeUp() {
 		// The untried root furthest behind (at least one level); the first by
 		// name on a tie. A root behind only in versions is not tried.
 		var pick *upRoot
@@ -409,7 +424,7 @@ func upgradePass(
 		lo := accept(got) // highest level index known to work
 		hi := len(bounds) // lowest level index known to fail
 		triedTop := false
-		for hi-lo > 1 && budget > 0 && ctx.Err() == nil && !timeUp() {
+		for hi-lo > 1 && budget > 0 && !ctxEnded() && !timeUp() {
 			mid := hi - 1
 			if triedTop {
 				mid = (lo + hi) / 2
@@ -422,7 +437,7 @@ func upgradePass(
 			}
 		}
 	}
-	return best, cut || clockUp
+	return best, cut || clockUp || ctxCut
 }
 
 // cloneResolution copies r's maps and slices, so the copy shares none with r.
@@ -475,6 +490,9 @@ func upgradeRootSet(
 		}
 		vs, err := idx.Versions(ctx, n)
 		if err != nil {
+			if u.failed != nil {
+				u.failed()
+			}
 			continue
 		}
 		if len(vs) == 0 {
