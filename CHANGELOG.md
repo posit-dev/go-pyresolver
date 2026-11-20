@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `Resolution.Upgrade` reports on the `UpgradeRoots` pass: `First` is the first solve's answer, the one the pass-off run gives, and `StoppedByTime` says whether `UpgradeTimeFactor`, `UpgradeMaxTime` or the end of `ctx` cut the pass short. A caller that wants a repeatable answer can use `First` when time stopped the pass, without solving again. It is nil with the pass off, and the kept answer does not change.
+
 ## [0.27.0] - 2026-11-18
 
 ### Fixed

@@ -4,6 +4,7 @@ package resolver
 
 import (
 	"context"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -246,8 +247,8 @@ func upgradeStepLimit(opts Options, baseSteps int) (limit int, ok bool) {
 }
 
 // upgradeRoots is the pass behind Options.UpgradeRoots. base is a valid answer
-// to reqs, and baseDur and baseSteps are what it took; the result is base or a
-// valid answer that scores strictly better.
+// to reqs, and baseDur and baseSteps are what it took; the result is base's
+// answer or a valid one that scores strictly better, with an UpgradeReport.
 func upgradeRoots(
 	ctx context.Context,
 	reqs []requirement.Requirement,
@@ -257,6 +258,26 @@ func upgradeRoots(
 	baseDur time.Duration,
 	baseSteps int,
 ) *Resolution {
+	best, byTime := upgradePass(ctx, reqs, idx, opts, base, baseDur, baseSteps)
+	if best == base {
+		// First must not alias the answer the caller gets.
+		best = cloneResolution(base)
+	}
+	// ctx errors are sticky, so any way a ctx end reached the pass shows here.
+	best.Upgrade = &UpgradeReport{First: base, StoppedByTime: byTime || ctx.Err() != nil}
+	return best
+}
+
+// upgradePass runs the pass. byTime is whether a time bound ended it.
+func upgradePass(
+	ctx context.Context,
+	reqs []requirement.Requirement,
+	idx index.MetadataIndex,
+	opts Options,
+	base *Resolution,
+	baseDur time.Duration,
+	baseSteps int,
+) (_ *Resolution, byTime bool) {
 	passStart := now()
 	limit, timed := upgradeTimeLimit(opts, baseDur)
 	stepLimit, stepped := upgradeStepLimit(opts, baseSteps)
@@ -264,8 +285,13 @@ func upgradeRoots(
 	// cut is set once a re-solve is stopped by the time bound; the pass then
 	// ends. A re-solve stopped by the step bound leaves spent at stepLimit.
 	cut := false
+	clockUp := false // the time bound was reached between re-solves
 	timeUp := func() bool {
-		return cut || (stepped && spent >= stepLimit) || (timed && now().Sub(passStart) >= limit)
+		if cut || (stepped && spent >= stepLimit) {
+			return true
+		}
+		clockUp = timed && now().Sub(passStart) >= limit
+		return clockUp
 	}
 	u := &usability{
 		p:    provider.New(ctx, idx, providerOptions(reqs, opts)),
@@ -273,7 +299,7 @@ func upgradeRoots(
 	}
 	roots := upgradeRootSet(ctx, reqs, idx, opts, base, u)
 	if len(roots) == 0 {
-		return base
+		return base, false
 	}
 	best := base
 	// best is scored only once a re-solve has an answer to compare it with:
@@ -396,7 +422,24 @@ func upgradeRoots(
 			}
 		}
 	}
-	return best
+	return best, cut || clockUp
+}
+
+// cloneResolution copies r's maps and slices, so the copy shares none with r.
+func cloneResolution(r *Resolution) *Resolution {
+	c := *r
+	c.Pinned = maps.Clone(r.Pinned)
+	c.Order = slices.Clone(r.Order)
+	if r.Extras != nil {
+		c.Extras = make(map[index.PackageName][]string, len(r.Extras))
+		for k, v := range r.Extras {
+			c.Extras[k] = slices.Clone(v)
+		}
+	}
+	c.Unusable = slices.Clone(r.Unusable)
+	c.MissingExtras = slices.Clone(r.MissingExtras)
+	c.YankedPins = slices.Clone(r.YankedPins)
+	return &c
 }
 
 // upgradeRootSet lists, sorted by name, each root project that base pinned,
