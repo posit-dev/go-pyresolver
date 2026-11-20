@@ -62,3 +62,10 @@ func OnCandidate(f func(got *Resolution, kept bool)) (restore func()) {
 	onCandidate = f
 	return func() { onCandidate = nil }
 }
+
+// AfterSolve calls f after each solve Resolve runs until restore is called.
+// Not safe with parallel tests.
+func AfterSolve(f func()) (restore func()) {
+	onSteps = func(int) { f() }
+	return func() { onSteps = nil }
+}

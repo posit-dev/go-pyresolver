@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `Resolution.Upgrade` holds the `UpgradeRoots` pass's first answer (`First`) and whether a time bound or the end of `ctx` cut the pass short (`StoppedByTime`), so a caller can fall back to the first answer without solving again. It is nil with the pass off, and the answer the pass keeps does not change.
+
 ## [0.27.0] - 2026-11-18
 
 ### Fixed

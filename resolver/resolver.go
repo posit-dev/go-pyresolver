@@ -188,7 +188,8 @@ type Options struct {
 	// re-solve still spends budget. Every re-solve uses these same Options.
 	//
 	// It never fails a resolution: if the budget or ctx ends, or no re-solve
-	// helps, the best complete answer so far is returned.
+	// helps, the best complete answer so far is returned. Resolution.Upgrade
+	// holds the first answer and whether time cut the pass short.
 	UpgradeRoots int
 
 	// UpgradeTimeFactor, when above zero, bounds the UpgradeRoots pass in time:
@@ -326,6 +327,27 @@ type Resolution struct {
 	// requirer in the solution that pins it exactly, root or transitive, so a
 	// caller can warn. Sorted by (package, requester).
 	YankedPins []YankedPin
+
+	// Upgrade reports on the UpgradeRoots pass. It is nil when the pass is off
+	// or the first solve fails.
+	Upgrade *UpgradeReport
+}
+
+// UpgradeReport says how the UpgradeRoots pass went.
+type UpgradeReport struct {
+	// First is the first solve's answer, the one Resolve returns with the pass
+	// off. Its Upgrade is nil, and it shares no maps or slices with the
+	// Resolution that holds it.
+	First *Resolution
+
+	// StoppedByTime is true when time cut the pass short: UpgradeTimeFactor or
+	// UpgradeMaxTime was reached, or the pass ran into the end of ctx. The kept
+	// answer then depends on timing; use First for a repeatable one. A pass
+	// ended by the step bounds, the UpgradeRoots budget, or running out of
+	// roots to try is not stopped by time. It can still be true if time ran out
+	// just as the pass would have ended anyway; a caller then only falls back
+	// to First.
+	StoppedByTime bool
 }
 
 // YankedPin is a selected yanked version and one requirer that pins it.

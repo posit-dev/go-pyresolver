@@ -4,6 +4,7 @@ package resolver
 
 import (
 	"context"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -41,6 +42,9 @@ func levelsBetween(hi, lo level) int {
 type usability struct {
 	p    *provider.Provider
 	memo map[usableKey]bool
+
+	// failed, if set, is called when an index lookup fails.
+	failed func()
 }
 
 type usableKey struct {
@@ -57,6 +61,9 @@ func (u *usability) ok(name index.PackageName, v version.Version) bool {
 	}
 	got, err := u.p.Usable(name, v)
 	if err != nil {
+		if u.failed != nil {
+			u.failed()
+		}
 		return false
 	}
 	u.memo[k] = got
@@ -246,8 +253,8 @@ func upgradeStepLimit(opts Options, baseSteps int) (limit int, ok bool) {
 }
 
 // upgradeRoots is the pass behind Options.UpgradeRoots. base is a valid answer
-// to reqs, and baseDur and baseSteps are what it took; the result is base or a
-// valid answer that scores strictly better.
+// to reqs, and baseDur and baseSteps are what it took; the result is base's
+// answer or a valid one that scores strictly better, with an UpgradeReport.
 func upgradeRoots(
 	ctx context.Context,
 	reqs []requirement.Requirement,
@@ -257,6 +264,26 @@ func upgradeRoots(
 	baseDur time.Duration,
 	baseSteps int,
 ) *Resolution {
+	best, byTime := upgradePass(ctx, reqs, idx, opts, base, baseDur, baseSteps)
+	if best == base {
+		// First must not alias the answer the caller gets.
+		best = cloneResolution(base)
+	}
+	best.Upgrade = &UpgradeReport{First: base, StoppedByTime: byTime}
+	return best
+}
+
+// upgradePass runs the pass. byTime is whether a time bound or the end of ctx
+// cut it short.
+func upgradePass(
+	ctx context.Context,
+	reqs []requirement.Requirement,
+	idx index.MetadataIndex,
+	opts Options,
+	base *Resolution,
+	baseDur time.Duration,
+	baseSteps int,
+) (_ *Resolution, byTime bool) {
 	passStart := now()
 	limit, timed := upgradeTimeLimit(opts, baseDur)
 	stepLimit, stepped := upgradeStepLimit(opts, baseSteps)
@@ -264,16 +291,30 @@ func upgradeRoots(
 	// cut is set once a re-solve is stopped by the time bound; the pass then
 	// ends. A re-solve stopped by the step bound leaves spent at stepLimit.
 	cut := false
+	clockUp := false // the time bound was reached between re-solves
+	// ctxEnded notes a ctx end the pass ran into, as opposed to one after it.
+	ctxCut := false
+	ctxEnded := func() bool {
+		if ctx.Err() != nil {
+			ctxCut = true
+		}
+		return ctxCut
+	}
 	timeUp := func() bool {
-		return cut || (stepped && spent >= stepLimit) || (timed && now().Sub(passStart) >= limit)
+		if cut || (stepped && spent >= stepLimit) {
+			return true
+		}
+		clockUp = timed && now().Sub(passStart) >= limit
+		return clockUp
 	}
 	u := &usability{
 		p:    provider.New(ctx, idx, providerOptions(reqs, opts)),
 		memo: map[usableKey]bool{},
 	}
+	u.failed = func() { ctxEnded() }
 	roots := upgradeRootSet(ctx, reqs, idx, opts, base, u)
 	if len(roots) == 0 {
-		return base
+		return base, ctxEnded()
 	}
 	best := base
 	// best is scored only once a re-solve has an answer to compare it with:
@@ -316,7 +357,7 @@ func upgradeRoots(
 		spent += steps.used
 		if err != nil {
 			// Stopped by the time bound, not the caller: no gain, and the pass ends.
-			if ctx.Err() == nil && solveCtx.Err() != nil {
+			if !ctxEnded() && solveCtx.Err() != nil {
 				cut = true
 			}
 			return nil
@@ -326,6 +367,8 @@ func upgradeRoots(
 			scored = true
 		}
 		kept := objective(roots, got).less(bestScore)
+		// An index may report a ctx end as unusable metadata, so scoring hides it.
+		ctxEnded()
 		if onCandidate != nil {
 			onCandidate(got, kept)
 		}
@@ -335,7 +378,7 @@ func upgradeRoots(
 		return got
 	}
 
-	for budget > 0 && ctx.Err() == nil && !timeUp() {
+	for budget > 0 && !ctxEnded() && !timeUp() {
 		// The untried root furthest behind (at least one level); the first by
 		// name on a tie. A root behind only in versions is not tried.
 		var pick *upRoot
@@ -349,6 +392,7 @@ func upgradeRoots(
 			}
 		}
 		if pick == nil {
+			ctxEnded() // the pick read the index too
 			break
 		}
 		done[pick.name] = true
@@ -383,7 +427,7 @@ func upgradeRoots(
 		lo := accept(got) // highest level index known to work
 		hi := len(bounds) // lowest level index known to fail
 		triedTop := false
-		for hi-lo > 1 && budget > 0 && ctx.Err() == nil && !timeUp() {
+		for hi-lo > 1 && budget > 0 && !ctxEnded() && !timeUp() {
 			mid := hi - 1
 			if triedTop {
 				mid = (lo + hi) / 2
@@ -396,7 +440,24 @@ func upgradeRoots(
 			}
 		}
 	}
-	return best
+	return best, cut || clockUp || ctxCut
+}
+
+// cloneResolution copies r's maps and slices, so the copy shares none with r.
+func cloneResolution(r *Resolution) *Resolution {
+	c := *r
+	c.Pinned = maps.Clone(r.Pinned)
+	c.Order = slices.Clone(r.Order)
+	if r.Extras != nil {
+		c.Extras = make(map[index.PackageName][]string, len(r.Extras))
+		for k, v := range r.Extras {
+			c.Extras[k] = slices.Clone(v)
+		}
+	}
+	c.Unusable = slices.Clone(r.Unusable)
+	c.MissingExtras = slices.Clone(r.MissingExtras)
+	c.YankedPins = slices.Clone(r.YankedPins)
+	return &c
 }
 
 // upgradeRootSet lists, sorted by name, each root project that base pinned,
@@ -432,6 +493,9 @@ func upgradeRootSet(
 		}
 		vs, err := idx.Versions(ctx, n)
 		if err != nil {
+			if u.failed != nil {
+				u.failed()
+			}
 			continue
 		}
 		if len(vs) == 0 {
