@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-20
+
 ### Added
 
 - `Resolution.Upgrade` holds the `UpgradeRoots` pass's first answer (`First`) and whether a time bound or the end of `ctx` cut the pass short (`StoppedByTime`), so a caller can fall back to the first answer without solving again. It is nil with the pass off, and the answer the pass keeps does not change.
@@ -1699,7 +1701,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.24.0...v0.25.0
