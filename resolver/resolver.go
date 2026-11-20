@@ -328,7 +328,8 @@ type Resolution struct {
 	// caller can warn. Sorted by (package, requester).
 	YankedPins []YankedPin
 
-	// Upgrade reports on the UpgradeRoots pass. It is nil when the pass is off.
+	// Upgrade reports on the UpgradeRoots pass. It is nil when the pass is off
+	// or the first solve fails.
 	Upgrade *UpgradeReport
 }
 
@@ -343,7 +344,9 @@ type UpgradeReport struct {
 	// UpgradeMaxTime was reached, or the pass ran into the end of ctx. The kept
 	// answer then depends on timing; use First for a repeatable one. A pass
 	// ended by the step bounds, the UpgradeRoots budget, or running out of
-	// roots to try is not stopped by time.
+	// roots to try is not stopped by time. It can still be true if time ran out
+	// just as the pass would have ended anyway; a caller then only falls back
+	// to First.
 	StoppedByTime bool
 }
 

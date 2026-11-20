@@ -314,7 +314,7 @@ func upgradePass(
 	u.failed = func() { ctxEnded() }
 	roots := upgradeRootSet(ctx, reqs, idx, opts, base, u)
 	if len(roots) == 0 {
-		return base, ctxCut
+		return base, ctxEnded()
 	}
 	best := base
 	// best is scored only once a re-solve has an answer to compare it with:
@@ -367,6 +367,8 @@ func upgradePass(
 			scored = true
 		}
 		kept := objective(roots, got).less(bestScore)
+		// An index may report a ctx end as unusable metadata, so scoring hides it.
+		ctxEnded()
 		if onCandidate != nil {
 			onCandidate(got, kept)
 		}
@@ -390,6 +392,7 @@ func upgradePass(
 			}
 		}
 		if pick == nil {
+			ctxEnded() // the pick read the index too
 			break
 		}
 		done[pick.name] = true

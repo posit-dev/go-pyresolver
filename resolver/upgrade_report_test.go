@@ -221,3 +221,111 @@ func TestUpgradeReportFirstIsNotAliased(t *testing.T) {
 		t.Errorf("mutating the outer answer changed First.Order: %v", first.Order)
 	}
 }
+
+// hookIndex calls hooks on index reads once armed. With hideCtx, it reports a
+// ctx end as unusable metadata, as an index may.
+type hookIndex struct {
+	*index.MockIndex
+	armed      bool
+	hideCtx    bool
+	onVersions func(index.PackageName)
+	onMetadata func(index.PackageName, version.Version)
+}
+
+func (h *hookIndex) Versions(ctx context.Context, pkg index.PackageName) ([]version.Version, error) {
+	if h.armed && h.onVersions != nil {
+		h.onVersions(pkg)
+	}
+	return h.MockIndex.Versions(ctx, pkg)
+}
+
+func (h *hookIndex) Metadata(ctx context.Context, pkg index.PackageName, ver version.Version) (index.PackageMetadata, error) {
+	if h.armed && h.onMetadata != nil {
+		h.onMetadata(pkg, ver)
+	}
+	if h.hideCtx && ctx.Err() != nil {
+		return index.PackageMetadata{}, index.ErrMetadataUnavailable
+	}
+	return h.MockIndex.Metadata(ctx, pkg, ver)
+}
+
+// resolveCtx resolves reqs with the pass on and ctx, and checks the report.
+func resolveCtx(t *testing.T, ctx context.Context, idx index.MetadataIndex, reqs []string, roots int) *resolver.Resolution {
+	t.Helper()
+	opts := testOptions(t)
+	opts.UpgradeRoots = roots
+	res, err := resolver.Resolve(ctx, mustRequirements(t, reqs...), idx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Upgrade == nil {
+		t.Fatal("Upgrade is nil with the pass on")
+	}
+	return res
+}
+
+// A ctx that ends after the last budgeted re-solve is still seen when scoring
+// that re-solve reads the index, even if the index hides the ctx error.
+func TestUpgradeReportCtxEndedWhileScoringLastReSolve(t *testing.T) {
+	mock, reqs := earlyGain()
+	idx := &hookIndex{MockIndex: mock, hideCtx: true}
+	ctx := newExpiringCtx()
+	solves := 0
+	defer resolver.AfterSolve(func() {
+		if solves++; solves == 2 {
+			ctx.expire()
+		}
+	})()
+	res := resolveCtx(t, ctx, idx, reqs, 1)
+	if !res.Upgrade.StoppedByTime {
+		t.Error("StoppedByTime = false, want true")
+	}
+}
+
+// A ctx that ends between re-solves is seen at the next loop check.
+func TestUpgradeReportCtxEndedBetweenReSolves(t *testing.T) {
+	idx, reqs := earlyGain()
+	ctx := newExpiringCtx()
+	defer resolver.OnCandidate(func(*resolver.Resolution, bool) { ctx.expire() })()
+	res := resolveCtx(t, ctx, idx, reqs, 40)
+	if got := pins(t, res); !reflect.DeepEqual(got, earlyA) {
+		t.Errorf("pins %v, want %v", got, earlyA)
+	}
+	if !res.Upgrade.StoppedByTime {
+		t.Error("StoppedByTime = false, want true")
+	}
+}
+
+// A ctx that ends while the pass lists the roots' versions.
+func TestUpgradeReportCtxEndedBuildingRoots(t *testing.T) {
+	mock, reqs := earlyGain()
+	idx := &hookIndex{MockIndex: mock}
+	ctx := newExpiringCtx()
+	idx.onVersions = func(pkg index.PackageName) {
+		if pkg == index.NewPackageName("d") { // the last root
+			ctx.expire()
+		}
+	}
+	defer resolver.AfterSolve(func() { idx.armed = true })()
+	res := resolveCtx(t, ctx, idx, reqs, 40)
+	if !res.Upgrade.StoppedByTime {
+		t.Error("StoppedByTime = false, want true")
+	}
+}
+
+// A ctx that ends during a usability lookup for the last root.
+func TestUpgradeReportCtxEndedInUsabilityLookup(t *testing.T) {
+	mock, reqs := lateGain()
+	idx := &hookIndex{MockIndex: mock}
+	ctx := newExpiringCtx()
+	idx.onMetadata = func(pkg index.PackageName, v version.Version) {
+		if pkg == index.NewPackageName("z") && v.String() == "3.0" {
+			ctx.expire()
+		}
+	}
+	defer resolver.AfterSolve(func() { idx.armed = true })()
+	res := resolveCtx(t, ctx, idx, reqs, 40)
+	if !res.Upgrade.StoppedByTime {
+		t.Error("StoppedByTime = false, want true")
+	}
+}
