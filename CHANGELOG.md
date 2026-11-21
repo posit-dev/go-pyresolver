@@ -13,6 +13,8 @@ served it.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-21
+
 ### Added
 
 - `ResolveFirst` runs only the first solve, and its `FirstSolve.UpgradePass` runs the `UpgradeRoots` pass later from that answer without solving it again. A caller can finish every first solve before any pass starts, and gets exactly what `Resolve` returns, report and bounds included.
@@ -1705,7 +1707,8 @@ needs.
 - Dual-licensed Apache-2.0 OR MIT. See `LICENSE-APACHE`, `LICENSE-MIT`, and
   `NOTICE` for attribution of adapted material.
 
-[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/posit-dev/go-pyresolver/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/posit-dev/go-pyresolver/compare/v0.25.0...v0.26.0
