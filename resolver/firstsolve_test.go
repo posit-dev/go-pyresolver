@@ -79,13 +79,18 @@ func rootMovingDownCases() []struct {
 // clocked runs f on a fake clock where each solve takes solveCost, and
 // returns the steps of each resolution f ran.
 func clocked(f func()) []int {
+	return clockedGap(func(func(time.Duration)) { f() })
+}
+
+// clockedGap is clocked, but f may also move the clock with advance.
+func clockedGap(f func(advance func(time.Duration))) []int {
 	clock := time.Unix(0, 0)
 	restoreClock := resolver.SetClock(func() time.Time { return clock })
 	defer restoreClock()
 	defer resolver.OnSolve(func() { clock = clock.Add(solveCost) })()
 	steps, restore := resolver.RecordSteps()
 	defer restore()
-	f()
+	f(func(d time.Duration) { clock = clock.Add(d) })
 	return steps()
 }
 
@@ -129,6 +134,77 @@ func TestTwoPhaseMatchesResolve(t *testing.T) {
 				t.Errorf("steps per solve: two phases %v, Resolve %v", gotSteps, wantSteps)
 			}
 		})
+	}
+}
+
+// Time between ResolveFirst and UpgradePass counts toward neither the first
+// solve's duration nor the pass's time.
+func TestTwoPhaseGapBetweenPhasesIsNotCounted(t *testing.T) {
+	late, lateReqs := lateGain()
+	early, earlyReqs := earlyGain()
+	for _, tc := range []twoPhaseCase{
+		{"time factor 1", late, lateReqs, func(o *resolver.Options) { o.UpgradeTimeFactor = 1 }},
+		{"time factor 1.5", late, lateReqs, func(o *resolver.Options) { o.UpgradeTimeFactor = 1.5 }},
+		{"early time factor 1", early, earlyReqs, func(o *resolver.Options) { o.UpgradeTimeFactor = 1 }},
+		{"max time 1 solve", late, lateReqs, func(o *resolver.Options) { o.UpgradeMaxTime = solveCost }},
+		{"max time 2 solves", late, lateReqs, func(o *resolver.Options) { o.UpgradeMaxTime = 2 * solveCost }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := twoPhaseOptions(t, tc.set)
+			reqs := mustRequirements(t, tc.reqs...)
+			var want, got *resolver.Resolution
+			wantSteps := clocked(func() {
+				var err error
+				if want, err = resolver.Resolve(context.Background(), reqs, tc.idx, opts); err != nil {
+					t.Fatal(err)
+				}
+			})
+			gotSteps := clockedGap(func(advance func(time.Duration)) {
+				first, err := resolver.ResolveFirst(context.Background(), reqs, tc.idx, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				advance(time.Hour)
+				got = first.UpgradePass(context.Background())
+			})
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("after a gap, two phases gave %v (report %+v), Resolve gave %v (report %+v)",
+					pins(t, got), got.Upgrade, pins(t, want), want.Upgrade)
+			}
+			if !reflect.DeepEqual(gotSteps, wantSteps) {
+				t.Errorf("steps per solve: two phases %v, Resolve %v", gotSteps, wantSteps)
+			}
+		})
+	}
+}
+
+// The pass uses the AllowPrerelease the first solve saw, even if the caller
+// changes its slice in between.
+func TestTwoPhaseKeepsAllowPrerelease(t *testing.T) {
+	// a 3.1rc1 is newest; named in AllowPrerelease it outranks 3.0, and the pass
+	// will not move a root from a final to a pre-release.
+	idx := upgradeFixture().AddVersion("a", "3.1rc1")
+	reqs := mustRequirements(t, "a", "b")
+	opts := twoPhaseOptions(t, func(*resolver.Options) {})
+	without, err := resolver.Resolve(context.Background(), reqs, idx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.AllowPrerelease = []index.PackageName{index.NewPackageName("a")}
+	want, err := resolver.Resolve(context.Background(), reqs, idx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reflect.DeepEqual(pins(t, want), pins(t, without)) {
+		t.Fatalf("fixture: AllowPrerelease changes nothing (%v)", pins(t, want))
+	}
+	first, err := resolver.ResolveFirst(context.Background(), reqs, idx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.AllowPrerelease[0] = index.NewPackageName("unrelated")
+	if got := first.UpgradePass(context.Background()); !reflect.DeepEqual(got, want) {
+		t.Errorf("after changing the caller's AllowPrerelease, got %v, want %v", pins(t, got), pins(t, want))
 	}
 }
 

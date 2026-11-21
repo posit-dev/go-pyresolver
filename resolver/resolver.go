@@ -28,9 +28,9 @@ import (
 // requires_dist is exactly that: arbitrary text published by third parties.
 // A resolution that hits this bound fails loudly instead of hanging.
 //
-// Unexported: this package's supported surface is Resolve, Options, Resolution,
-// ResolutionError, MissingExtra and Requester, and a consumer that wants a
-// specific bound sets one.
+// Unexported: this package's supported surface is Resolve, ResolveFirst,
+// FirstSolve, Options, Resolution, ResolutionError, MissingExtra, YankedPin,
+// UpgradeReport and Requester, and a consumer that wants a specific bound sets one.
 const defaultMaxRounds = 10_000
 
 // Options configures one resolution.

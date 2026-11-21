@@ -27,6 +27,7 @@ type FirstSolve struct {
 
 // ResolveFirst runs the first solve of Resolve, with no UpgradeRoots pass. It
 // fails as Resolve does. FirstSolve.UpgradePass runs the pass later.
+// It keeps idx, RankMemo, WheelTags and Policy by reference: do not change them before UpgradePass.
 func ResolveFirst(
 	ctx context.Context,
 	reqs []requirement.Requirement,
