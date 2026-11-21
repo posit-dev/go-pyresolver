@@ -28,9 +28,9 @@ import (
 // requires_dist is exactly that: arbitrary text published by third parties.
 // A resolution that hits this bound fails loudly instead of hanging.
 //
-// Unexported: this package's supported surface is Resolve, Options, Resolution,
-// ResolutionError, MissingExtra and Requester, and a consumer that wants a
-// specific bound sets one.
+// Unexported: this package's supported surface is Resolve, ResolveFirst,
+// FirstSolve, Options, Resolution, ResolutionError, MissingExtra, YankedPin,
+// UpgradeReport and Requester, and a consumer that wants a specific bound sets one.
 const defaultMaxRounds = 10_000
 
 // Options configures one resolution.
@@ -194,7 +194,7 @@ type Options struct {
 
 	// UpgradeTimeFactor, when above zero, bounds the UpgradeRoots pass in time:
 	// the pass ends once it has run for this many times as long as the first
-	// solve took, in this Resolve call. A re-solve still running at that point
+	// solve took, in Resolve or ResolveFirst. A re-solve still running at that point
 	// is stopped and counts as no gain. Easy solves stay fully upgraded; hard
 	// ones are bounded. Zero (the default) means no time bound.
 	//
@@ -411,13 +411,12 @@ func Resolve(
 	idx index.MetadataIndex,
 	opts Options,
 ) (*Resolution, error) {
-	start := now()
-	steps := &stepMeter{}
-	res, err := resolveOnce(ctx, reqs, idx, opts, steps)
-	if err != nil || opts.UpgradeRoots <= 0 {
-		return res, err
+	// The same path as ResolveFirst then UpgradePass, minus their copies.
+	f, err := resolveFirst(ctx, reqs, idx, opts)
+	if err != nil {
+		return nil, err
 	}
-	return upgradeRoots(ctx, reqs, idx, opts, res, now().Sub(start), steps.used), nil
+	return f.pass(ctx, f.res), nil
 }
 
 // stepMeter counts the solver steps of one resolution, across all its solves,
