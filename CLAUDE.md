@@ -7,8 +7,9 @@ Phase 3.
 > **Status: implemented end to end.** `pypirsf/`, `index/`, `pep440set/`,
 > `candidate/`, `provider/` and `resolver/` all carry code. `resolver.Resolve`
 > is the entry point; keep its exported surface to `Resolve`, `Options`,
-> `Resolution`, `ResolutionError`, `MissingExtra`, `YankedPin`, `UpgradeReport`
-> and `Requester`.
+> `Resolution`, `ResolutionError`, `MissingExtra`, `YankedPin`, `UpgradeReport`,
+> `Requester`, and `ResolveFirst` with `FirstSolve` (methods `Resolution` and
+> `UpgradePass`), which split `Resolve` into its first solve and its pass.
 >
 > ⚠️ `resolver` is **no longer the only package Package Manager imports**. PPM
 > implements its own `MetadataIndex` (`src/pyindex`) and imports `index/` for the

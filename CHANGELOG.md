@@ -13,6 +13,10 @@ served it.
 
 ## [Unreleased]
 
+### Added
+
+- `ResolveFirst` runs only the first solve, and its `FirstSolve.UpgradePass` runs the `UpgradeRoots` pass later from that answer without solving it again. A caller can finish every first solve before any pass starts, and gets exactly what `Resolve` returns, report and bounds included.
+
 ## [0.28.0] - 2026-11-20
 
 ### Added
